@@ -141,6 +141,7 @@ import xml.etree.ElementTree as ET
 
 path, direction = sys.argv[1:]
 root = ET.parse(path).getroot()
+candidates = []
 for node in root.iter("node"):
     if node.attrib.get("scrollable") != "true":
         continue
@@ -148,16 +149,25 @@ for node in root.iter("node"):
     if not match:
         continue
     left, top, right, bottom = map(int, match.groups())
-    x = (left + right) // 2
-    padding = max(24, (bottom - top) // 5)
-    upper = top + padding
-    lower = bottom - padding
-    if direction == "up":
-        print(x, lower, x, upper)
-    else:
-        print(x, upper, x, lower)
-    raise SystemExit(0)
-raise SystemExit(1)
+    width = right - left
+    height = bottom - top
+    if width > 0 and height > 0:
+        candidates.append((width * height, left, top, right, bottom))
+if not candidates:
+    raise SystemExit(1)
+
+# Tablet layouts expose both the navigation rail and the library list as
+# scrollable. The list is the largest viewport; selecting the first node made
+# CI swipe the rail forever while waiting for page-two tracks.
+_, left, top, right, bottom = max(candidates)
+x = (left + right) // 2
+padding = max(24, (bottom - top) // 5)
+upper = top + padding
+lower = bottom - padding
+if direction == "up":
+    print(x, lower, x, upper)
+else:
+    print(x, upper, x, lower)
 PY
 )"; then
     return 1
@@ -216,13 +226,17 @@ wait_node() {
     fi
     sleep 1
   done
+  printf 'Timed out waiting for UI node: mode=%s value=%q\n' "$mode" "$value" >&2
   cat "$ui_xml" >&2
   return 1
 }
 
 tap_node() {
   local center
-  center="$(wait_node "$1" "$2")"
+  if ! center="$(wait_node "$1" "$2")"; then
+    printf 'Unable to tap UI node: mode=%s value=%q\n' "$1" "$2" >&2
+    return 1
+  fi
   "$adb_command" shell input tap $center
 }
 
@@ -313,6 +327,30 @@ enter_edit_text() {
   replace_focused_edit_text "$value"
 }
 
+focus_pairing_code_field() {
+  local center
+
+  dump_ui
+  node_center text "Pair securely" >/dev/null || return 1
+  center="$(node_center class "android.widget.EditText")" || return 1
+  "$adb_command" shell input tap $center
+  sleep 1
+  dump_ui
+  node_center focused-edit "" >/dev/null
+}
+
+wait_for_pairing_code_field() {
+  local attempt
+
+  for attempt in $(seq 1 12); do
+    if focus_pairing_code_field; then
+      return
+    fi
+    sleep 1
+  done
+  return 1
+}
+
 connect_manual_address() {
   local address="$1"
   local attempt
@@ -320,11 +358,11 @@ connect_manual_address() {
   local app_pid
 
   for attempt in $(seq 1 5); do
-    dump_ui
-    if node_center text "Pair securely" >/dev/null; then
+    if focus_pairing_code_field; then
       return
     fi
 
+    dump_ui
     if ! center="$(node_center class "android.widget.EditText")"; then
       printf 'Manual address field was unavailable on attempt %s.\n' "$attempt" >&2
       break
@@ -338,16 +376,32 @@ connect_manual_address() {
     # can leave the text field focused and silently drop the synthetic tap.
     # The app deliberately wires this action to the same resolver as Connect.
     "$adb_command" shell input keyevent KEYCODE_ENTER
-    for _ in $(seq 1 12); do
-      sleep 1
+    if wait_for_pairing_code_field; then
+      return
+    fi
+
+    dump_ui
+    if node_center edit-text "$address" >/dev/null; then
+      # Some API 31 emulator runs keep the IME action in the focused text
+      # field instead of dispatching ImeAction.Go. Fall back to the visible
+      # dialog action only after the exact address remains authoritative.
+      dismiss_ime_if_visible
       dump_ui
-      if node_center text "Pair securely" >/dev/null; then
-        return
+      if center="$(node_center text "Connect")"; then
+        "$adb_command" shell input tap $center
+        if wait_for_pairing_code_field; then
+          return
+        fi
       fi
+    fi
+
+    dump_ui
+    for _ in $(seq 1 3); do
       if node_center text "Enter a valid private IPv4 address." >/dev/null ||
           node_center text "Could not reach the computer. Check Wi-Fi and TunesLink Bridge." >/dev/null; then
         break
       fi
+      sleep 1
     done
 
     printf 'Manual connection attempt %s did not reach the pairing step; retrying.\n' \
@@ -462,8 +516,7 @@ fi
 wait_node class "android.widget.EditText" >/dev/null
 connect_manual_address "$bridge_address"
 
-tap_node class "android.widget.EditText"
-sleep 1
+# connect_manual_address returns only after the pairing field is focused.
 replace_focused_edit_text "123456"
 # Pairing exposes ImeAction.Done and maps it to the same guarded pair action as
 # the dialog button. Keep submission on the focused field so older emulators do
