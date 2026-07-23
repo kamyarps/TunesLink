@@ -147,6 +147,10 @@ are released together and currently use wire protocol `TunesLink-3`.
   if the close button should exit instead.
 - **Open at login:** starts the bridge in the background for the current Windows user.
 - **Paired devices:** up to two devices can be retained; each can be revoked from the bridge.
+- **Collection playback:** when Android starts an album, artist, or genre, the bridge creates one
+  temporary `TunesLink Playback Queue` playlist so iTunes keeps Next, Previous, shuffle, repeat,
+  and automatic track changes inside that collection. The managed playlist can appear in iTunes
+  while it is active and is removed when playback switches elsewhere.
 - **Windows data:** identity, paired-device hashes, settings, and the bounded metadata index live
   under `%LOCALAPPDATA%\TunesLink Bridge`.
 - **Android data:** credentials use encrypted platform storage; metadata and artwork caches are

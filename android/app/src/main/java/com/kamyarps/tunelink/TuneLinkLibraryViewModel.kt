@@ -202,7 +202,10 @@ internal fun TunesLinkViewModel.loadPreviousBrowse() {
     }
 }
 
-internal fun TunesLinkViewModel.playTrack(track: TrackUiState) {
+internal fun TunesLinkViewModel.playTrack(
+    track: TrackUiState,
+    collection: SelectedLibraryCollection? = null,
+) {
     val previous = mutableState.value.player
     if (previous.hasPendingConflict(PlaybackAction.PlayTrack)) return
     val mutation = pendingMutation(
@@ -235,6 +238,8 @@ internal fun TunesLinkViewModel.playTrack(track: TrackUiState) {
     scheduleMutationReconciliation(mutation)
     repository.playTrack(
         track.id,
+        collection?.kind?.wireValue.orEmpty(),
+        collection?.id.orEmpty(),
         commandResult(
             mutation = mutation,
             rollback = previous,

@@ -214,13 +214,29 @@ internal sealed partial class BridgeServer
             {
                 PlayRequest? submitted = JsonSerializer.Deserialize<PlayRequest>(request.Body, JsonOptions);
                 string id = submitted?.TrackId?.Trim() ?? "";
+                string collectionKind = submitted?.CollectionKind?.Trim().ToLowerInvariant() ?? "";
+                string collectionId = submitted?.CollectionId?.Trim() ?? "";
                 if (id.Length is < 8 or > 80)
                 {
                     await WriteJsonAsync(stream, 400, new { error = "A valid song is required" }, token);
                     return;
                 }
-                using CancellationTokenSource operation = OperationTimeout(BridgeProtocol.MediaTimeout, token);
-                await media.PlayTrackAsync(id, operation.Token).ConfigureAwait(false);
+                bool hasCollectionKind = collectionKind.Length > 0;
+                bool hasCollectionId = collectionId.Length > 0;
+                if (hasCollectionKind != hasCollectionId
+                    || (hasCollectionKind
+                        && (collectionKind is not ("artists" or "albums" or "genres" or "playlists")
+                            || collectionId.Length is < 3 or > 1024)))
+                {
+                    await WriteJsonAsync(stream, 400,
+                        new { error = "Invalid playback collection" }, token);
+                    return;
+                }
+                using CancellationTokenSource operation =
+                    OperationTimeout(BridgeProtocol.PlaybackTimeout, token);
+                await media.PlayTrackAsync(
+                    new PlaybackSelection(id, collectionKind, collectionId),
+                    operation.Token).ConfigureAwait(false);
                 stateHub.Wake();
                 await WriteJsonAsync(stream, 200, new { ok = true }, token);
             }

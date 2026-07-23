@@ -14,6 +14,7 @@ internal static class BridgeProtocol
     public static readonly TimeSpan SseHeartbeatInterval = TimeSpan.FromSeconds(15);
     public static readonly TimeSpan StateTimeout = TimeSpan.FromSeconds(6);
     public static readonly TimeSpan MediaTimeout = TimeSpan.FromSeconds(8);
+    public static readonly TimeSpan PlaybackTimeout = TimeSpan.FromSeconds(40);
     public static readonly TimeSpan LibraryTimeout = TimeSpan.FromSeconds(45);
     public static readonly TimeSpan CollectionTimeout = TimeSpan.FromSeconds(120);
 

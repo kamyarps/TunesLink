@@ -47,7 +47,7 @@ internal static partial class BridgeSelfTest
 
         try
         {
-            await isolated.PlayTrackAsync("missing-track");
+            await isolated.PlayTrackAsync(new PlaybackSelection("missing-track"));
             throw new InvalidOperationException("Self-test failed: expected not-found failure");
         }
         catch (MediaNotFoundException) { }

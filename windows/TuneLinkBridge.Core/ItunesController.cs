@@ -18,6 +18,8 @@ internal sealed class ItunesController : IMediaController
     internal static readonly TimeSpan PersistedLibrarySnapshotLifetime = TimeSpan.FromHours(24);
     private const int MaxArtworkDimension = 4096;
     private const long MaxArtworkPixels = 16_000_000;
+    private const string ManagedQueuePrefix =
+        "TunesLink Playback Queue [managed-7f4d6b21]-";
     private sealed class WorkItem
     {
         public required Func<object?> Action { get; init; }
@@ -41,6 +43,12 @@ internal sealed class ItunesController : IMediaController
         string SourceSignature,
         DateTimeOffset CreatedAt,
         DateTimeOffset? ValidatedAt);
+
+    private sealed record QueueTrack(
+        string Id,
+        int DiscNumber,
+        int TrackNumber,
+        int OriginalIndex);
 
     private readonly BlockingCollection<WorkItem> queue = new();
     private readonly Thread staThread;
@@ -86,7 +94,7 @@ internal sealed class ItunesController : IMediaController
                 string album = ReadString(track, "Album");
                 double duration = Math.Max(0, ReadDouble(track, "Duration"));
                 double position = Math.Clamp(Convert.ToDouble(app.PlayerPosition), 0, Math.Max(0, duration));
-                string trackId = RegisterTrack(track);
+                string trackId = RegisterPlaybackTrack((object)app, track);
                 bool hasArtwork = false;
                 dynamic? artworks = null;
                 try
@@ -227,16 +235,237 @@ internal sealed class ItunesController : IMediaController
         }
     }, cancellationToken);
 
-    public Task PlayTrackAsync(string id, CancellationToken cancellationToken = default) =>
+    public Task PlayTrackAsync(PlaybackSelection selection,
+        CancellationToken cancellationToken = default) =>
         Invoke<object?>(() =>
         {
             dynamic app = GetITunes();
-            dynamic? track = ResolveTrack(app, id);
-            if (track is null) throw new MediaNotFoundException("That song is no longer available");
-            try { track.Play(); }
-            finally { ReleaseCom(track); }
+            string kind = selection.CollectionKind.Trim().ToLowerInvariant();
+            string collectionId = selection.CollectionId.Trim();
+            if (kind.Length == 0 && collectionId.Length == 0)
+            {
+                PlayLibraryTrack((object)app, selection.TrackId);
+                CleanupManagedQueues((object)app);
+            }
+            else if (kind == "playlists")
+            {
+                PlayPlaylistTrack((object)app, selection.TrackId, collectionId);
+                CleanupManagedQueues((object)app);
+            }
+            else if (kind is "artists" or "albums" or "genres")
+            {
+                PlayManagedCollection((object)app, selection.TrackId, kind, collectionId,
+                    cancellationToken);
+            }
+            else
+            {
+                throw new ArgumentException("Invalid playback collection");
+            }
             return null;
         }, cancellationToken);
+
+    private static void PlayLibraryTrack(object appObject, string trackId)
+    {
+        dynamic app = appObject;
+        dynamic? track = ResolveTrack(app, trackId);
+        if (track is null) throw new MediaNotFoundException("That song is no longer available");
+        try { track.Play(); }
+        finally { ReleaseCom(track); }
+    }
+
+    private static void PlayPlaylistTrack(object appObject, string trackId, string collectionId)
+    {
+        if (!ItunesCollectionId.TryDecodePlaylist(collectionId,
+                out ItunesPlaylistLocator playlistLocator)
+            || !ItunesTrackId.TryDecode(trackId, out ItunesTrackLocator trackLocator))
+        {
+            throw new MediaNotFoundException("That playlist is no longer available");
+        }
+
+        dynamic app = appObject;
+        dynamic? playlist = null;
+        dynamic? tracks = null;
+        dynamic? playable = null;
+        try
+        {
+            playlist = ResolvePlaylist(appObject, playlistLocator)
+                ?? throw new MediaNotFoundException("That playlist is no longer available");
+            tracks = playlist.Tracks;
+            playable = FindTrackByDatabaseId(tracks, trackLocator.DatabaseId);
+            if (playable is null)
+                throw new MediaNotFoundException("That song is no longer in this playlist");
+            bool shuffleEnabled = ReadBool(playlist, "Shuffle");
+            SetProperty(playlist, "Shuffle", false);
+            try
+            {
+                playlist.PlayFirstTrack();
+                playable.Play();
+            }
+            finally { SetProperty(playlist, "Shuffle", shuffleEnabled); }
+        }
+        finally
+        {
+            ReleaseCom(playable);
+            ReleaseCom(tracks);
+            ReleaseCom(playlist);
+        }
+    }
+
+    private void PlayManagedCollection(object appObject, string trackId, string kind,
+        string collectionId, CancellationToken cancellationToken)
+    {
+        if (!ItunesCollectionId.TryDecodeText(collectionId, kind, out string filter))
+            throw new MediaNotFoundException("That collection is no longer available");
+
+        dynamic app = appObject;
+        dynamic? library = null;
+        dynamic? tracks = null;
+        List<QueueTrack> selected = [];
+        try
+        {
+            library = app.LibraryPlaylist;
+            tracks = library.Tracks;
+            int originalIndex = 0;
+            foreach (object trackObject in tracks)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                originalIndex++;
+                dynamic track = trackObject;
+                try
+                {
+                    if (!MatchesCollection(track, kind, filter)) continue;
+                    selected.Add(new QueueTrack(
+                        RegisterTrack(track),
+                        Math.Max(0, ReadInt(track, "DiscNumber")),
+                        Math.Max(0, ReadInt(track, "TrackNumber")),
+                        originalIndex));
+                }
+                finally { ReleaseCom(trackObject); }
+            }
+        }
+        finally
+        {
+            ReleaseCom(tracks);
+            ReleaseCom(library);
+        }
+
+        if (kind == "albums")
+        {
+            selected = selected
+                .OrderBy(item => item.DiscNumber > 0 ? item.DiscNumber : int.MaxValue)
+                .ThenBy(item => item.TrackNumber > 0 ? item.TrackNumber : int.MaxValue)
+                .ThenBy(item => item.OriginalIndex)
+                .ToList();
+        }
+        int targetIndex = selected.FindIndex(item =>
+            string.Equals(item.Id, trackId, StringComparison.Ordinal));
+        if (targetIndex < 0)
+            throw new MediaNotFoundException("That song is no longer in this collection");
+
+        (bool shuffleEnabled, string repeatMode) = ReadPlaybackModes(appObject);
+        dynamic? queuePlaylist = null;
+        dynamic? queueTracks = null;
+        dynamic? queueTrack = null;
+        bool activated = false;
+        try
+        {
+            queuePlaylist = app.CreatePlaylist(
+                ManagedQueuePrefix + Guid.NewGuid().ToString("N")[..8]);
+            for (int index = 0; index < selected.Count; index++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                dynamic? sourceTrack = null;
+                try
+                {
+                    sourceTrack = ResolveTrack(app, selected[index].Id)
+                        ?? throw new MediaNotFoundException(
+                            "A song in that collection is no longer available");
+                    queuePlaylist.AddTrack(sourceTrack);
+                }
+                finally { ReleaseCom(sourceTrack); }
+            }
+
+            // IITTrack.Play alone can fall back to iTunes' Music library even when the
+            // track object belongs to this playlist. PlayFirstTrack establishes the
+            // playlist as the active queue before selecting the requested track.
+            SetProperty(queuePlaylist, "Shuffle", false);
+            SetProperty(queuePlaylist, "SongRepeat", repeatMode switch
+            {
+                "one" => 1,
+                "all" => 2,
+                _ => 0,
+            });
+            queueTracks = queuePlaylist.Tracks;
+            queueTrack = queueTracks.Item(targetIndex + 1);
+            queuePlaylist.PlayFirstTrack();
+            if (targetIndex > 0) queueTrack.Play();
+            SetProperty(queuePlaylist, "Shuffle", shuffleEnabled);
+            activated = true;
+            CleanupManagedQueues(appObject, ReadInt(queuePlaylist, "PlaylistID"));
+        }
+        finally
+        {
+            if (!activated && queuePlaylist is not null)
+            {
+                try { queuePlaylist.Delete(); }
+                catch { }
+            }
+            ReleaseCom(queueTrack);
+            ReleaseCom(queueTracks);
+            ReleaseCom(queuePlaylist);
+        }
+    }
+
+    private static dynamic? FindTrackByDatabaseId(dynamic tracks, int databaseId)
+    {
+        if (tracks is null || databaseId == 0) return null;
+        foreach (object trackObject in tracks)
+        {
+            dynamic track = trackObject;
+            if (ReadInt(track, "TrackDatabaseID") == databaseId) return track;
+            ReleaseCom(trackObject);
+        }
+        return null;
+    }
+
+    private static void CleanupManagedQueues(object appObject, int keepPlaylistId = 0)
+    {
+        dynamic app = appObject;
+        dynamic? source = null;
+        dynamic? playlists = null;
+        try
+        {
+            source = app.LibrarySource;
+            playlists = source.Playlists;
+            int count = Math.Max(0, Convert.ToInt32(playlists.Count));
+            for (int index = count; index >= 1; index--)
+            {
+                dynamic? playlist = null;
+                try
+                {
+                    playlist = playlists.Item(index);
+                    object? playlistObject = playlist;
+                    if (playlistObject is null
+                        || ReadInt(playlistObject, "PlaylistID") == keepPlaylistId
+                        || !ReadString(playlistObject, "Name").StartsWith(
+                            ManagedQueuePrefix, StringComparison.Ordinal))
+                    {
+                        continue;
+                    }
+                    playlistObject.GetType().InvokeMember("Delete",
+                        System.Reflection.BindingFlags.InvokeMethod, null, playlistObject, null,
+                        null, CultureInfo.InvariantCulture, null);
+                }
+                catch { }
+                finally { ReleaseCom(playlist); }
+            }
+        }
+        finally
+        {
+            ReleaseCom(playlists);
+            ReleaseCom(source);
+        }
+    }
 
     public Task ExecuteAsync(PlayerCommand command, CancellationToken cancellationToken = default) => Invoke<object?>(() =>
     {
@@ -596,6 +825,7 @@ internal sealed class ItunesController : IMediaController
                     object? playlistObject = playlist;
                     if (playlistObject is null || ReadInt(playlistObject, "Kind") != 2) continue;
                     string title = ReadString(playlistObject, "Name").Trim();
+                    if (title.StartsWith(ManagedQueuePrefix, StringComparison.Ordinal)) continue;
                     if (title.Length == 0 || !title.Contains(query.Trim(),
                             StringComparison.OrdinalIgnoreCase)) continue;
                     int sourceId = ReadInt(playlistObject, "SourceID");
@@ -1000,6 +1230,55 @@ internal sealed class ItunesController : IMediaController
             ReadInt(track, "TrackID"),
             ReadInt(track, "TrackDatabaseID"));
         return ItunesTrackId.Encode(locator);
+    }
+
+    private string RegisterPlaybackTrack(object appObject, dynamic track)
+    {
+        dynamic? playlist = null;
+        dynamic? library = null;
+        dynamic? libraryTracks = null;
+        dynamic? canonical = null;
+        try
+        {
+            playlist = track.Playlist;
+            if (playlist is null
+                || !ReadString(playlist, "Name").StartsWith(
+                    ManagedQueuePrefix, StringComparison.Ordinal))
+            {
+                return RegisterTrack(track);
+            }
+
+            dynamic app = appObject;
+            int high = ReadParameterizedInt(appObject, "ITObjectPersistentIDHigh", track);
+            int low = ReadParameterizedInt(appObject, "ITObjectPersistentIDLow", track);
+            library = app.LibraryPlaylist;
+            libraryTracks = library.Tracks;
+            canonical = libraryTracks.ItemByPersistentID(high, low);
+            return canonical is null ? RegisterTrack(track) : RegisterTrack(canonical);
+        }
+        catch
+        {
+            return RegisterTrack(track);
+        }
+        finally
+        {
+            ReleaseCom(canonical);
+            ReleaseCom(libraryTracks);
+            ReleaseCom(library);
+            ReleaseCom(playlist);
+        }
+    }
+
+    private static int ReadParameterizedInt(object value, string property, object argument)
+    {
+        try
+        {
+            return Convert.ToInt32(value.GetType().InvokeMember(property,
+                System.Reflection.BindingFlags.GetProperty, null, value,
+                new[] { argument }, null, CultureInfo.InvariantCulture, null),
+                CultureInfo.InvariantCulture);
+        }
+        catch { return 0; }
     }
 
     private static dynamic? ResolveTrack(dynamic app, string id)

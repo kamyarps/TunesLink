@@ -72,7 +72,7 @@ public final class BridgeClientTest {
         assertEquals(130_000, BridgeClient.readTimeoutFor("/api/library?offset=0"));
         assertEquals(130_000, BridgeClient.readTimeoutFor("/api/collections?kind=artists"));
         assertEquals(14_000, BridgeClient.readTimeoutFor("/api/artwork?id=track"));
-        assertEquals(14_000, BridgeClient.readTimeoutFor("/api/play"));
+        assertEquals(45_000, BridgeClient.readTimeoutFor("/api/play"));
         assertEquals(10_000, BridgeClient.readTimeoutFor("/api/state"));
     }
 

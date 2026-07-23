@@ -31,8 +31,9 @@ internal sealed class IsolatedItunesController : IMediaController
         int offset, int limit, CancellationToken cancellationToken = default) =>
         libraryWorker.GetCollectionTracksAsync(kind, id, query, offset, limit, cancellationToken);
 
-    public Task PlayTrackAsync(string id, CancellationToken cancellationToken = default) =>
-        interactiveWorker.PlayTrackAsync(id, cancellationToken);
+    public Task PlayTrackAsync(PlaybackSelection selection,
+        CancellationToken cancellationToken = default) =>
+        interactiveWorker.PlayTrackAsync(selection, cancellationToken);
 
     public Task ExecuteAsync(PlayerCommand command, CancellationToken cancellationToken = default) =>
         interactiveWorker.ExecuteAsync(command, cancellationToken);
@@ -113,9 +114,13 @@ internal sealed class ItunesWorkerClient : IDisposable
             response => response.Library ?? throw MissingPayload("collection tracks"),
             BridgeProtocol.CollectionTimeout, cancellationToken);
 
-    public Task PlayTrackAsync(string id, CancellationToken cancellationToken = default) =>
-        CallAsync(new ItunesWorkerRequest(NextId(), "play", TrackId: id),
-            _ => true, BridgeProtocol.MediaTimeout, cancellationToken);
+    public Task PlayTrackAsync(PlaybackSelection selection,
+        CancellationToken cancellationToken = default) =>
+        CallAsync(new ItunesWorkerRequest(NextId(), "play",
+            TrackId: selection.TrackId,
+                CollectionKind: selection.CollectionKind,
+                CollectionId: selection.CollectionId),
+            _ => true, BridgeProtocol.PlaybackTimeout, cancellationToken);
 
     public Task ExecuteAsync(PlayerCommand command, CancellationToken cancellationToken = default) =>
         CallAsync(new ItunesWorkerRequest(NextId(), "command", Command: command),

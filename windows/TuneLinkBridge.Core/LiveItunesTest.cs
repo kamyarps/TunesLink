@@ -62,7 +62,48 @@ internal static class LiveItunesTest
                 "repeat mode").ConfigureAwait(false);
             passed.Add("repeat one/all");
 
-            await controller.PlayTrackAsync(original.TrackId).ConfigureAwait(false);
+            Progress("Playing an album-scoped queue");
+            LibraryCollectionPage albumCollections = await controller.GetCollectionsAsync(
+                "albums", "", 0, 60).ConfigureAwait(false);
+            LibraryCollection album = albumCollections.Items.FirstOrDefault(
+                collection => collection.TrackCount is > 1 and <= 60)
+                ?? throw new InvalidOperationException(
+                    "Choose a library containing an album with at least two tracks");
+            LibraryPage albumTracks = await controller.GetCollectionTracksAsync(
+                "albums", album.Id, "", 0, 60).ConfigureAwait(false);
+            LibraryTrack[] orderedAlbumTracks = albumTracks.Items
+                .OrderBy(track => track.DiscNumber > 0 ? track.DiscNumber : int.MaxValue)
+                .ThenBy(track => track.TrackNumber > 0 ? track.TrackNumber : int.MaxValue)
+                .ToArray();
+            Require(orderedAlbumTracks.Length > 1,
+                "The selected album did not return enough tracks");
+            await controller.ExecuteAsync(new PlayerCommand("shuffle", 0))
+                .ConfigureAwait(false);
+            await controller.PlayTrackAsync(new PlaybackSelection(
+                orderedAlbumTracks[0].Id, "albums", album.Id)).ConfigureAwait(false);
+            await RequireStateAsync(controller,
+                state => state.TrackId == orderedAlbumTracks[0].Id,
+                "album queue activation").ConfigureAwait(false);
+            await controller.ExecuteAsync(new PlayerCommand("next", null))
+                .ConfigureAwait(false);
+            await RequireStateAsync(controller,
+                state => state.TrackId == orderedAlbumTracks[1].Id
+                    && string.Equals(state.Album, album.Title,
+                        StringComparison.OrdinalIgnoreCase),
+                "next track within album").ConfigureAwait(false);
+            await controller.ExecuteAsync(new PlayerCommand("shuffle", 1))
+                .ConfigureAwait(false);
+            await controller.ExecuteAsync(new PlayerCommand("next", null))
+                .ConfigureAwait(false);
+            HashSet<string> albumTrackIds = orderedAlbumTracks
+                .Select(track => track.Id).ToHashSet(StringComparer.Ordinal);
+            await RequireStateAsync(controller,
+                state => state.ShuffleEnabled && albumTrackIds.Contains(state.TrackId),
+                "shuffle within album").ConfigureAwait(false);
+            passed.Add($"album queue ({orderedAlbumTracks.Length} tracks)");
+
+            await controller.PlayTrackAsync(new PlaybackSelection(original.TrackId))
+                .ConfigureAwait(false);
             await RequireStateAsync(controller,
                 state => state.Playing && state.TrackId == original.TrackId,
                 "current-track playback").ConfigureAwait(false);
@@ -112,19 +153,24 @@ internal static class LiveItunesTest
     private static async Task<PlaybackState> RequireStateAsync(
         IsolatedItunesController controller, Func<PlaybackState, bool> predicate, string label)
     {
+        PlaybackState? last = null;
         for (int attempt = 0; attempt < 20; attempt++)
         {
-            PlaybackState state = await controller.GetStateAsync().ConfigureAwait(false);
-            if (predicate(state)) return state;
+            last = await controller.GetStateAsync().ConfigureAwait(false);
+            if (predicate(last)) return last;
             await Task.Delay(150).ConfigureAwait(false);
         }
-        throw new InvalidOperationException("Timed out waiting for " + label);
+        throw new InvalidOperationException("Timed out waiting for " + label
+            + (last is null ? "" : $"; last state was '{last.Title}' / '{last.Album}'"
+                + $" ({last.TrackId}), playing={last.Playing}, shuffle={last.ShuffleEnabled}"));
     }
 
     private static async Task RestoreAsync(
         IsolatedItunesController controller, PlaybackState original)
     {
         List<Exception> failures = [];
+        await TryRestoreAsync(() => controller.PlayTrackAsync(
+            new PlaybackSelection(original.TrackId)), failures).ConfigureAwait(false);
         await TryRestoreAsync(() => controller.ExecuteAsync(new PlayerCommand(
             "shuffle", original.ShuffleEnabled ? 1 : 0)), failures).ConfigureAwait(false);
         double repeat = original.RepeatMode switch

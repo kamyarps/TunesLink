@@ -51,6 +51,11 @@ internal sealed record LibraryCollectionPage(
 
 internal sealed record PlayerCommand(string Command, double? Value);
 
+internal sealed record PlaybackSelection(
+    string TrackId,
+    string CollectionKind = "",
+    string CollectionId = "");
+
 internal interface IMediaController : IDisposable
 {
     Task<PlaybackState> GetStateAsync(CancellationToken cancellationToken = default);
@@ -60,7 +65,8 @@ internal interface IMediaController : IDisposable
         int limit, CancellationToken cancellationToken = default);
     Task<LibraryPage> GetCollectionTracksAsync(string kind, string id, string query, int offset,
         int limit, CancellationToken cancellationToken = default);
-    Task PlayTrackAsync(string id, CancellationToken cancellationToken = default);
+    Task PlayTrackAsync(PlaybackSelection selection,
+        CancellationToken cancellationToken = default);
     Task ExecuteAsync(PlayerCommand command, CancellationToken cancellationToken = default);
     Task<ArtworkData?> GetArtworkAsync(string id, int maxSize,
         CancellationToken cancellationToken = default);

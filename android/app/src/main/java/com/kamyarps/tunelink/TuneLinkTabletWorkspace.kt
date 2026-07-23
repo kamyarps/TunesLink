@@ -995,6 +995,7 @@ private fun TabletExpandedAlbum(
                                     state = state,
                                     viewModel = viewModel,
                                     showColumns = false,
+                                    collection = selected,
                                 )
                             }
                         }
@@ -1174,6 +1175,7 @@ private fun TabletGroupedCollectionDetail(
                                 state = state,
                                 viewModel = viewModel,
                                 showColumns = false,
+                                collection = selected,
                             )
                         }
                     }
@@ -1279,6 +1281,7 @@ private fun TabletTrackRow(
     state: TunesLinkUiState,
     viewModel: TunesLinkViewModel,
     showColumns: Boolean,
+    collection: SelectedLibraryCollection? = null,
     showMetadataUnderTitle: Boolean = false,
     striped: Boolean = false,
 ) {
@@ -1301,7 +1304,7 @@ private fun TabletTrackRow(
                 enabled = enabled,
                 role = Role.Button,
                 onClickLabel = stringResource(R.string.play_track, track.title),
-                onClick = { viewModel.playTrack(track) },
+                onClick = { viewModel.playTrack(track, collection) },
             )
             .semantics { selected = current }
             .padding(horizontal = 12.dp, vertical = 8.dp),

@@ -49,6 +49,7 @@ class BridgeClientSupport {
     static final int CONNECT_TIMEOUT_MS = 3_000;
     static final int DEFAULT_READ_TIMEOUT_MS = 10_000;
     static final int MEDIA_READ_TIMEOUT_MS = 14_000;
+    static final int PLAYBACK_READ_TIMEOUT_MS = 45_000;
     static final int LIBRARY_READ_TIMEOUT_MS = 130_000;
 
     static InetAddress parsePrivateIpv4(String input) {
@@ -101,7 +102,8 @@ class BridgeClientSupport {
         String route = path == null ? "" : path.split("\\?", 2)[0];
         return switch (route) {
             case "/api/library", "/api/collections" -> LIBRARY_READ_TIMEOUT_MS;
-            case "/api/artwork", "/api/play" -> MEDIA_READ_TIMEOUT_MS;
+            case "/api/play" -> PLAYBACK_READ_TIMEOUT_MS;
+            case "/api/artwork" -> MEDIA_READ_TIMEOUT_MS;
             default -> DEFAULT_READ_TIMEOUT_MS;
         };
     }

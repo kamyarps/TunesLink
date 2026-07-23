@@ -643,10 +643,16 @@ class BridgeClient extends BridgeClientSupport {
         return cancellation;
     }
 
-    void playTrack(SecureStore.SavedBridge bridge, String trackId, Result<Boolean> result) {
+    void playTrack(SecureStore.SavedBridge bridge, String trackId, String collectionKind,
+                   String collectionId, Result<Boolean> result) {
         executor.execute(() -> {
             try {
                 JSONObject json = new JSONObject().put("trackId", trackId);
+                if (collectionKind != null && !collectionKind.isBlank()
+                        && collectionId != null && !collectionId.isBlank()) {
+                    json.put("collectionKind", collectionKind);
+                    json.put("collectionId", collectionId);
+                }
                 BridgeHttpClient.Response response = request(bridge.host, bridge.port,
                         bridge.tlsFingerprint,
                         bridge.token, "POST", "/api/play",

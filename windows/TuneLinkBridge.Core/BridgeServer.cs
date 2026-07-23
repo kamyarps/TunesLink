@@ -26,7 +26,10 @@ internal sealed partial class BridgeServer : IDisposable
 
     private sealed record PairRequest(string? Code, string? ClientId, string? DeviceName);
     private sealed record CommandRequest(string? Command, double? Value);
-    private sealed record PlayRequest(string? TrackId);
+    private sealed record PlayRequest(
+        string? TrackId,
+        string? CollectionKind = null,
+        string? CollectionId = null);
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {

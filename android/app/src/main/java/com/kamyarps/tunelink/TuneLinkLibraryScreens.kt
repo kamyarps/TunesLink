@@ -202,7 +202,7 @@ internal fun LibraryBrowseScreen(
                                 state.player.trackId == track.id,
                             current = state.player.trackId == track.id,
                             playing = state.player.playing,
-                            onClick = { viewModel.playTrack(track) },
+                            onClick = { viewModel.playTrack(track, browse.selectedCollection) },
                         )
                     }
                 } else {

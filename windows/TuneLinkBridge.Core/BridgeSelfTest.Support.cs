@@ -40,7 +40,8 @@ internal static partial class BridgeSelfTest
         public Task<LibraryPage> GetCollectionTracksAsync(string kind, string id, string query,
             int offset, int limit, CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
-        public Task PlayTrackAsync(string id, CancellationToken cancellationToken = default) =>
+        public Task PlayTrackAsync(PlaybackSelection selection,
+            CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
         public Task ExecuteAsync(PlayerCommand command, CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();

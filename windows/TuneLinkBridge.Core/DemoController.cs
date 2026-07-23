@@ -14,6 +14,12 @@ internal sealed class DemoController : IMediaController
     private bool shuffleEnabled;
     private string repeatMode = "off";
     private DateTimeOffset lastTick = DateTimeOffset.UtcNow;
+    private PlaybackSelection? lastSelection;
+
+    internal PlaybackSelection? LastSelection
+    {
+        get { lock (gate) return lastSelection; }
+    }
 
     public Task<PlaybackState> GetStateAsync(CancellationToken cancellationToken = default)
     {
@@ -63,13 +69,16 @@ internal sealed class DemoController : IMediaController
         }
     }
 
-    public Task PlayTrackAsync(string id, CancellationToken cancellationToken = default)
+    public Task PlayTrackAsync(PlaybackSelection selection,
+        CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         lock (gate)
         {
-            int selected = Array.FindIndex(tracks, track => DemoLibrary.TrackId(track) == id);
+            int selected = Array.FindIndex(tracks,
+                track => DemoLibrary.TrackId(track) == selection.TrackId);
             if (selected < 0) throw new MediaNotFoundException("That song is no longer available");
+            lastSelection = selection;
             Tick();
             index = selected;
             position = 0;

@@ -324,7 +324,7 @@ internal static partial class BridgeSelfTest
         LibraryPage library = await isolated.GetLibraryAsync("", 0, 1);
         string trackId = library.Items[0].Id;
         isolated.TerminateWorkerForTest();
-        await isolated.PlayTrackAsync(trackId);
+        await isolated.PlayTrackAsync(new PlaybackSelection(trackId));
         PlaybackState restarted = await isolated.GetStateAsync();
         Ensure(restarted.Title == "Midnight Drive", "track remains playable after worker restart");
 

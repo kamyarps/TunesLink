@@ -565,9 +565,11 @@ final class BridgeRepository implements AutoCloseable {
                 + "\u001f" + Math.max(0, offset) + "\u001f" + Math.max(1, limit);
     }
 
-    void playTrack(String trackId, BridgeClient.Result<Boolean> result) {
+    void playTrack(String trackId, String collectionKind, String collectionId,
+                   BridgeClient.Result<Boolean> result) {
         BridgeSession.Request request = capture();
         if (request != null) client.playTrack(request.bridge, trackId,
+                collectionKind, collectionId,
                 refreshAfterSuccess(request, result));
     }
 

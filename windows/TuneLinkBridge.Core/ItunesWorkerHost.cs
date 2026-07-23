@@ -84,7 +84,9 @@ internal static class ItunesWorkerHost
                         request.CollectionId, request.Query, request.Offset, request.Limit)
                         .ConfigureAwait(false));
             case "play":
-                await media.PlayTrackAsync(request.TrackId).ConfigureAwait(false);
+                await media.PlayTrackAsync(new PlaybackSelection(
+                    request.TrackId, request.CollectionKind, request.CollectionId))
+                    .ConfigureAwait(false);
                 return new ItunesWorkerResponse(request.Id, true);
             case "command":
                 await media.ExecuteAsync(request.Command

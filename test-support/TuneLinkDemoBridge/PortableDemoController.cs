@@ -83,12 +83,14 @@ internal sealed class PortableDemoController : IMediaController
         }
     }
 
-    public Task PlayTrackAsync(string id, CancellationToken cancellationToken = default)
+    public Task PlayTrackAsync(PlaybackSelection selection,
+        CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         lock (gate)
         {
-            int selected = Array.FindIndex(tracks, track => DemoLibrary.TrackId(track) == id);
+            int selected = Array.FindIndex(tracks,
+                track => DemoLibrary.TrackId(track) == selection.TrackId);
             if (selected < 0) throw new ArgumentException("That song is no longer available");
             index = selected;
             position = 0;

@@ -232,10 +232,36 @@ internal static partial class BridgeSelfTest
             HttpResponseMessage play = await PostJsonAsync(client, "/api/play",
                 new { trackId = secondTrackId });
             Ensure(play.StatusCode == HttpStatusCode.OK, "play library track");
+            Ensure(media.LastSelection == new PlaybackSelection(secondTrackId),
+                "legacy play request remains context-free");
             JsonDocument playing = JsonDocument.Parse(await client.GetByteArrayAsync("/api/state"));
             Ensure(playing.RootElement.GetProperty("title").GetString() == "Golden Static",
                 "selected track playing");
             playing.Dispose();
+
+            using JsonDocument albumCollections = JsonDocument.Parse(
+                await client.GetByteArrayAsync(
+                    "/api/collections?kind=albums&offset=0&limit=40"));
+            string playbackAlbumId = albumCollections.RootElement.GetProperty("items")[0]
+                .GetProperty("id").GetString()!;
+            using JsonDocument playbackAlbum = JsonDocument.Parse(
+                await client.GetByteArrayAsync(
+                    "/api/library?collectionKind=albums&collectionId="
+                    + Uri.EscapeDataString(playbackAlbumId) + "&offset=0&limit=40"));
+            string playbackAlbumTrackId = playbackAlbum.RootElement.GetProperty("items")[0]
+                .GetProperty("id").GetString()!;
+            HttpResponseMessage contextualPlay = await PostJsonAsync(client, "/api/play",
+                new
+                {
+                    trackId = playbackAlbumTrackId,
+                    collectionKind = "albums",
+                    collectionId = playbackAlbumId
+                });
+            Ensure(contextualPlay.StatusCode == HttpStatusCode.OK,
+                "play track with album context");
+            Ensure(media.LastSelection == new PlaybackSelection(
+                    playbackAlbumTrackId, "albums", playbackAlbumId),
+                "album playback context reaches media controller");
 
             Ensure((await PostJsonAsync(client, "/api/command",
                 new { command = "shuffle", value = 1 })).StatusCode == HttpStatusCode.OK,
@@ -289,6 +315,11 @@ internal static partial class BridgeSelfTest
             HttpResponseMessage malformedPlay = await PostJsonAsync(client, "/api/play",
                 new { trackId = "bad" });
             Ensure(malformedPlay.StatusCode == HttpStatusCode.BadRequest, "invalid play request");
+            HttpResponseMessage incompletePlaybackContext = await PostJsonAsync(
+                client, "/api/play",
+                new { trackId = secondTrackId, collectionKind = "albums" });
+            Ensure(incompletePlaybackContext.StatusCode == HttpStatusCode.BadRequest,
+                "incomplete playback context rejected");
 
             HttpResponseMessage replacementPair = await PostJsonAsync(client, "/api/pair",
                 new
