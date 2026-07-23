@@ -60,7 +60,7 @@ if ($Component -in @("All", "Windows")) {
     if (-not $SkipVisualChecks) {
         Invoke-Checked "dotnet" @("build", $winUiProject, "--configuration", "UIQA")
         $winUiUiqaExecutable = Join-Path (Split-Path -Parent $winUiProject) `
-            "bin\UIQA\net10.0-windows10.0.17763.0\win-x64\TunesLink Bridge.exe"
+            "bin\UIQA\net10.0-windows10.0.17763.0\win-x64\TunesLink.Bridge.exe"
         $layoutCases = @(
             @("480x580", "1.0", "two-phones"),
             @("500x840", "1.0", "paired"),
@@ -81,7 +81,7 @@ if ($Component -in @("All", "Windows")) {
     Invoke-Checked "dotnet" @("format", (Join-Path $root "windows\TuneLink.sln"),
         "--verify-no-changes", "--severity", "warn", "--no-restore")
     $winUiReleaseExecutable = Join-Path (Split-Path -Parent $winUiProject) `
-        "bin\Release\net10.0-windows10.0.17763.0\win-x64\TunesLink Bridge.exe"
+        "bin\Release\net10.0-windows10.0.17763.0\win-x64\TunesLink.Bridge.exe"
     Invoke-GuiProcessChecked $winUiReleaseExecutable @("--self-test")
 }
 

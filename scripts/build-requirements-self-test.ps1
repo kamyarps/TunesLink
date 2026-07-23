@@ -16,11 +16,11 @@ Assert-True (-not (Test-TunesLinkDotNetSdkList @("10.0.301 [C:\dotnet\sdk]") "10
 Assert-True ((Get-TunesLinkJavaMajor 'openjdk version "17.0.19"') -eq 17) "JDK 17 parsed"
 Assert-True ((Get-TunesLinkJavaMajor 'openjdk version "21.0.1"') -ne 17) "wrong JDK distinguished"
 Assert-True ((Get-TunesLinkArtifactNames All) -join '|' -eq
-    'TunesLink.apk|TunesLink Bridge.exe') "all-build artifact contract"
+    'TunesLink.apk|TunesLink.Bridge.exe') "all-build artifact contract"
 Assert-True ((Get-TunesLinkArtifactNames Android) -join '|' -eq
     'TunesLink.apk') "Android artifact contract"
 Assert-True ((Get-TunesLinkArtifactNames Windows) -join '|' -eq
-    'TunesLink Bridge.exe') "Windows artifact contract"
+    'TunesLink.Bridge.exe') "Windows artifact contract"
 
 $temporary = Join-Path ([IO.Path]::GetTempPath()) ("TunesLink-requirements-" + [guid]::NewGuid().ToString("N"))
 try {

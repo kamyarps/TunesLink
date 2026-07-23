@@ -150,8 +150,8 @@ try {
             "-p:DebugSymbols=false",
             "--output", $windowsPublish
         )
-        $publishedExe = Join-Path $windowsPublish "TunesLink Bridge.exe"
-        $windowsArtifact = Join-Path $staging "TunesLink Bridge.exe"
+        $publishedExe = Join-Path $windowsPublish "TunesLink.Bridge.exe"
+        $windowsArtifact = Join-Path $staging "TunesLink.Bridge.exe"
         Copy-Item -LiteralPath $publishedExe -Destination $windowsArtifact -Force
         Remove-BuildDirectory $publishWork
         Invoke-GuiProcessChecked $windowsArtifact @("--self-test")

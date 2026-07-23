@@ -161,18 +161,18 @@ jobs:
             --configuration Release --runtime win-x64 --self-contained true `
             -p:PublishSingleFile=true -p:DebugType=None -p:DebugSymbols=false `
             --output .\artifacts\windows
-          $size = (Get-Item ".\artifacts\windows\TunesLink Bridge.exe").Length
+          $size = (Get-Item ".\artifacts\windows\TunesLink.Bridge.exe").Length
           if ($size -gt 180MB) { throw "Windows executable is $size bytes; the budget is 180 MiB." }
-          Compress-Archive -LiteralPath ".\artifacts\windows\TunesLink Bridge.exe" `
+          Compress-Archive -LiteralPath ".\artifacts\windows\TunesLink.Bridge.exe" `
             -DestinationPath "$env:RUNNER_TEMP\TunesLink-windows.zip"
           $compressedSize = (Get-Item "$env:RUNNER_TEMP\TunesLink-windows.zip").Length
           if ($compressedSize -gt 120MB) {
             throw "Compressed Windows artifact is $compressedSize bytes; the budget is 120 MiB."
           }
-          $process = Start-Process -FilePath ".\artifacts\windows\TunesLink Bridge.exe" `
+          $process = Start-Process -FilePath ".\artifacts\windows\TunesLink.Bridge.exe" `
             -ArgumentList "--self-test" -PassThru -Wait
           if ($process.ExitCode -ne 0) { throw "Published self-test failed with exit code $($process.ExitCode)." }
-          $process = Start-Process -FilePath ".\artifacts\windows\TunesLink Bridge.exe" `
+          $process = Start-Process -FilePath ".\artifacts\windows\TunesLink.Bridge.exe" `
             -ArgumentList "--verify-layout", "--viewport", "420x640", `
               "--text-scale", "2.0", "--ui-state", "runtime-unavailable" `
             -PassThru -Wait
@@ -200,12 +200,12 @@ jobs:
       - uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
         if: ${{ !github.event.repository.private }}
         with:
-          subject-path: artifacts/windows/TunesLink Bridge.exe
+          subject-path: artifacts/windows/TunesLink.Bridge.exe
           sbom-path: artifacts/windows/_manifest/spdx_2.2/manifest.spdx.json
       - uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
         if: ${{ !github.event.repository.private }}
         with:
-          subject-path: artifacts/windows/TunesLink Bridge.exe
+          subject-path: artifacts/windows/TunesLink.Bridge.exe
       - name: Verify repository hygiene
         shell: pwsh
         run: ./scripts/verify-repository.ps1 -RequireCleanWorktree
@@ -213,7 +213,7 @@ jobs:
         with:
           name: TunesLink-windows
           path: |
-            artifacts/windows/TunesLink Bridge.exe
+            artifacts/windows/TunesLink.Bridge.exe
             artifacts/windows/TunesLink-Windows.spdx.json
           if-no-files-found: error
 
@@ -249,7 +249,7 @@ jobs:
           $assets = @(
             (Resolve-Path artifacts\android\TunesLink.apk).Path,
             (Resolve-Path artifacts\android\TunesLink-Android.spdx.json).Path,
-            (Resolve-Path "artifacts\windows\TunesLink Bridge.exe").Path,
+            (Resolve-Path "artifacts\windows\TunesLink.Bridge.exe").Path,
             (Resolve-Path artifacts\windows\TunesLink-Windows.spdx.json).Path
           )
           $checksums = foreach ($asset in $assets) {
@@ -262,7 +262,7 @@ jobs:
           $notesPath = Join-Path (Resolve-Path artifacts).Path "release-notes.md"
           @'
           Download the release-signed `TunesLink.apk` on Android and
-          `TunesLink Bridge.exe` on Windows.
+          `TunesLink.Bridge.exe` on Windows.
 
           The Windows executable in this release is not Authenticode-signed, so Windows may
           display an **Unknown publisher** warning. Verify it with `SHA256SUMS.txt` before

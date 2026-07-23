@@ -31,7 +31,7 @@ TunesLink has two parts that work together:
 
 | Runs on | App | What it does |
 |---|---|---|
-| Windows PC | `TunesLink Bridge.exe` | Talks to iTunes and securely shares controls with your local network |
+| Windows PC | `TunesLink.Bridge.exe` | Talks to iTunes and securely shares controls with your local network |
 | Android phone or tablet | `TunesLink.apk` | Provides the library, search, and playback interface |
 
 <p align="center">
@@ -78,7 +78,7 @@ people using a release build do **not** need to install .NET separately.
 ### 1. Download both apps
 
 [Download the latest release from GitHub Releases](https://github.com/kamyarps/tuneslink/releases).
-You need both `TunesLink Bridge.exe` and `TunesLink.apk`.
+You need both `TunesLink.Bridge.exe` and `TunesLink.apk`.
 
 The repository's **Code → Download ZIP** option downloads the source code, not ready-to-run apps.
 If a public release is not available yet, follow [Build from source](#build-from-source).
@@ -91,7 +91,7 @@ If a public release is not available yet, follow [Build from source](#build-from
 ### 2. Start the Windows bridge
 
 1. Open iTunes Legacy.
-2. Run `TunesLink Bridge.exe`. It is portable and does not require an installer or administrator
+2. Run `TunesLink.Bridge.exe`. It is portable and does not require an installer or administrator
    access.
 3. If Windows Firewall asks for permission, allow it on **Private networks only**.
 
@@ -205,7 +205,7 @@ A successful build produces exactly:
 ```text
 artifacts/
 ├── TunesLink.apk
-└── TunesLink Bridge.exe
+└── TunesLink.Bridge.exe
 ```
 
 ### Check the toolchain only
@@ -234,7 +234,7 @@ worker-hang recovery, artifact-size budgets, and a full-history secret scan.
 To run the optional integration test against a real iTunes library and current track:
 
 ```powershell
-& '.\artifacts\TunesLink Bridge.exe' --live-itunes-test
+& '.\artifacts\TunesLink.Bridge.exe' --live-itunes-test
 ```
 
 The test restores the original playback settings when it finishes.

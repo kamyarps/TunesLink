@@ -193,7 +193,7 @@ jobs:
       - name: Self-test
         shell: pwsh
         run: |
-          $executable = ".\windows\TuneLinkBridge.WinUI\bin\Release\net10.0-windows10.0.17763.0\win-x64\TunesLink Bridge.exe"
+          $executable = ".\windows\TuneLinkBridge.WinUI\bin\Release\net10.0-windows10.0.17763.0\win-x64\TunesLink.Bridge.exe"
           $process = Start-Process -FilePath $executable -ArgumentList "--self-test" -PassThru -Wait
           if ($process.ExitCode -ne 0) { throw "Self-test failed with exit code $($process.ExitCode)." }
       - name: Publish
@@ -205,9 +205,9 @@ jobs:
       - name: Enforce Windows release size budget
         shell: pwsh
         run: |
-          $size = (Get-Item ".\artifacts\windows\TunesLink Bridge.exe").Length
+          $size = (Get-Item ".\artifacts\windows\TunesLink.Bridge.exe").Length
           if ($size -gt 180MB) { throw "Windows executable is $size bytes; the budget is 180 MiB." }
-          Compress-Archive -LiteralPath ".\artifacts\windows\TunesLink Bridge.exe" `
+          Compress-Archive -LiteralPath ".\artifacts\windows\TunesLink.Bridge.exe" `
             -DestinationPath "$env:RUNNER_TEMP\TunesLink-windows.zip"
           $compressedSize = (Get-Item "$env:RUNNER_TEMP\TunesLink-windows.zip").Length
           if ($compressedSize -gt 120MB) {
@@ -216,7 +216,7 @@ jobs:
       - name: Verify published executable
         shell: pwsh
         run: |
-          $executable = ".\artifacts\windows\TunesLink Bridge.exe"
+          $executable = ".\artifacts\windows\TunesLink.Bridge.exe"
           $process = Start-Process -FilePath $executable `
             -ArgumentList "--self-test" -PassThru -Wait
           if ($process.ExitCode -ne 0) { throw "Published self-test failed with exit code $($process.ExitCode)." }

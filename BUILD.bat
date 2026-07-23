@@ -23,7 +23,7 @@ if not "%TunesLink_EXIT%"=="0" (
     echo  BUILD FAILED. The error is shown above.
 ) else (
     echo  BUILD FINISHED SUCCESSFULLY.
-    echo  TunesLink.apk and TunesLink Bridge.exe are ready.
+    echo  TunesLink.apk and TunesLink.Bridge.exe are ready.
     echo  The artifacts folder has been opened.
 )
 echo.

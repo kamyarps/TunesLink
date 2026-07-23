@@ -44,8 +44,8 @@ android {
         applicationId = "com.kamyarps.tuneslink"
         minSdk = 26
         targetSdk = requiredTargetSdk
-        versionCode = 2
-        versionName = "1.0.1"
+        versionCode = 3
+        versionName = "1.0.2"
     }
 
     signingConfigs {

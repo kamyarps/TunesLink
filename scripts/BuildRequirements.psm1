@@ -174,7 +174,7 @@ function Get-TunesLinkArtifactNames {
 
     $names = New-Object System.Collections.Generic.List[string]
     if ($Component -in @("All", "Android")) { $names.Add("TunesLink.apk") }
-    if ($Component -in @("All", "Windows")) { $names.Add("TunesLink Bridge.exe") }
+    if ($Component -in @("All", "Windows")) { $names.Add("TunesLink.Bridge.exe") }
     return $names.ToArray()
 }
 
