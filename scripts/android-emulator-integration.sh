@@ -493,15 +493,28 @@ tap_until_log() {
 "$adb_command" shell am start -W -n "$component" >/dev/null
 
 sdk_int="$("$adb_command" shell getprop ro.build.version.sdk | tr -d '\r')"
-for _ in $(seq 1 5); do
+entry_ready=0
+for _ in $(seq 1 30); do
   dump_ui
   if node_center class "android.widget.EditText" >/dev/null ||
       node_center text "Allow local network access" >/dev/null; then
+    entry_ready=1
     break
   fi
-  tap_node text "Enter address"
+
+  # Act on the same UI snapshot we just inspected. API 31 can deliver the tap
+  # from a prior frame while a fresh wait is starting; waiting only for the
+  # welcome-screen action then deadlocks after the manual dialog replaces it.
+  if center="$(node_center text "Enter address")"; then
+    "$adb_command" shell input tap $center
+  fi
   sleep 1
 done
+if (( entry_ready != 1 )); then
+  printf 'Android did not reach manual address entry or local-network permission.\n' >&2
+  cat "$ui_xml" >&2
+  exit 1
+fi
 if (( sdk_int >= 37 )); then
   wait_node text "Allow local network access" >/dev/null
   capture "local-network-rationale"
