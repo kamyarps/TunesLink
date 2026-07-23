@@ -74,6 +74,7 @@ public sealed partial class MainWindow : Microsoft.UI.Xaml.Window, IDisposable
         this.runtime = runtime;
         this.launch = launch;
         InitializeComponent();
+        Title = "TunesLink Bridge";
         DevicesItems.ItemsSource = pairedPhones;
         ConfigureWindow();
         tray = new TrayService(ShowFromExternalInstance, ExitApplication);

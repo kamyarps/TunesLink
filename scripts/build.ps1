@@ -155,6 +155,9 @@ try {
         Copy-Item -LiteralPath $publishedExe -Destination $windowsArtifact -Force
         Remove-BuildDirectory $publishWork
         Invoke-GuiProcessChecked $windowsArtifact @("--self-test")
+        Invoke-GuiProcessChecked $windowsArtifact @(
+            "--verify-layout", "--viewport", "420x640",
+            "--text-scale", "2.0", "--ui-state", "runtime-unavailable")
     }
 
     $expected = @(Get-TunesLinkArtifactNames -Component $Component | Sort-Object)

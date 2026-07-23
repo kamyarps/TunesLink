@@ -213,12 +213,20 @@ jobs:
           if ($compressedSize -gt 120MB) {
             throw "Compressed Windows artifact is $compressedSize bytes; the budget is 120 MiB."
           }
-      - name: Published worker launch and hang recovery
+      - name: Verify published executable
         shell: pwsh
         run: |
-          $process = Start-Process -FilePath ".\artifacts\windows\TunesLink Bridge.exe" `
+          $executable = ".\artifacts\windows\TunesLink Bridge.exe"
+          $process = Start-Process -FilePath $executable `
             -ArgumentList "--self-test" -PassThru -Wait
           if ($process.ExitCode -ne 0) { throw "Published self-test failed with exit code $($process.ExitCode)." }
+          $process = Start-Process -FilePath $executable `
+            -ArgumentList "--verify-layout", "--viewport", "420x640", `
+              "--text-scale", "2.0", "--ui-state", "runtime-unavailable" `
+            -PassThru -Wait
+          if ($process.ExitCode -ne 0) {
+            throw "Published UI verification failed with exit code $($process.ExitCode)."
+          }
       - name: Verify repository hygiene
         shell: pwsh
         run: ./scripts/verify-repository.ps1 -RequireCleanWorktree

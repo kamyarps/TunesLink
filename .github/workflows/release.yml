@@ -172,6 +172,13 @@ jobs:
           $process = Start-Process -FilePath ".\artifacts\windows\TunesLink Bridge.exe" `
             -ArgumentList "--self-test" -PassThru -Wait
           if ($process.ExitCode -ne 0) { throw "Published self-test failed with exit code $($process.ExitCode)." }
+          $process = Start-Process -FilePath ".\artifacts\windows\TunesLink Bridge.exe" `
+            -ArgumentList "--verify-layout", "--viewport", "420x640", `
+              "--text-scale", "2.0", "--ui-state", "runtime-unavailable" `
+            -PassThru -Wait
+          if ($process.ExitCode -ne 0) {
+            throw "Published UI verification failed with exit code $($process.ExitCode)."
+          }
       - name: Generate SPDX SBOM
         shell: pwsh
         env:
