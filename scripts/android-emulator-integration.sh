@@ -568,6 +568,7 @@ expect_bridge_line "library-delay:60:1800"
 set_rotation 1
 sleep 1
 set_rotation 0
+wait_orientation portrait 0
 for _ in $(seq 1 30); do
   bridge_has_line "library-page::60:60:23:false" && break
   sleep 0.2
@@ -594,7 +595,13 @@ capture "decoded-deterministic-artwork"
 tap_until_log desc "Pause" "command:playPause"
 
 # Now Playing exposes playback-mode controls backed by iTunes state.
-tap_node desc "Now Playing"
+# Tablet workspace already surfaces shuffle/repeat in the top chrome, so the
+# dedicated destination control is absent there. Phone layouts still need the
+# bottom-nav destination before those controls appear.
+if ! node_center desc "Turn shuffle on" >/dev/null; then
+  tap_node desc "Now Playing"
+fi
+wait_node desc "Turn shuffle on" >/dev/null
 tap_until_log desc "Turn shuffle on" "command:shuffle"
 tap_until_log desc "Turn repeat all on" "command:repeat"
 capture "now-playing-modes"
