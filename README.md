@@ -9,7 +9,7 @@ tablet. It is a small, private remote for people who still keep their own music 
 
 Use it to find an album from the sofa, change the song across the room, or control a Windows music
 setup from a touch-friendly tablet interface. TunesLink does not stream or upload the music itself;
-it controls the iTunes library already playing on your computer.
+it controls the iTunes library already playing on your computer
 
 > [!IMPORTANT]
 > TunesLink works with the legacy iTunes COM interface on Windows. **Apple Music for Windows is not
