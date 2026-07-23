@@ -1,0 +1,308 @@
+<Window
+    x:Class="TunesLinkBridge.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d"
+    Title="TunesLink Bridge">
+    <Grid x:Name="RootGrid" Background="Transparent">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="48" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <Grid x:Name="AppTitleBar" Grid.Row="0" Padding="16,0,140,0" Background="Transparent">
+            <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                <Image Source="Assets/tunelink-app-icon-256.png" Width="24" Height="24"
+                       AutomationProperties.AccessibilityView="Raw" />
+                <TextBlock x:Uid="AppName" Text="TunesLink Bridge" FontFamily="Segoe UI Variable Text"
+                            FontSize="16" FontWeight="SemiBold" LineHeight="24"
+                            TextLineBounds="Tight" VerticalAlignment="Center"
+                            Foreground="{ThemeResource PrimaryTextBrush}">
+                    <TextBlock.RenderTransform>
+                        <TranslateTransform Y="2" />
+                    </TextBlock.RenderTransform>
+                </TextBlock>
+            </StackPanel>
+        </Grid>
+
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto"
+                      HorizontalScrollBarVisibility="Disabled"
+                      HorizontalContentAlignment="Stretch">
+            <Grid x:Name="PageContent" Padding="20,12,20,24" HorizontalAlignment="Stretch">
+                <VisualStateManager.VisualStateGroups>
+                    <VisualStateGroup x:Name="CompactLayoutStates">
+                        <VisualState x:Name="NarrowLayout">
+                            <VisualState.StateTriggers>
+                                <AdaptiveTrigger MinWindowWidth="0" />
+                            </VisualState.StateTriggers>
+                        </VisualState>
+                        <VisualState x:Name="FixedWindowLayout">
+                            <VisualState.StateTriggers>
+                                <AdaptiveTrigger MinWindowWidth="460" />
+                            </VisualState.StateTriggers>
+                            <VisualState.Setters>
+                                <Setter Target="HeaderStatusPanel.Orientation" Value="Horizontal" />
+                            </VisualState.Setters>
+                        </VisualState>
+                    </VisualStateGroup>
+                </VisualStateManager.VisualStateGroups>
+                <StackPanel x:Name="ContentStack" Spacing="24">
+                    <StackPanel.ChildrenTransitions>
+                        <TransitionCollection>
+                            <RepositionThemeTransition IsStaggeringEnabled="False" />
+                        </TransitionCollection>
+                    </StackPanel.ChildrenTransitions>
+
+                    <StackPanel Spacing="10">
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock x:Name="HeroTitle" x:Uid="HeroTitle" Text="Pair your phone"
+                                       Style="{StaticResource PageTitleStyle}"
+                                       VerticalAlignment="Center"
+                                       AutomationProperties.HeadingLevel="Level1" />
+                            <Button x:Name="SettingsButton" x:Uid="SettingsButton" Grid.Column="1"
+                                    Style="{StaticResource IconButtonStyle}"
+                                    ToolTipService.ToolTip="Settings"
+                                    AutomationProperties.Name="Settings">
+                                <Button.Flyout>
+                                    <Flyout x:Name="SettingsFlyout" Placement="BottomEdgeAlignedRight"
+                                            FlyoutPresenterStyle="{StaticResource SettingsFlyoutPresenterStyle}"
+                                            Opened="SettingsFlyout_Opened">
+                                        <StackPanel Width="320" Spacing="16">
+                                            <StackPanel Spacing="4">
+                                                <TextBlock x:Uid="SettingsHeading" Text="Settings"
+                                                           Style="{StaticResource SectionTitleStyle}" />
+                                                <TextBlock x:Uid="SettingsIntro"
+                                                           Text="Choose how TunesLink Bridge behaves in the background."
+                                                           Style="{StaticResource SecondaryStyle}" />
+                                            </StackPanel>
+                                            <StackPanel Spacing="6">
+                                                <ToggleSwitch x:Name="KeepRunningToggle" x:Uid="KeepRunning"
+                                                              Header="Keep TunesLink running when the window closes"
+                                                              AutomationProperties.HelpText="The bridge stays available from the notification area."
+                                                              Toggled="KeepRunningToggle_Toggled" />
+                                                <TextBlock x:Uid="KeepRunningDetail"
+                                                           Text="The bridge stays available from the notification area."
+                                                           Style="{StaticResource SecondaryStyle}" Margin="0,-4,0,0"
+                                                           AutomationProperties.AccessibilityView="Raw" />
+                                            </StackPanel>
+                                            <Rectangle Height="1" Fill="{ThemeResource SeparatorBrush}" />
+                                            <ToggleSwitch x:Name="OpenAtLoginToggle" x:Uid="OpenAtLogin"
+                                                          Header="Open at login"
+                                                          Toggled="OpenAtLoginToggle_Toggled" />
+                                        </StackPanel>
+                                    </Flyout>
+                                </Button.Flyout>
+                                <FontIcon Glyph="&#xE713;" FontSize="18" />
+                            </Button>
+                        </Grid>
+                        <TextBlock x:Name="HeroDetail" x:Uid="HeroDetail"
+                                   Text="Open TunesLink on your phone and enter the pairing code."
+                                   Style="{StaticResource BodyStyle}"
+                                   Foreground="{ThemeResource SecondaryTextBrush}" />
+                        <StackPanel x:Name="HeaderStatusPanel" Orientation="Vertical" Spacing="6">
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <Ellipse x:Name="NetworkStatusIndicator" Width="7" Height="7"
+                                         Fill="{ThemeResource SuccessBrush}"
+                                         VerticalAlignment="Center" />
+                                <TextBlock x:Name="NetworkStatusText" x:Uid="NetworkStatus"
+                                           Text="Local network ready"
+                                           Style="{StaticResource SecondaryStyle}" />
+                            </StackPanel>
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <Ellipse x:Name="ItunesStatusIndicator" Width="7" Height="7"
+                                         Fill="{ThemeResource SuccessBrush}"
+                                         VerticalAlignment="Center" />
+                                <TextBlock x:Name="ItunesStatusText" x:Uid="ItunesStatus"
+                                           Text="Checking iTunes…"
+                                           Style="{StaticResource SecondaryStyle}"
+                                           AutomationProperties.LiveSetting="Polite" />
+                            </StackPanel>
+                        </StackPanel>
+                        <ToggleButton x:Name="PairAnotherButton" x:Uid="PairAnother"
+                                      Content="Pair another phone"
+                                      Style="{StaticResource PrimaryToggleButtonStyle}"
+                                      HorizontalAlignment="Left" Visibility="Collapsed"
+                                      Click="PairAnother_Click" />
+                    </StackPanel>
+
+                    <Border x:Name="ProblemBanner" Background="{ThemeResource SurfaceBrush}"
+                            BorderBrush="{ThemeResource DangerBrush}" BorderThickness="1"
+                            CornerRadius="16" Padding="16" Visibility="Collapsed"
+                            AutomationProperties.LiveSetting="Assertive">
+                        <StackPanel Spacing="10">
+                            <TextBlock x:Uid="ProblemHeading" Text="TunesLink needs attention"
+                                       Style="{StaticResource SectionTitleStyle}"
+                                       AutomationProperties.HeadingLevel="Level2" />
+                            <ItemsControl x:Name="ProblemItems">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Grid ColumnSpacing="10" Margin="0,3">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <FontIcon Glyph="&#xEA39;" Foreground="{ThemeResource DangerBrush}"
+                                                      FontSize="16" VerticalAlignment="Top" Margin="0,3,0,0" />
+                                            <StackPanel Grid.Column="1" Spacing="2">
+                                                <TextBlock Text="{Binding Title}" Style="{StaticResource BodyStyle}"
+                                                           FontWeight="SemiBold" />
+                                                <TextBlock Text="{Binding Detail}" Style="{StaticResource SecondaryStyle}" />
+                                            </StackPanel>
+                                        </Grid>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </Border>
+
+                    <Border x:Name="PairingPanel" Background="{ThemeResource SurfaceBrush}"
+                            BorderBrush="{ThemeResource SeparatorBrush}" BorderThickness="1"
+                            CornerRadius="16" Padding="18">
+                        <StackPanel>
+                            <StackPanel Spacing="8">
+                                <TextBlock x:Uid="CodeHeading" Text="Enter pairing code"
+                                           Style="{StaticResource SectionTitleStyle}"
+                                           AutomationProperties.HeadingLevel="Level2" />
+                                <TextBlock x:Uid="CodeDetail"
+                                           Text="Enter this six-digit code in TunesLink on your phone."
+                                           Style="{StaticResource SecondaryStyle}" />
+                                <Grid ColumnSpacing="12">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock x:Name="PairCodeText" x:Uid="PairCode" Text="000 000"
+                                               FontFamily="Segoe UI Variable Display" FontSize="36"
+                                               FontWeight="SemiBold" CharacterSpacing="75"
+                                               Foreground="{ThemeResource PrimaryTextBrush}"
+                                               VerticalAlignment="Center"
+                                               AutomationProperties.Name="Pairing code" />
+                                    <Button x:Name="CopyCodeButton" x:Uid="CopyCode"
+                                            Grid.Column="1" MinWidth="86"
+                                            Style="{StaticResource TonalButtonStyle}"
+                                            Click="CopyPairCode_Click"
+                                            AutomationProperties.Name="Copy pairing code">
+                                        <StackPanel x:Name="CopyCodeContent"
+                                                    Orientation="Horizontal" Spacing="7">
+                                            <FontIcon x:Name="CopyCodeGlyph" Glyph="&#xE8C8;" FontSize="15" />
+                                            <TextBlock x:Name="CopyCodeLabel" x:Uid="CopyLabel" Text="Copy" />
+                                        </StackPanel>
+                                    </Button>
+                                </Grid>
+                                <Grid ColumnSpacing="12">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock x:Name="PairExpiryText" x:Uid="PairExpiry"
+                                               Style="{StaticResource SecondaryStyle}"
+                                               Text="Expires in 10:00" VerticalAlignment="Center" />
+                                    <Button x:Name="NewCodeButton" x:Uid="NewCode" Grid.Column="1"
+                                            Content="New code"
+                                            Style="{StaticResource TonalButtonStyle}"
+                                            Click="NewCode_Click"
+                                            AutomationProperties.Name="Generate a new pairing code" />
+                                </Grid>
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <StackPanel Spacing="10">
+                        <TextBlock x:Uid="ConnectionHelp" Text="Connection"
+                                   Style="{StaticResource SectionTitleStyle}"
+                                   AutomationProperties.HeadingLevel="Level2" />
+                        <Border Background="{ThemeResource SurfaceBrush}"
+                                BorderBrush="{ThemeResource SeparatorBrush}" BorderThickness="1"
+                                CornerRadius="16" Padding="16">
+                            <Grid ColumnSpacing="14">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Spacing="3" VerticalAlignment="Center">
+                                    <TextBlock x:Uid="AddressLabel" Text="ADDRESS"
+                                               FontSize="12" FontWeight="SemiBold"
+                                               Foreground="{ThemeResource SecondaryTextBrush}" />
+                                    <TextBlock x:Name="AddressText" x:Uid="AddressValue"
+                                               Text="Unavailable" Style="{StaticResource BodyStyle}"
+                                               TextTrimming="CharacterEllipsis" />
+                                </StackPanel>
+                                <Button x:Name="CopyAddressButton" x:Uid="CopyAddress"
+                                        Grid.Column="1" MinWidth="86"
+                                        Style="{StaticResource TonalButtonStyle}"
+                                        Click="CopyAddress_Click"
+                                        AutomationProperties.Name="Copy address">
+                                    <StackPanel x:Name="CopyAddressContent"
+                                                Orientation="Horizontal" Spacing="7">
+                                        <FontIcon x:Name="CopyAddressGlyph" Glyph="&#xE8C8;" FontSize="15" />
+                                        <TextBlock x:Name="CopyAddressLabel" x:Uid="CopyLabel" Text="Copy" />
+                                    </StackPanel>
+                                </Button>
+                            </Grid>
+                        </Border>
+                    </StackPanel>
+
+                    <StackPanel x:Name="PairedDevicesSection" Spacing="10">
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock x:Uid="PairedPhones" Text="Paired phones"
+                                       Style="{StaticResource SectionTitleStyle}"
+                                       VerticalAlignment="Center"
+                                       AutomationProperties.HeadingLevel="Level2" />
+                            <Button x:Name="ForgetAllButton" x:Uid="ForgetAll"
+                                    Grid.Column="1" Content="Forget all"
+                                    Style="{StaticResource DangerButtonStyle}"
+                                    Visibility="Collapsed" Click="ForgetAll_Click" />
+                        </Grid>
+                        <Border Background="{ThemeResource SurfaceBrush}"
+                                BorderBrush="{ThemeResource SeparatorBrush}" BorderThickness="1"
+                                CornerRadius="16" Padding="8">
+                            <ItemsControl x:Name="DevicesItems">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Grid x:Name="DeviceRow" MinHeight="64"
+                                              Padding="8,7" ColumnSpacing="10"
+                                              AutomationProperties.Name="{Binding AccessibleName}">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel Spacing="2" VerticalAlignment="Center">
+                                                <TextBlock Text="{Binding Name}"
+                                                           Style="{StaticResource BodyStyle}"
+                                                           TextTrimming="CharacterEllipsis" />
+                                                <TextBlock Text="{Binding Detail}"
+                                                           Style="{StaticResource SecondaryStyle}"
+                                                           TextTrimming="CharacterEllipsis" />
+                                            </StackPanel>
+                                            <Button x:Name="DeviceForgetButton" x:Uid="ForgetDevice"
+                                                    Grid.Column="1" Content="Forget"
+                                                    Tag="{Binding TokenHash}"
+                                                    VerticalAlignment="Center"
+                                                    Style="{StaticResource DangerButtonStyle}"
+                                                    Click="ForgetDevice_Click"
+                                                    AutomationProperties.Name="{Binding ForgetAccessibleName}" />
+                                        </Grid>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </Border>
+                    </StackPanel>
+                </StackPanel>
+            </Grid>
+        </ScrollViewer>
+
+        <TextBlock x:Name="LiveRegionText" Grid.Row="1" Width="1" Height="1" Opacity="0"
+                   IsHitTestVisible="False"
+                   AutomationProperties.LiveSetting="Polite" />
+    </Grid>
+</Window>

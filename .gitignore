@@ -1,0 +1,73 @@
+# Operating systems and editors
+.DS_Store
+Thumbs.db
+Desktop.ini
+.idea/
+.vscode/
+.vs/
+*.iml
+*.swp
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Local configuration and signing material
+.tools/
+local.properties
+keystore.properties
+signing.properties
+.env
+.env.*
+!.env.example
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.key
+*.pem
+
+# Android / Gradle
+android/.gradle/
+android/.kotlin/
+android/**/build/
+android/.externalNativeBuild/
+android/.cxx/
+android/captures/
+*.apks
+*.idsig
+
+# .NET / Visual Studio
+**/bin/
+**/obj/
+TestResults/
+coverage/
+*.trx
+*.coverage
+*.coveragexml
+
+# Python test helpers
+__pycache__/
+*.py[cod]
+
+# Generated packages and logs
+artifacts/
+artifacts.tmp.*/
+artifacts.old.*/
+.qa/
+.local-docs/
+/audit-evidence/
+/plans/
+*.apk
+*.aab
+*.zip
+*.nupkg
+*.snupkg
+*.appx
+*.appxbundle
+*.msix
+*.msixbundle
+*.log
+*.tmp
+*.bak
+*.dmp

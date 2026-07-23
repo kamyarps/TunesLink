@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype"><value>text/microsoft-resx</value></resheader>
+  <resheader name="version"><value>2.0</value></resheader>
+  <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value></resheader>
+  <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value></resheader>
+  <data name="AppName.Text" xml:space="preserve"><value>TunesLink Bridge</value></data>
+  <data name="HeroTitle.Text" xml:space="preserve"><value>Pair your phone</value></data>
+  <data name="HeroDetail.Text" xml:space="preserve"><value>Open TunesLink on your phone and enter the pairing code.</value></data>
+  <data name="NetworkStatus.Text" xml:space="preserve"><value>Local network ready</value></data>
+  <data name="ItunesStatus.Text" xml:space="preserve"><value>Checking iTunes…</value></data>
+    <data name="PairAnother.Content" xml:space="preserve"><value>Pair another phone</value></data>
+    <data name="SettingsButton.AutomationProperties.Name" xml:space="preserve"><value>Settings</value></data>
+    <data name="SettingsHeading.Text" xml:space="preserve"><value>Settings</value></data>
+    <data name="SettingsIntro.Text" xml:space="preserve"><value>Choose how TunesLink Bridge behaves in the background.</value></data>
+  <data name="ProblemHeading.Text" xml:space="preserve"><value>TunesLink needs attention</value></data>
+  <data name="CodeHeading.Text" xml:space="preserve"><value>Enter pairing code</value></data>
+  <data name="CodeDetail.Text" xml:space="preserve"><value>Enter this six-digit code in TunesLink on your phone.</value></data>
+  <data name="CopyLabel.Text" xml:space="preserve"><value>Copy</value></data>
+  <data name="CopyCode.AutomationProperties.Name" xml:space="preserve"><value>Copy pairing code</value></data>
+  <data name="PairCode.AutomationProperties.Name" xml:space="preserve"><value>Pairing code</value></data>
+  <data name="PairExpiry.Text" xml:space="preserve"><value>Expires in 10:00</value></data>
+  <data name="NewCode.Content" xml:space="preserve"><value>New code</value></data>
+  <data name="NewCode.AutomationProperties.Name" xml:space="preserve"><value>Generate a new pairing code</value></data>
+    <data name="ConnectionHelp.Text" xml:space="preserve"><value>Connection</value></data>
+  <data name="AddressLabel.Text" xml:space="preserve"><value>ADDRESS</value></data>
+  <data name="AddressValue.Text" xml:space="preserve"><value>Unavailable</value></data>
+  <data name="CopyAddress.AutomationProperties.Name" xml:space="preserve"><value>Copy address</value></data>
+  <data name="PairedPhones.Text" xml:space="preserve"><value>Paired phones</value></data>
+  <data name="ForgetAll.Content" xml:space="preserve"><value>Forget all</value></data>
+  <data name="ForgetDevice.Content" xml:space="preserve"><value>Forget</value></data>
+  <data name="PreferencesHeading.Text" xml:space="preserve"><value>Preferences</value></data>
+  <data name="KeepRunning.Header" xml:space="preserve"><value>Keep TunesLink running when the window closes</value></data>
+  <data name="KeepRunning.AutomationProperties.HelpText" xml:space="preserve"><value>The bridge stays available from the notification area.</value></data>
+  <data name="KeepRunningDetail.Text" xml:space="preserve"><value>The bridge stays available from the notification area.</value></data>
+  <data name="OpenAtLogin.Header" xml:space="preserve"><value>Open at login</value></data>
+  <data name="AppDisplayName" xml:space="preserve"><value>TunesLink Bridge</value></data>
+  <data name="Address" xml:space="preserve"><value>Address</value></data>
+  <data name="AllDevicesForgottenAnnouncement" xml:space="preserve"><value>All paired devices forgotten</value></data>
+  <data name="Cancel" xml:space="preserve"><value>Cancel</value></data>
+  <data name="Close" xml:space="preserve"><value>Close</value></data>
+  <data name="Copy" xml:space="preserve"><value>Copy</value></data>
+  <data name="Copied" xml:space="preserve"><value>Copied</value></data>
+  <data name="CopyFailed" xml:space="preserve"><value>Failed</value></data>
+  <data name="CouldNotCopyValue" xml:space="preserve"><value>Couldn’t copy {0}</value></data>
+  <data name="DeviceAccessibleName" xml:space="preserve"><value>{0}, {1}</value></data>
+  <data name="DeviceAlreadyRemoved" xml:space="preserve"><value>{0} was already removed</value></data>
+  <data name="DeviceForgetFailed" xml:space="preserve"><value>{0} could not be forgotten</value></data>
+  <data name="DeviceForgottenAnnouncement" xml:space="preserve"><value>{0} forgotten</value></data>
+  <data name="DevicePairedAnnouncement" xml:space="preserve"><value>{0} paired</value></data>
+  <data name="DevicePairingDetail" xml:space="preserve"><value>Paired {0:d} · {1}</value></data>
+  <data name="Forget" xml:space="preserve"><value>Forget</value></data>
+  <data name="ForgetAllAction" xml:space="preserve"><value>Forget all</value></data>
+  <data name="ForgetAllDetail" xml:space="preserve"><value>Every phone will need the current six-digit pairing code to reconnect.</value></data>
+  <data name="ForgetAllFailed" xml:space="preserve"><value>Paired devices could not be forgotten</value></data>
+  <data name="ForgetAllTitle" xml:space="preserve"><value>Forget all paired devices?</value></data>
+  <data name="ForgetDeviceAccessibleName" xml:space="preserve"><value>Forget {0}</value></data>
+  <data name="ForgetDeviceDetail" xml:space="preserve"><value>This phone will need the current six-digit pairing code to reconnect.</value></data>
+  <data name="ForgetDeviceTitle" xml:space="preserve"><value>Forget {0}?</value></data>
+  <data name="HeroPairDetail" xml:space="preserve"><value>Open TunesLink on your phone and enter the pairing code.</value></data>
+  <data name="HeroPairTitle" xml:space="preserve"><value>Pair your phone</value></data>
+  <data name="HeroReadyDetail" xml:space="preserve"><value>Your phone can control iTunes on this PC.</value></data>
+  <data name="HeroReadyMultipleDetail" xml:space="preserve"><value>Your phones can control iTunes on this PC.</value></data>
+  <data name="HeroReadyTitle" xml:space="preserve"><value>TunesLink is ready</value></data>
+  <data name="HidePairingCode" xml:space="preserve"><value>Hide pairing code</value></data>
+  <data name="ItunesReady" xml:space="preserve"><value>iTunes ready</value></data>
+  <data name="ItunesUnavailableDetail" xml:space="preserve"><value>Open iTunes on this PC to begin playback.</value></data>
+  <data name="ItunesUnavailableStatus" xml:space="preserve"><value>iTunes unavailable</value></data>
+  <data name="ItunesUnavailableTitle" xml:space="preserve"><value>iTunes is unavailable</value></data>
+  <data name="KeepRunningChangeFailed" xml:space="preserve"><value>Keep running could not be changed</value></data>
+  <data name="LocalNetworkReady" xml:space="preserve"><value>Local network ready</value></data>
+  <data name="NewPairingCodeFailed" xml:space="preserve"><value>A new pairing code could not be generated</value></data>
+  <data name="NewPairingCodeGenerated" xml:space="preserve"><value>New pairing code generated</value></data>
+  <data name="NoAddressToCopy" xml:space="preserve"><value>No private network address is available to copy</value></data>
+  <data name="OpenAtLoginChangeFailed" xml:space="preserve"><value>Open at login could not be changed</value></data>
+  <data name="OpenItunes" xml:space="preserve"><value>Open iTunes</value></data>
+  <data name="PairAnotherPhone" xml:space="preserve"><value>Pair another phone</value></data>
+  <data name="PairingCode" xml:space="preserve"><value>Pairing code</value></data>
+  <data name="PairingCodeAccessibleName" xml:space="preserve"><value>Pairing code {0}</value></data>
+  <data name="PairingCodeExpiry" xml:space="preserve"><value>Expires in {0}:{1:D2}</value></data>
+  <data name="PairingCodeExpiryAccessibleName" xml:space="preserve"><value>Pairing code expires in {0} minutes and {1} seconds</value></data>
+  <data name="PairingCodeRotated" xml:space="preserve"><value>Pairing code rotated</value></data>
+  <data name="Phone" xml:space="preserve"><value>Phone</value></data>
+  <data name="PrivateAddressUnavailable" xml:space="preserve"><value>Private address unavailable</value></data>
+  <data name="PrivateAddressUnavailableDetail" xml:space="preserve"><value>Connect this PC to a private local network.</value></data>
+  <data name="RuntimeActionUnavailable" xml:space="preserve"><value>This action is unavailable because TunesLink did not start.</value></data>
+  <data name="ShowPairingCode" xml:space="preserve"><value>Show pairing code</value></data>
+  <data name="StartupFailureTitle" xml:space="preserve"><value>TunesLink couldn’t start</value></data>
+  <data name="TrayExit" xml:space="preserve"><value>Exit</value></data>
+  <data name="TrayOpen" xml:space="preserve"><value>Open TunesLink Bridge</value></data>
+  <data name="TrayOpenDiagnostics" xml:space="preserve"><value>Open diagnostics folder</value></data>
+  <data name="TrayStillRunningDetail" xml:space="preserve"><value>Use the notification-area icon to reopen or exit.</value></data>
+  <data name="TrayStillRunningTitle" xml:space="preserve"><value>TunesLink is still running</value></data>
+  <data name="Unavailable" xml:space="preserve"><value>Unavailable</value></data>
+  <data name="UsedDaysAgo" xml:space="preserve"><value>Used {0} days ago</value></data>
+  <data name="UsedHoursAgo" xml:space="preserve"><value>Used {0} hours ago</value></data>
+  <data name="UsedJustNow" xml:space="preserve"><value>Used just now</value></data>
+  <data name="UsedMinutesAgo" xml:space="preserve"><value>Used {0} minutes ago</value></data>
+  <data name="UsedOneDayAgo" xml:space="preserve"><value>Used 1 day ago</value></data>
+  <data name="ValueCopiedAnnouncement" xml:space="preserve"><value>{0} copied</value></data>
+</root>

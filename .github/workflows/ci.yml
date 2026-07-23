@@ -1,0 +1,224 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - ".github/workflows/codeql.yml"
+      - ".github/workflows/release.yml"
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  android:
+    name: Android
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: android
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Read build requirements
+        id: requirements
+        working-directory: ${{ github.workspace }}
+        shell: pwsh
+        run: |
+          Import-Module ./scripts/BuildRequirements.psm1
+          $required = Get-TunesLinkBuildRequirements -Root $env:GITHUB_WORKSPACE
+          "java=$($required.JavaMajor)" >> $env:GITHUB_OUTPUT
+          "platform=platforms;$($required.AndroidPlatformPackage)" >> $env:GITHUB_OUTPUT
+          "build_tools=$($required.BuildToolsVersion)" >> $env:GITHUB_OUTPUT
+      - uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5.6.0
+        with:
+          distribution: temurin
+          java-version: ${{ steps.requirements.outputs.java }}
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+      - uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4.0.1
+        with:
+          packages: ""
+      - uses: gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92 # v6.2.0
+        with:
+          cache-provider: basic
+      - name: Install Android SDK 37
+        run: >-
+          sdkmanager "${{ steps.requirements.outputs.platform }}"
+          "build-tools;${{ steps.requirements.outputs.build_tools }}"
+      - name: Test build-requirement detection
+        shell: pwsh
+        run: ../scripts/build-requirements-self-test.ps1
+      - name: Validate and build
+        run: >-
+          ./gradlew --no-daemon --warning-mode all --dependency-verification strict
+          :app:lintDebug :app:lintRelease :app:testDebugUnitTest
+          :app:assembleDebug :app:assembleRelease
+      - name: Enforce Android release size budget
+        shell: pwsh
+        run: |
+          $artifact = "app/build/outputs/apk/release/app-release-unsigned.apk"
+          # The optimized Compose APK is currently about 1.62 MiB. Keep a
+          # deliberately tight ceiling while leaving room for deterministic
+          # toolchain metadata changes between hosted runners.
+          $budget = 1.75MB
+          $size = (Get-Item -LiteralPath $artifact).Length
+          if ($size -gt $budget) {
+            throw "Android release APK is $size bytes; the budget is $budget bytes."
+          }
+      - name: Verify 16 KB page-size packaging
+        run: >-
+          "$ANDROID_HOME/build-tools/${{ steps.requirements.outputs.build_tools }}/zipalign"
+          -c -P 16 4 app/build/outputs/apk/release/app-release-unsigned.apk
+      - name: Verify repository hygiene
+        working-directory: ${{ github.workspace }}
+        shell: pwsh
+        run: ./scripts/verify-repository.ps1 -RequireCleanWorktree
+  android-device:
+    name: Android device API ${{ matrix.api-level }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - api-level: 26
+            target: google_apis
+            run-integration: false
+          - api-level: 31
+            target: google_apis
+            run-integration: true
+          # API 37 is still compiled and exercised by the local release audit. The
+          # hosted sdkmanager feed does not yet publish platforms;android-37 to
+          # emulator-runner, so CI uses the latest hosted stable device image.
+          - api-level: 36
+            target: google_apis
+            run-integration: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Read build requirements
+        id: requirements
+        shell: pwsh
+        run: |
+          Import-Module ./scripts/BuildRequirements.psm1
+          $required = Get-TunesLinkBuildRequirements -Root $env:GITHUB_WORKSPACE
+          "java=$($required.JavaMajor)" >> $env:GITHUB_OUTPUT
+      - uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5.6.0
+        with:
+          distribution: temurin
+          java-version: ${{ steps.requirements.outputs.java }}
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+      - uses: gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92 # v6.2.0
+        with:
+          cache-provider: basic
+      - name: Build debug APK
+        working-directory: android
+        run: ./gradlew --no-daemon --warning-mode all --dependency-verification strict :app:assembleDebug
+      - name: Enable KVM access
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' |
+            sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Exercise phone and tablet viewports
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
+        with:
+          api-level: ${{ matrix.api-level }}
+          target: ${{ matrix.target }}
+          arch: x86_64
+          profile: pixel_2
+          ram-size: 4096M
+          heap-size: 512M
+          # The smoke script exercises both enabled and disabled animation policies.
+          disable-animations: false
+          emulator-options: >-
+            -no-window -gpu swiftshader -noaudio -no-boot-anim
+            -camera-back none -camera-front none -no-snapshot-save
+          script: |
+            bash scripts/android-emulator-smoke.sh
+            [ "${{ matrix.run-integration }}" != "true" ] || bash scripts/android-emulator-integration.sh
+      - name: Verify Android visual baselines
+        if: matrix.api-level == 36
+        run: python3 scripts/android-visual-regression.py
+      - name: Verify repository hygiene
+        shell: pwsh
+        run: ./scripts/verify-repository.ps1 -RequireCleanWorktree
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: android-device-api-${{ matrix.api-level }}
+          path: |
+            android/app/build/reports/device-smoke
+            android/app/build/reports/device-integration
+          if-no-files-found: warn
+
+  windows:
+    name: Windows bridge
+    runs-on: windows-2025
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+      - name: Build
+        run: dotnet build .\windows\TuneLink.sln --configuration Release
+      - name: Build WinUI snapshot configuration
+        run: dotnet build .\windows\TuneLinkBridge.WinUI\TuneLinkBridge.WinUI.csproj --configuration UIQA
+      - name: Verify responsive and accessibility window layouts
+        shell: pwsh
+        run: |
+          $project = ".\windows\TuneLinkBridge.WinUI\TuneLinkBridge.WinUI.csproj"
+          $cases = @(
+            @("500x840", "1.0", "paired"),
+            @("420x640", "2.0", "long-name"),
+            @("500x840", "1.5", "both-errors"),
+            @("420x640", "2.0", "runtime-unavailable")
+          )
+          foreach ($case in $cases) {
+            dotnet run --project $project --configuration UIQA --no-build -- `
+              --verify-layout --viewport $case[0] --text-scale $case[1] --ui-state $case[2]
+            if ($LASTEXITCODE -ne 0) { throw "WinUI layout verification failed: $($case -join ', ')" }
+          }
+      - name: Verify formatting
+        run: dotnet format .\windows\TuneLink.sln --verify-no-changes --severity warn --no-restore
+      - name: Self-test
+        shell: pwsh
+        run: |
+          $executable = ".\windows\TuneLinkBridge.WinUI\bin\Release\net10.0-windows10.0.17763.0\win-x64\TunesLink Bridge.exe"
+          $process = Start-Process -FilePath $executable -ArgumentList "--self-test" -PassThru -Wait
+          if ($process.ExitCode -ne 0) { throw "Self-test failed with exit code $($process.ExitCode)." }
+      - name: Publish
+        run: >-
+          dotnet publish .\windows\TuneLinkBridge.WinUI\TuneLinkBridge.WinUI.csproj
+          --configuration Release --runtime win-x64 --self-contained true
+          -p:PublishSingleFile=true -p:DebugType=None -p:DebugSymbols=false
+          --output .\artifacts\windows
+      - name: Enforce Windows release size budget
+        shell: pwsh
+        run: |
+          $size = (Get-Item ".\artifacts\windows\TunesLink Bridge.exe").Length
+          if ($size -gt 180MB) { throw "Windows executable is $size bytes; the budget is 180 MiB." }
+          Compress-Archive -LiteralPath ".\artifacts\windows\TunesLink Bridge.exe" `
+            -DestinationPath "$env:RUNNER_TEMP\TunesLink-windows.zip"
+          $compressedSize = (Get-Item "$env:RUNNER_TEMP\TunesLink-windows.zip").Length
+          if ($compressedSize -gt 120MB) {
+            throw "Compressed Windows artifact is $compressedSize bytes; the budget is 120 MiB."
+          }
+      - name: Published worker launch and hang recovery
+        shell: pwsh
+        run: |
+          $process = Start-Process -FilePath ".\artifacts\windows\TunesLink Bridge.exe" `
+            -ArgumentList "--self-test" -PassThru -Wait
+          if ($process.ExitCode -ne 0) { throw "Published self-test failed with exit code $($process.ExitCode)." }
+      - name: Verify repository hygiene
+        shell: pwsh
+        run: ./scripts/verify-repository.ps1 -RequireCleanWorktree

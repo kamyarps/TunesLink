@@ -1,0 +1,56 @@
+{
+  "max_hash_distance": 40,
+  "max_color_distance": 18,
+  "screenshots": {
+    "android/app/build/reports/device-smoke/phone-portrait-motion.png": {
+      "hash": "fffffffffffffffffc3ffe7fffffffffb1dfffff8001ffffffffffffffffffff",
+      "average_rgb": [245, 238, 246]
+    },
+    "android/app/build/reports/device-smoke/phone-portrait-reduced-motion.png": {
+      "hash": "fffffffffffffffffc3ffe7fffffffffb1dfffff8001ffffffffffffffffffff",
+      "average_rgb": [245, 238, 246]
+    },
+    "android/app/build/reports/device-smoke/phone-landscape-font-200.png": {
+      "hash": "fffffe7fffffffffeb7ff127fffff1efffffc73bffbfffff80ff80e380ffffff",
+      "average_rgb": [229, 221, 229]
+    },
+    "android/app/build/reports/device-smoke/tablet-portrait.png": {
+      "hash": "fffffffffffffffffe7ffffffffff8a7ffff8001ffffffffffffffffffffffff",
+      "average_rgb": [245, 239, 246]
+    },
+    "android/app/build/reports/device-smoke/tablet-landscape.png": {
+      "hash": "fffffffffffffffffffffffffdbffc3fffffffffffffffffffffffffffffffff",
+      "average_rgb": [249, 246, 250]
+    },
+    "android/app/build/reports/device-integration/paired-library-categories.png": {
+      "hash": "cffdffffffffffffafffffffffffffffffffffffffffffffffffbfffffff8fff",
+      "average_rgb": [247, 246, 249]
+    },
+    "android/app/build/reports/device-integration/paired-library-songs.png": {
+      "hash": "c7fdffffffff9fff95ffffff9ffdffff9fff95ffffff9ffdffffbfffffff8fff",
+      "average_rgb": [238, 235, 244]
+    },
+    "android/app/build/reports/device-integration/now-playing-modes.png": {
+      "hash": "e7fbe007e007e007e007e007e007e007b7fffffffffffe7ffe7fffffffffffff",
+      "average_rgb": [196, 182, 224]
+    },
+    "android/app/build/reports/device-integration/searched-library.png": {
+      "hash": "cfffffffffffffff97ffffffffffffffffff0003f5b700005ffa1ff800000ff0",
+      "average_rgb": [240, 240, 245]
+    },
+    "android/app/build/reports/device-integration/paired-large-text-player-controls.png": {
+      "hash": "dbe7f81ff00ff00ff00ff81fb7fffafffffffffdfe7ffe7fffffffffffffffff",
+      "average_rgb": [214, 206, 230]
+    },
+    "android/app/build/reports/device-integration/paired-font-200-landscape.png": {
+      "hash": "ffff7fff77ffffffcbffffffeffffffffffff7fff3fffffffffff7fed3ffdfff",
+      "average_rgb": [241, 241, 243],
+      "max_hash_distance": 12,
+      "max_color_distance": 8
+    },
+    "android/app/build/reports/device-integration/changed-certificate-rejected.png": {
+      "hash": "00000000000000007ffe4ebe7ffe776e40027ffe40027ffe0000000000000000",
+      "average_rgb": [193, 181, 187]
+    }
+  }
+}

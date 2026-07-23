@@ -1,0 +1,34 @@
+
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TuneLinkBridge.Core", "TuneLinkBridge.Core\TuneLinkBridge.Core.csproj", "{B13A46F0-2495-4B49-9772-6B0686D4CA5B}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TuneLinkBridge.WinUI", "TuneLinkBridge.WinUI\TuneLinkBridge.WinUI.csproj", "{6496142C-A292-4A0F-A00D-038CF6D7501C}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TuneLinkDemoBridge", "..\test-support\TuneLinkDemoBridge\TuneLinkDemoBridge.csproj", "{6FD157C8-11DC-4AF7-9535-DF35B67A9A51}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{B13A46F0-2495-4B49-9772-6B0686D4CA5B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B13A46F0-2495-4B49-9772-6B0686D4CA5B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B13A46F0-2495-4B49-9772-6B0686D4CA5B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B13A46F0-2495-4B49-9772-6B0686D4CA5B}.Release|Any CPU.Build.0 = Release|Any CPU
+		{6496142C-A292-4A0F-A00D-038CF6D7501C}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{6496142C-A292-4A0F-A00D-038CF6D7501C}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{6496142C-A292-4A0F-A00D-038CF6D7501C}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{6496142C-A292-4A0F-A00D-038CF6D7501C}.Release|Any CPU.Build.0 = Release|Any CPU
+		{6FD157C8-11DC-4AF7-9535-DF35B67A9A51}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{6FD157C8-11DC-4AF7-9535-DF35B67A9A51}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{6FD157C8-11DC-4AF7-9535-DF35B67A9A51}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{6FD157C8-11DC-4AF7-9535-DF35B67A9A51}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal

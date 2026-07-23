@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<lint>
+    <!-- These manifest attributes are intentionally ignored on older supported devices. -->
+    <issue id="UnusedAttribute">
+        <ignore path="app/src/main/AndroidManifest.xml" />
+    </issue>
+    <!-- The API 33 override supplies monochrome layers; API 26-32 must keep valid adaptive XML. -->
+    <issue id="MonochromeLauncherIcon">
+        <ignore path="app/src/main/res/mipmap-anydpi/ic_launcher.xml" />
+        <ignore path="app/src/main/res/mipmap-anydpi/ic_launcher_round.xml" />
+    </issue>
+</lint>

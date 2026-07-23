@@ -1,0 +1,7 @@
+<resources>
+    <color name="accent">#FF5B84</color>
+    <color name="app_window_background">#FAFAFC</color>
+    <!-- API 26 has no light navigation-bar icons, so retain contrast there. -->
+    <color name="app_system_bar_background">#09090B</color>
+    <color name="splash_icon_background">#FFFFFF</color>
+</resources>

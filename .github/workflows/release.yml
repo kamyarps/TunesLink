@@ -1,0 +1,276 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing v* tag to publish as a draft release
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate release source
+    runs-on: ubuntu-24.04
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref }}
+          fetch-depth: 0
+      - name: Verify version, tag, and repository hygiene
+        shell: pwsh
+        run: |
+          ./scripts/verify-repository.ps1
+          $build = Get-Content -Raw ./android/app/build.gradle
+          $version = [regex]::Match($build, 'versionName\s*=\s*"([^"]+)"').Groups[1].Value
+          if ($env:RELEASE_TAG -ne "v$version") {
+            throw "Tag $env:RELEASE_TAG does not match application version $version."
+          }
+          if (-not (git tag --points-at HEAD | Where-Object { $_ -eq $env:RELEASE_TAG })) {
+            throw "Release tag does not point at the checked-out commit."
+          }
+          git fetch origin main --no-tags
+          if ((git rev-parse HEAD) -ne (git rev-parse origin/main)) {
+            throw "Release tag must point at the current main commit."
+          }
+
+  android:
+    name: Signed Android release
+    needs: validate
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    env:
+      TunesLink_ANDROID_KEYSTORE: ${{ github.workspace }}/android/release-signing.jks
+      TunesLink_ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      TunesLink_ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      TunesLink_ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref }}
+      - name: Read build requirements
+        id: requirements
+        shell: pwsh
+        run: |
+          Import-Module ./scripts/BuildRequirements.psm1
+          $required = Get-TunesLinkBuildRequirements -Root $env:GITHUB_WORKSPACE
+          "java=$($required.JavaMajor)" >> $env:GITHUB_OUTPUT
+          "platform=platforms;$($required.AndroidPlatformPackage)" >> $env:GITHUB_OUTPUT
+          "build_tools=$($required.BuildToolsVersion)" >> $env:GITHUB_OUTPUT
+      - uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5.6.0
+        with:
+          distribution: temurin
+          java-version: ${{ steps.requirements.outputs.java }}
+      - uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4.0.1
+        with:
+          packages: ""
+      - uses: gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92 # v6.2.0
+        with:
+          cache-provider: basic
+      - name: Require Android signing secrets
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          test -n "$KEYSTORE_BASE64"
+          test -n "$TunesLink_ANDROID_STORE_PASSWORD"
+          test -n "$TunesLink_ANDROID_KEY_ALIAS"
+          test -n "$TunesLink_ANDROID_KEY_PASSWORD"
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$TunesLink_ANDROID_KEYSTORE"
+      - name: Install pinned Android SDK
+        run: >-
+          sdkmanager "${{ steps.requirements.outputs.platform }}"
+          "build-tools;${{ steps.requirements.outputs.build_tools }}"
+      - name: Build signed APK
+        working-directory: android
+        run: >-
+          ./gradlew --no-daemon --warning-mode all --dependency-verification strict
+          :app:lintRelease :app:testDebugUnitTest :app:assembleRelease
+      - name: Verify Android signature
+        run: >-
+          "$ANDROID_HOME/build-tools/${{ steps.requirements.outputs.build_tools }}/apksigner"
+          verify --verbose android/app/build/outputs/apk/release/app-release.apk
+      - name: Stage public APK
+        run: |
+          mkdir -p artifacts/release
+          cp android/app/build/outputs/apk/release/app-release.apk artifacts/release/TunesLink.apk
+      - name: Generate SPDX SBOM
+        env:
+          VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
+        run: |
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            --output "$RUNNER_TEMP/sbom-tool" \
+            https://github.com/microsoft/sbom-tool/releases/download/v4.1.5/sbom-tool-linux-x64
+          echo "bf5d4f99bc98c119d549d08fc02ae92598a7a42772f17317c01031a92632e05b  $RUNNER_TEMP/sbom-tool" | sha256sum --check
+          chmod +x "$RUNNER_TEMP/sbom-tool"
+          "$RUNNER_TEMP/sbom-tool" generate \
+            -b android/app/build/outputs -bc android -pn TunesLink-Android \
+            -pv "$VERSION" -ps kamyarps \
+            -nsb "https://github.com/$GITHUB_REPOSITORY"
+          cp android/app/build/outputs/_manifest/spdx_2.2/manifest.spdx.json \
+            artifacts/release/TunesLink-Android.spdx.json
+      - uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        if: ${{ !github.event.repository.private }}
+        with:
+          subject-path: artifacts/release/TunesLink.apk
+          sbom-path: android/app/build/outputs/_manifest/spdx_2.2/manifest.spdx.json
+      - uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        if: ${{ !github.event.repository.private }}
+        with:
+          subject-path: artifacts/release/TunesLink.apk
+      - name: Verify repository hygiene
+        shell: pwsh
+        run: ./scripts/verify-repository.ps1 -RequireCleanWorktree
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: TunesLink-android-signed
+          path: artifacts/release
+          if-no-files-found: error
+
+  windows:
+    name: Windows release
+    needs: validate
+    runs-on: windows-2025
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref }}
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+      - name: Test and publish
+        shell: pwsh
+        run: |
+          .\scripts\test.ps1 -Component Windows
+          dotnet publish .\windows\TuneLinkBridge.WinUI\TuneLinkBridge.WinUI.csproj `
+            --configuration Release --runtime win-x64 --self-contained true `
+            -p:PublishSingleFile=true -p:DebugType=None -p:DebugSymbols=false `
+            --output .\artifacts\windows
+          $size = (Get-Item ".\artifacts\windows\TunesLink Bridge.exe").Length
+          if ($size -gt 180MB) { throw "Windows executable is $size bytes; the budget is 180 MiB." }
+          Compress-Archive -LiteralPath ".\artifacts\windows\TunesLink Bridge.exe" `
+            -DestinationPath "$env:RUNNER_TEMP\TunesLink-windows.zip"
+          $compressedSize = (Get-Item "$env:RUNNER_TEMP\TunesLink-windows.zip").Length
+          if ($compressedSize -gt 120MB) {
+            throw "Compressed Windows artifact is $compressedSize bytes; the budget is 120 MiB."
+          }
+          $process = Start-Process -FilePath ".\artifacts\windows\TunesLink Bridge.exe" `
+            -ArgumentList "--self-test" -PassThru -Wait
+          if ($process.ExitCode -ne 0) { throw "Published self-test failed with exit code $($process.ExitCode)." }
+      - name: Generate SPDX SBOM
+        shell: pwsh
+        env:
+          VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
+        run: |
+          $tool = "$env:RUNNER_TEMP\sbom-tool.exe"
+          Invoke-WebRequest `
+            https://github.com/microsoft/sbom-tool/releases/download/v4.1.5/sbom-tool-win-x64.exe `
+            -OutFile $tool
+          if ((Get-FileHash $tool -Algorithm SHA256).Hash.ToLowerInvariant() `
+              -ne "625767b371b7fdd58f40f618b8a86da0247a33c89e419039c86b4edba1dad4b5") {
+            throw "SBOM tool checksum mismatch."
+          }
+          & $tool generate -b .\artifacts\windows -bc .\windows `
+            -pn TunesLink-Windows -pv "$env:VERSION" -ps kamyarps `
+            -nsb "https://github.com/$env:GITHUB_REPOSITORY"
+          Copy-Item .\artifacts\windows\_manifest\spdx_2.2\manifest.spdx.json `
+            ".\artifacts\windows\TunesLink-Windows.spdx.json"
+      - uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        if: ${{ !github.event.repository.private }}
+        with:
+          subject-path: artifacts/windows/TunesLink Bridge.exe
+          sbom-path: artifacts/windows/_manifest/spdx_2.2/manifest.spdx.json
+      - uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        if: ${{ !github.event.repository.private }}
+        with:
+          subject-path: artifacts/windows/TunesLink Bridge.exe
+      - name: Verify repository hygiene
+        shell: pwsh
+        run: ./scripts/verify-repository.ps1 -RequireCleanWorktree
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: TunesLink-windows
+          path: |
+            artifacts/windows/TunesLink Bridge.exe
+            artifacts/windows/TunesLink-Windows.spdx.json
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub release
+    needs: [android, windows]
+    runs-on: windows-2025
+    permissions:
+      actions: read
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
+    steps:
+      - name: Validate release tag
+        shell: pwsh
+        run: |
+          if ($env:RELEASE_TAG -notmatch '^v\d') {
+            throw "Release tag must begin with v followed by a digit."
+          }
+          gh api "repos/$env:GITHUB_REPOSITORY/git/ref/tags/$env:RELEASE_TAG" | Out-Null
+      - name: Download release assets
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force artifacts\android, artifacts\windows | Out-Null
+          gh run download $env:GITHUB_RUN_ID --name TunesLink-android-signed `
+            --dir artifacts\android --repo $env:GITHUB_REPOSITORY
+          gh run download $env:GITHUB_RUN_ID --name TunesLink-windows `
+            --dir artifacts\windows --repo $env:GITHUB_REPOSITORY
+      - name: Generate checksums and publish
+        shell: pwsh
+        run: |
+          $assets = @(
+            (Resolve-Path artifacts\android\TunesLink.apk).Path,
+            (Resolve-Path artifacts\android\TunesLink-Android.spdx.json).Path,
+            (Resolve-Path "artifacts\windows\TunesLink Bridge.exe").Path,
+            (Resolve-Path artifacts\windows\TunesLink-Windows.spdx.json).Path
+          )
+          $checksums = foreach ($asset in $assets) {
+            $hash = (Get-FileHash -LiteralPath $asset -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$hash  $([IO.Path]::GetFileName($asset))"
+          }
+          $checksumPath = (Join-Path (Resolve-Path artifacts).Path "SHA256SUMS.txt")
+          [IO.File]::WriteAllLines($checksumPath, $checksums)
+          $assets += $checksumPath
+          $notesPath = Join-Path (Resolve-Path artifacts).Path "release-notes.md"
+          @'
+          Download the release-signed `TunesLink.apk` on Android and
+          `TunesLink Bridge.exe` on Windows.
+
+          The Windows executable in this release is not Authenticode-signed, so Windows may
+          display an **Unknown publisher** warning. Verify it with `SHA256SUMS.txt` before
+          running it. SPDX SBOMs are included for both applications.
+          '@ | Set-Content -LiteralPath $notesPath
+          if (gh release view $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --json id 2>$null) {
+            gh release upload $env:RELEASE_TAG $assets --clobber --repo $env:GITHUB_REPOSITORY
+          } else {
+            $arguments = @(
+              "release", "create", $env:RELEASE_TAG
+            ) + $assets + @(
+              "--repo", $env:GITHUB_REPOSITORY,
+              "--verify-tag", "--generate-notes", "--notes-file", $notesPath,
+              "--title", "TunesLink $env:RELEASE_TAG"
+            )
+            if ("${{ github.event_name }}" -eq "workflow_dispatch") { $arguments += "--draft" }
+            & gh @arguments
+          }

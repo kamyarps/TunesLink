@@ -1,0 +1,119 @@
+plugins {
+    id "com.android.application"
+    id "org.jetbrains.kotlin.plugin.compose"
+}
+
+def keystorePropertiesFile = rootProject.file("keystore.properties")
+def keystoreProperties = new Properties()
+if (keystorePropertiesFile.exists()) {
+    keystorePropertiesFile.withInputStream { keystoreProperties.load(it) }
+}
+def environmentKeystore = System.getenv("TunesLink_ANDROID_KEYSTORE")
+def signingEnvironmentNames = [
+        "TunesLink_ANDROID_KEYSTORE",
+        "TunesLink_ANDROID_STORE_PASSWORD",
+        "TunesLink_ANDROID_KEY_ALIAS",
+        "TunesLink_ANDROID_KEY_PASSWORD"
+]
+def presentSigningEnvironment = signingEnvironmentNames.findAll { System.getenv(it) }
+if (!presentSigningEnvironment.isEmpty() && presentSigningEnvironment.size() != signingEnvironmentNames.size()) {
+    def missing = signingEnvironmentNames.findAll { !System.getenv(it) }
+    throw new GradleException("Android signing environment is incomplete. Missing: ${missing.join(', ')}")
+}
+def environmentSigningConfigured = presentSigningEnvironment.size() == signingEnvironmentNames.size()
+if (keystorePropertiesFile.exists()) {
+    def requiredProperties = ["storeFile", "storePassword", "keyAlias", "keyPassword"]
+    def missing = requiredProperties.findAll { !keystoreProperties[it] }
+    if (!missing.isEmpty()) {
+        throw new GradleException("android/keystore.properties is incomplete. Missing: ${missing.join(', ')}")
+    }
+}
+def releaseSigningConfigured = keystorePropertiesFile.exists() || environmentSigningConfigured
+def requiredJavaVersion = providers.gradleProperty("TunesLink.javaVersion").get().toInteger()
+def requiredCompileSdk = providers.gradleProperty("TunesLink.compileSdk").get().toInteger()
+def requiredTargetSdk = providers.gradleProperty("TunesLink.targetSdk").get().toInteger()
+def requiredBuildTools = providers.gradleProperty("TunesLink.buildToolsVersion").get()
+
+android {
+    namespace = "com.kamyarps.tuneslink"
+    enableKotlin = true
+    compileSdk = requiredCompileSdk
+    buildToolsVersion = requiredBuildTools
+
+    defaultConfig {
+        applicationId = "com.kamyarps.tuneslink"
+        minSdk = 26
+        targetSdk = requiredTargetSdk
+        versionCode = 1
+        versionName = "1.0.0"
+    }
+
+    signingConfigs {
+        release {
+            if (environmentSigningConfigured) {
+                storeFile = file(environmentKeystore)
+                storePassword = System.getenv("TunesLink_ANDROID_STORE_PASSWORD")
+                keyAlias = System.getenv("TunesLink_ANDROID_KEY_ALIAS")
+                keyPassword = System.getenv("TunesLink_ANDROID_KEY_PASSWORD")
+            } else if (keystorePropertiesFile.exists()) {
+                storeFile = rootProject.file(keystoreProperties["storeFile"])
+                storePassword = keystoreProperties["storePassword"]
+                keyAlias = keystoreProperties["keyAlias"]
+                keyPassword = keystoreProperties["keyPassword"]
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled = true
+            shrinkResources = true
+            proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
+            if (releaseSigningConfigured) {
+                signingConfig = signingConfigs.release
+            }
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.toVersion(requiredJavaVersion)
+        targetCompatibility = JavaVersion.toVersion(requiredJavaVersion)
+    }
+
+    buildFeatures {
+        compose = true
+    }
+
+    tasks.withType(JavaCompile).configureEach {
+        options.compilerArgs += ["-Xlint:deprecation", "-Xlint:unchecked"]
+    }
+
+    testOptions {
+        unitTests.returnDefaultValues = true
+    }
+
+    lint {
+        warningsAsErrors = true
+        checkReleaseBuilds = true
+    }
+}
+
+dependencies {
+    def composeBom = platform("androidx.compose:compose-bom:2026.06.00")
+    implementation composeBom
+
+    implementation "androidx.activity:activity-compose:1.13.0"
+    implementation "androidx.lifecycle:lifecycle-runtime-compose:2.11.0"
+    implementation "androidx.lifecycle:lifecycle-viewmodel-compose:2.11.0"
+    implementation "androidx.lifecycle:lifecycle-viewmodel-savedstate:2.11.0"
+    implementation "androidx.compose.animation:animation"
+    implementation "androidx.compose.foundation:foundation"
+    implementation "androidx.compose.material3:material3"
+    implementation "androidx.compose.material:material-icons-extended"
+    implementation "androidx.compose.ui:ui"
+    implementation "androidx.compose.ui:ui-tooling-preview"
+    debugImplementation "androidx.compose.ui:ui-tooling"
+
+    testImplementation "junit:junit:4.13.2"
+    testImplementation "org.jetbrains.kotlinx:kotlinx-coroutines-test:1.11.0"
+}
