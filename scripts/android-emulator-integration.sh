@@ -240,6 +240,21 @@ tap_node() {
   "$adb_command" shell input tap $center
 }
 
+open_search() {
+  local center=""
+
+  dump_ui
+  # Tablet workspaces expose Search as an EditText in the top bar. On API 31,
+  # its placeholder is reported as text rather than as a content description.
+  if center="$(node_center class "android.widget.EditText")"; then
+    "$adb_command" shell input tap $center
+    return
+  fi
+
+  # Phone layouts expose Search as a navigation destination.
+  tap_node desc "Search"
+}
+
 clear_focused_edit_text() {
   "$adb_command" shell input keyevent KEYCODE_MOVE_END
   for _ in $(seq 1 64); do
@@ -619,7 +634,7 @@ if (( playback_streams_after != playback_streams_before ||
 fi
 
 sleep 2
-tap_node desc "Search"
+open_search
 enter_edit_text "Golden"
 for _ in $(seq 1 20); do
   bridge_has_line "library:Golden" && break
