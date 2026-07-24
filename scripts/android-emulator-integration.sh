@@ -439,7 +439,10 @@ clear_search() {
   local center
   for _ in $(seq 1 5); do
     dump_ui
-    if node_center text "Search your library" >/dev/null; then
+    # The empty-field state is the stable contract. Phone layouts expose
+    # "Search your library" as the field placeholder, while tablet layouts
+    # expose "Search" and render "Search your music" in the content pane.
+    if node_center edit-text "" >/dev/null; then
       return
     fi
     if center="$(node_center desc "Clear search")"; then
@@ -452,6 +455,39 @@ clear_search() {
     fi
     sleep 1
   done
+  cat "$ui_xml" >&2
+  return 1
+}
+
+return_to_library() {
+  local center=""
+
+  for _ in $(seq 1 10); do
+    dump_ui
+
+    # Phone search exposes a Cancel action while the field is active, followed
+    # by the bottom-navigation Library destination.
+    if center="$(node_center text "Cancel")"; then
+      "$adb_command" shell input tap $center
+      sleep 1
+      continue
+    fi
+    if center="$(node_center desc "Library")"; then
+      "$adb_command" shell input tap $center
+      return
+    fi
+
+    # Tablet search is part of the persistent library workspace. Selecting a
+    # sidebar category cancels search and restores the Library destination.
+    if center="$(node_center text "Songs")"; then
+      "$adb_command" shell input tap $center
+      return
+    fi
+
+    sleep 1
+  done
+
+  printf 'Unable to leave Search for the Library destination.\n' >&2
   cat "$ui_xml" >&2
   return 1
 }
@@ -653,8 +689,7 @@ wait_node text "Search your music" >/dev/null
 echo "checkpoint: empty search prompt restored"
 capture "search-reset"
 echo "checkpoint: search reset captured"
-tap_node text "Cancel"
-tap_node desc "Library"
+return_to_library
 wait_node text "Midnight Drive" >/dev/null
 
 # Keep the live state stream while the app process is in the background.

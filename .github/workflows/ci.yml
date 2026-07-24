@@ -55,6 +55,9 @@ jobs:
       - name: Test build-requirement detection
         shell: pwsh
         run: ../scripts/build-requirements-self-test.ps1
+      - name: Test Android integration selectors
+        working-directory: ${{ github.workspace }}
+        run: python3 scripts/android-integration-selector-self-test.py
       - name: Validate and build
         run: >-
           ./gradlew --no-daemon --warning-mode all --dependency-verification strict
