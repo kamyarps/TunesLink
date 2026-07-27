@@ -16,6 +16,12 @@ internal static partial class BridgeSelfTest
     private static async Task TestSafetyRegressionsAsync(string rootDirectory)
     {
         Ensure(ItunesController.SearchAllFields == 0, "iTunes search covers all metadata fields");
+        Ensure(ItunesController.DisplayArtist("") == "Unknown Artist"
+            && ItunesController.DisplayArtist("  Artist  ") == "Artist",
+            "missing iTunes artist metadata has a stable display value");
+        Ensure(ItunesController.DisplayAlbum("   ") == "Unknown Album"
+            && ItunesController.DisplayAlbum("  Album  ") == "Album",
+            "missing iTunes album metadata has a stable display value");
         Ensure(ItunesController.NormalizeArtwork("invalid", [1, 2, 3, 4], 180) is null,
             "invalid artwork fails closed");
         Ensure(ItunesController.NormalizeArtwork("large",

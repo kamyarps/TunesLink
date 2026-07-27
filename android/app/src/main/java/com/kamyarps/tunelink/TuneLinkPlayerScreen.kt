@@ -308,7 +308,7 @@ private fun PlayerDetails(
             )
             Text(
                 listOf(
-                    player.artist.ifBlank { stringResource(R.string.open_itunes_on_computer) },
+                    player.artist.ifBlank { stringResource(R.string.unknown_artist) },
                     player.album,
                 ).filter(String::isNotBlank).joinToString(" · "),
                 style = MaterialTheme.typography.bodyLarge,

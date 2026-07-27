@@ -526,7 +526,7 @@ private fun TabletNowPlayingHeader(
             )
             Text(
                 listOf(player.artist, player.album).filter(String::isNotBlank).joinToString(" · ")
-                    .ifBlank { stringResource(R.string.open_itunes_on_computer) },
+                    .ifBlank { stringResource(R.string.unknown_artist) },
                 style = MaterialTheme.typography.labelMedium,
                 color = TunesLinkTheme.colors.secondaryText,
                 maxLines = 1,

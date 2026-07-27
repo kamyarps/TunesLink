@@ -90,8 +90,8 @@ internal sealed class ItunesController : IMediaController
                 if (track is null)
                     return EmptyState(true, playing, soundVolume);
                 string title = ReadString(track, "Name");
-                string artist = ReadString(track, "Artist");
-                string album = ReadString(track, "Album");
+                string artist = DisplayArtist(ReadString(track, "Artist"));
+                string album = DisplayAlbum(ReadString(track, "Album"));
                 double duration = Math.Max(0, ReadDouble(track, "Duration"));
                 double position = Math.Clamp(Convert.ToDouble(app.PlayerPosition), 0, Math.Max(0, duration));
                 string trackId = RegisterPlaybackTrack((object)app, track);
@@ -664,8 +664,8 @@ internal sealed class ItunesController : IMediaController
         return new LibraryTrack(
             id,
             string.IsNullOrWhiteSpace(title) ? "Untitled" : title,
-            ReadString(track, "Artist"),
-            ReadString(track, "Album"),
+            DisplayArtist(ReadString(track, "Artist")),
+            DisplayAlbum(ReadString(track, "Album")),
             Math.Max(0, ReadDouble(track, "Duration")),
             Math.Max(0, ReadInt(track, "TrackNumber")),
             Math.Max(0, ReadInt(track, "DiscNumber")),
@@ -1050,10 +1050,10 @@ internal sealed class ItunesController : IMediaController
         return string.Equals(albumKey, value, StringComparison.OrdinalIgnoreCase);
     }
 
-    private static string DisplayArtist(string artist) =>
+    internal static string DisplayArtist(string artist) =>
         string.IsNullOrWhiteSpace(artist) ? "Unknown Artist" : artist.Trim();
 
-    private static string DisplayAlbum(string album) =>
+    internal static string DisplayAlbum(string album) =>
         string.IsNullOrWhiteSpace(album) ? "Unknown Album" : album.Trim();
 
     private static string DisplayGenre(string genre) =>

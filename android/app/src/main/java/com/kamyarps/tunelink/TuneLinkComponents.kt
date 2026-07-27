@@ -555,7 +555,7 @@ private fun MiniPlayerContent(
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                player.artist.ifBlank { stringResource(R.string.open_itunes_on_computer) },
+                player.artist.ifBlank { stringResource(R.string.unknown_artist) },
                 style = MaterialTheme.typography.bodyMedium,
                 color = TunesLinkTheme.colors.secondaryText,
                 maxLines = 1,

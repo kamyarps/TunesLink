@@ -88,6 +88,13 @@ public final class BridgeClientTest {
     }
 
     @Test
+    public void playerStateUsesUnknownArtistForMissingMetadata() {
+        assertEquals("Unknown Artist", BridgeClient.displayArtist(null));
+        assertEquals("Unknown Artist", BridgeClient.displayArtist("   "));
+        assertEquals("Artist", BridgeClient.displayArtist("  Artist  "));
+    }
+
+    @Test
     public void collectionRevisionIsStoredWithItsPage() {
         BridgeClient.LibraryCollectionPage page = new BridgeClient.LibraryCollectionPage(
                 List.of(), 0, 60, 0, false, "catalog-456");
