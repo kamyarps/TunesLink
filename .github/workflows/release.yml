@@ -180,7 +180,8 @@ jobs:
             throw "Published UI verification failed with exit code $($process.ExitCode)."
           }
           $renamed = Join-Path $env:RUNNER_TEMP "TunesLink.Bridge (1).exe"
-          Copy-Item -LiteralPath $executable -Destination $renamed -Force
+          Copy-Item -LiteralPath ".\artifacts\windows\TunesLink.Bridge.exe" `
+            -Destination $renamed -Force
           $process = Start-Process -FilePath $renamed `
             -ArgumentList "--verify-layout", "--viewport", "420x640", `
               "--text-scale", "2.0", "--ui-state", "runtime-unavailable" `
