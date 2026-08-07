@@ -83,6 +83,7 @@
     <string name="try_again">Try again</string>
     <string name="copied">Copied</string>
     <string name="nothing_playing">Nothing playing</string>
+    <string name="choose_a_song">Choose a song in iTunes</string>
     <string name="unknown_artist">Unknown Artist</string>
     <string name="local_network_denied_error">Local network access is required to find and control your computer.</string>
     <string name="local_network_denied_announcement">Local network access was not allowed.</string>

@@ -50,6 +50,7 @@ internal data class PendingMutation(
     val previousTrackId: String? = null,
     val startedAtMillis: Long,
     val timeoutMillis: Long = 2_000,
+    val deadlineMillis: Long = 4_000,
     val refreshRequested: Boolean = false,
 ) {
     fun matches(state: BridgeClient.PlayerState): Boolean = when (action) {
@@ -198,6 +199,23 @@ internal fun shouldPresentConnectionRecoveryDialog(
 ): Boolean = connectedRoute && !hasModal && availability.visible &&
     dismissedKind != availability.kind
 
+internal fun playerHasTrack(player: PlayerUiState): Boolean =
+    player.title.isNotBlank() || player.trackId.isNotBlank()
+
+internal fun playerIdleSubtitle(player: PlayerUiState, unavailableHint: Boolean): Int? = when {
+    playerHasTrack(player) -> null
+    player.iTunesAvailable -> R.string.choose_a_song
+    unavailableHint -> R.string.open_itunes
+    else -> null
+}
+
+internal fun searchBackEnabled(
+    destination: TunesLinkDestination?,
+    searchActive: Boolean,
+    editingQuery: String,
+): Boolean = destination == TunesLinkDestination.Search &&
+    (searchActive || editingQuery.isNotEmpty())
+
 internal fun navigationBackAction(
     hasModal: Boolean,
     searchActive: Boolean,
@@ -220,10 +238,9 @@ internal data class ModalPresentation(
 internal fun mergePlaybackState(
     current: PlayerUiState,
     incoming: BridgeClient.PlayerState,
-    forceAuthoritative: Boolean = false,
 ): PlayerUiState {
     val completed = current.pendingMutations.values.filter { mutation ->
-        forceAuthoritative || mutation.refreshRequested || mutation.matches(incoming)
+        mutation.refreshRequested || mutation.matches(incoming)
     }.map(PendingMutation::action).toSet()
     val remaining = current.pendingMutations - completed
     val protectedFields = remaining.values.flatMap(PendingMutation::affectedFields).toSet()

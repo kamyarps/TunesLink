@@ -11,8 +11,8 @@ internal static class ItunesWorkerHost
         {
             Console.InputEncoding = System.Text.Encoding.UTF8;
             Console.OutputEncoding = System.Text.Encoding.UTF8;
-            while (await ItunesWorkerProtocol.ReadBoundedLineAsync(Console.In,
-                       ItunesWorkerProtocol.MaxRequestCharacters).ConfigureAwait(false) is { } line)
+            BoundedLineReader requests = new(Console.In, ItunesWorkerProtocol.MaxRequestCharacters);
+            while (await requests.ReadLineAsync().ConfigureAwait(false) is { } line)
             {
                 int requestId = 0;
                 ItunesWorkerRequest request;

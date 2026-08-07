@@ -198,13 +198,13 @@ internal fun TunesLinkPrimaryButton(
             disabledContentColor = TunesLinkTheme.colors.secondaryText,
         ),
         modifier = modifier
+            .scale(scale)
             .onFocusChanged { focused = it.isFocused }
             .TunesLinkFocusBorder(
                 focused = focused,
                 color = TunesLinkTheme.colors.focusIndicator,
                 shape = RoundedCornerShape(16.dp),
             )
-            .scale(scale)
             .background(
                 brush = if (enabled) {
                     Brush.linearGradient(listOf(TunesLinkTheme.colors.brandStart, TunesLinkTheme.colors.brandEnd))
@@ -256,6 +256,19 @@ internal fun TunesLinkTonalAction(
         }
         Text(label, style = MaterialTheme.typography.bodyLarge, color = contentColor, fontWeight = FontWeight.Medium)
     }
+}
+
+@Composable
+internal fun playerSubtitle(
+    player: PlayerUiState,
+    includeAlbum: Boolean,
+    unavailableHint: Boolean,
+): String {
+    playerIdleSubtitle(player, unavailableHint)?.let { return stringResource(it) }
+    if (!playerHasTrack(player)) return ""
+    val parts = if (includeAlbum) listOf(player.artist, player.album) else listOf(player.artist)
+    return parts.filter(String::isNotBlank).joinToString(" · ")
+        .ifBlank { stringResource(R.string.unknown_artist) }
 }
 
 @Composable
@@ -434,12 +447,7 @@ internal fun UnifiedPlayerBar(
     } else {
         fadeOut(tween(TunesLinkMotion.ReducedMotionFade, easing = TunesLinkMotion.EaseOut))
     }
-    Column(
-        modifier
-            .fillMaxWidth()
-            .background(TunesLinkTheme.colors.surface.copy(alpha = 0.91f))
-            .navigationBarsPadding(),
-    ) {
+    Column(modifier.fillMaxWidth().navigationBarsPadding()) {
         if (compactLandscape && (showMiniPlayer || showNavigation)) {
             Row(
                 Modifier.fillMaxWidth().height(80.dp),
@@ -555,7 +563,7 @@ private fun MiniPlayerContent(
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                player.artist.ifBlank { stringResource(R.string.unknown_artist) },
+                playerSubtitle(player, includeAlbum = false, unavailableHint = true),
                 style = MaterialTheme.typography.bodyMedium,
                 color = TunesLinkTheme.colors.secondaryText,
                 maxLines = 1,

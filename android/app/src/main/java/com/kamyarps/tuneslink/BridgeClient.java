@@ -276,8 +276,8 @@ class BridgeClient extends BridgeClientSupport {
         return new PlayerState(
                 json.optBoolean("iTunesAvailable", false),
                 json.optBoolean("playing", false),
-                json.optString("title", "Nothing playing"),
-                displayArtist(json.optString("artist", "")),
+                json.optString("title", ""),
+                json.optString("artist", ""),
                 json.optString("album", ""),
                 json.optDouble("duration", 0),
                 json.optDouble("position", 0),
@@ -286,10 +286,6 @@ class BridgeClient extends BridgeClientSupport {
                 json.optString("trackId", ""),
                 json.optBoolean("shuffleEnabled", false),
                 normalizedRepeatMode(json.optString("repeatMode", "off")));
-    }
-
-    static String displayArtist(String artist) {
-        return artist == null || artist.isBlank() ? "Unknown Artist" : artist.trim();
     }
 
     static LibraryPage parseLibraryPage(JSONObject json, int requestedLimit) {

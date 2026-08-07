@@ -175,6 +175,8 @@ private fun PairingDialog(
 ) {
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
+    val requester = remember { FocusRequester() }
+    LaunchedEffect(Unit) { requester.requestFocus() }
     val submitPairing = {
         focusManager.clearFocus(force = true)
         keyboardController?.hide()
@@ -201,7 +203,7 @@ private fun PairingDialog(
                     supportingText = state.pairing.codeError?.let { error -> { Text(error, color = TunesLinkTheme.colors.danger) } },
                     colors = tunesLinkTextFieldColors(),
                     shape = RoundedCornerShape(16.dp),
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().focusRequester(requester),
                 )
             }
         },

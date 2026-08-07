@@ -73,6 +73,7 @@ internal sealed class ItunesWorkerClient : IDisposable
     private readonly TimeSpan workerIdleTimeout;
     private readonly System.Threading.Timer idleTimer;
     private Process? worker;
+    private BoundedLineReader? workerResponses;
     private int nextRequestId;
     private int workerGeneration;
     private bool disposed;
@@ -168,13 +169,12 @@ internal sealed class ItunesWorkerClient : IDisposable
             await requestGate.WaitAsync(operation.Token).ConfigureAwait(false);
             entered = true;
             Process process = EnsureWorker();
+            BoundedLineReader responses = workerResponses!;
             string requestJson = JsonSerializer.Serialize(request, ItunesWorkerProtocol.JsonOptions);
             await process.StandardInput.WriteLineAsync(requestJson.AsMemory(), operation.Token)
                 .ConfigureAwait(false);
             await process.StandardInput.FlushAsync(operation.Token).ConfigureAwait(false);
-            string? line = await ItunesWorkerProtocol.ReadBoundedLineAsync(
-                process.StandardOutput, ItunesWorkerProtocol.MaxResponseCharacters,
-                operation.Token).ConfigureAwait(false);
+            string? line = await responses.ReadLineAsync(operation.Token).ConfigureAwait(false);
             if (line is null) throw new IOException("The iTunes worker stopped unexpectedly");
             ItunesWorkerResponse response;
             try
@@ -259,6 +259,8 @@ internal sealed class ItunesWorkerClient : IDisposable
         start.ArgumentList.Add(workerArgument);
         worker = Process.Start(start)
             ?? throw new InvalidOperationException("Could not start the iTunes worker");
+        workerResponses = new BoundedLineReader(worker.StandardOutput,
+            ItunesWorkerProtocol.MaxResponseCharacters);
         workerGeneration++;
         worker.ErrorDataReceived += (_, _) => { };
         worker.BeginErrorReadLine();
@@ -295,6 +297,7 @@ internal sealed class ItunesWorkerClient : IDisposable
     {
         Process? process = worker;
         worker = null;
+        workerResponses = null;
         if (process is null) return;
         try
         {

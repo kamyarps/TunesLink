@@ -83,6 +83,100 @@ class TunesLinkPresentationTest {
     }
 
     @Test
+    fun aLeftoverQueryOnlyClaimsBackWhileTheSearchDestinationIsVisible() {
+        assertTrue(searchBackEnabled(TunesLinkDestination.Search, false, "beatles"))
+        assertTrue(searchBackEnabled(TunesLinkDestination.Search, true, ""))
+        assertFalse(searchBackEnabled(TunesLinkDestination.Library, false, "beatles"))
+        assertFalse(searchBackEnabled(TunesLinkDestination.NowPlaying, true, "beatles"))
+        assertFalse(searchBackEnabled(TunesLinkDestination.Search, false, ""))
+        assertFalse(searchBackEnabled(null, true, "beatles"))
+    }
+
+    @Test
+    fun idlePlaybackCopyComesFromResourcesRatherThanTheWire() {
+        val idle = PlayerUiState(iTunesAvailable = true)
+        val unavailable = PlayerUiState(iTunesAvailable = false)
+        val playing = PlayerUiState(iTunesAvailable = true, title = "Song", trackId = "abc")
+
+        assertEquals(R.string.choose_a_song, playerIdleSubtitle(idle, unavailableHint = false))
+        assertEquals(R.string.choose_a_song, playerIdleSubtitle(idle, unavailableHint = true))
+        assertEquals(R.string.open_itunes, playerIdleSubtitle(unavailable, unavailableHint = true))
+        assertEquals(null, playerIdleSubtitle(unavailable, unavailableHint = false))
+        assertEquals(null, playerIdleSubtitle(playing, unavailableHint = true))
+
+        assertFalse(playerHasTrack(idle))
+        assertTrue(playerHasTrack(playing))
+        assertTrue(playerHasTrack(PlayerUiState(trackId = "abc")))
+    }
+
+    @Test
+    fun browsePagingCursorsAreIndependentPerTarget() {
+        val browse = LibraryBrowseUiState(
+            kind = LibraryBrowseKind.Albums,
+            collections = listOf(LibraryCollectionUiState("album-1", "Album", "Artist", 9, "art")),
+            collectionsCursor = LibraryPageCursor(total = 400, windowStart = 60, hasMore = true),
+        )
+
+        assertEquals(LibraryBrowseTarget.Collections, browse.visibleTarget)
+        assertEquals(400, browse.total)
+        assertTrue(browse.hasMore)
+
+        val expanded = browse.copy(
+            selectedCollection = SelectedLibraryCollection(
+                LibraryBrowseKind.Albums, "album-1", "Album", "Artist",
+            ),
+            tracksCursor = LibraryPageCursor(total = 9, isLoading = true),
+        )
+
+        assertEquals(LibraryBrowseTarget.Tracks, expanded.visibleTarget)
+        assertEquals(9, expanded.total)
+        assertEquals(400, expanded.collectionsCursor.total)
+        assertEquals(60, expanded.collectionsCursor.windowStart)
+        assertTrue(expanded.collectionsCursor.hasMore)
+
+        val pagedWhileExpanded = expanded.withCursor(
+            LibraryBrowseTarget.Collections,
+            expanded.collectionsCursor.copy(windowStart = 120),
+        )
+        assertEquals(120, pagedWhileExpanded.collectionsCursor.windowStart)
+        assertEquals(9, pagedWhileExpanded.tracksCursor.total)
+    }
+
+    @Test
+    fun settledCursorTracksWindowGrowthAndRevisions() {
+        val cursor = LibraryPageCursor(revision = "old", isLoadingMore = true)
+        val window = PageWindow(List(120) { "track-$it" }, 0)
+
+        val settled = settledCursor(cursor, window, total = 400, revision = "new", replaced = false)
+
+        assertEquals(400, settled.total)
+        assertEquals("new", settled.revision)
+        assertTrue(settled.hasMore)
+        assertFalse(settled.hasPrevious)
+        assertFalse(settled.isBusy)
+        assertEquals(null, settled.error)
+
+        val exhausted = settledCursor(cursor, PageWindow(List(400) { "t" }, 0), 400, "", false)
+        assertFalse(exhausted.hasMore)
+        assertEquals("old", exhausted.revision)
+
+        assertTrue(revisionChanged("old", "new"))
+        assertFalse(revisionChanged("", "new"))
+        assertFalse(revisionChanged("old", ""))
+        assertFalse(revisionChanged("old", "old"))
+    }
+
+    @Test
+    fun trackDurationsStayReadablePastAnHour() {
+        assertEquals("0:07", formatTime(7.0))
+        assertEquals("3:05", formatTime(185.0))
+        assertEquals("59:59", formatTime(3_599.0))
+        assertEquals("1:00:00", formatTime(3_600.0))
+        assertEquals("1:02:05", formatTime(3_725.0))
+        assertEquals("0:00", formatTime(-5.0))
+    }
+
+    @Test
     fun connectedDestinationsShareRootContentWithoutLosingTheirRouteState() {
         val library = TunesLinkRoute.Connected(TunesLinkDestination.Library)
         val nowPlaying = TunesLinkRoute.Connected(TunesLinkDestination.NowPlaying)

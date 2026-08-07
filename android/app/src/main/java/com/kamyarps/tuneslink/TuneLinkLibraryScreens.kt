@@ -81,10 +81,14 @@ internal fun LibraryBrowseScreen(
     val browseIdentity = browse.selectedCollection?.let { "${it.kind.name}:${it.id}" }
         ?: browse.kind?.name
         ?: "root"
-    val listState = key(browseIdentity) { rememberLazyListState() }
-    val showingTracks = browse.kind == LibraryBrowseKind.Songs || browse.selectedCollection != null
+    val showingTracks = browse.showingTracks
+    val browseError = browse.error
+    val collectionsListState = key(browse.kind?.name ?: "root") { rememberLazyListState() }
+    val tracksListState = key(browseIdentity) { rememberLazyListState() }
+    val listState = if (showingTracks) tracksListState else collectionsListState
 
     LaunchedEffect(listState, browse.collections.size, browse.tracks.size, showingTracks) {
+        val target = browse.visibleTarget
         snapshotFlow {
             val visible = listState.layoutInfo.visibleItemsInfo
             (visible.firstOrNull()?.index ?: 0) to (visible.lastOrNull()?.index ?: 0)
@@ -92,8 +96,8 @@ internal fun LibraryBrowseScreen(
             .distinctUntilChanged()
             .collect { (firstVisibleIndex, lastVisibleIndex) ->
                 val lastDataIndex = if (showingTracks) browse.tracks.lastIndex else browse.collections.lastIndex
-                if (firstVisibleIndex <= 6) viewModel.loadPreviousBrowse()
-                if (lastVisibleIndex >= lastDataIndex - 6) viewModel.loadMoreBrowse()
+                if (firstVisibleIndex <= 6) viewModel.loadPreviousBrowse(target)
+                if (lastVisibleIndex >= lastDataIndex - 6) viewModel.loadMoreBrowse(target)
             }
     }
 
@@ -145,9 +149,9 @@ internal fun LibraryBrowseScreen(
                 loading = true,
                 modifier = Modifier.fillMaxSize(),
             )
-            browse.error != null && browse.collections.isEmpty() && browse.tracks.isEmpty() -> ContentState(
+            browseError != null && browse.collections.isEmpty() && browse.tracks.isEmpty() -> ContentState(
                 stringResource(R.string.library_unavailable),
-                browse.error,
+                browseError,
                 onRetry = {
                     val selected = browse.selectedCollection
                     if (selected != null) {

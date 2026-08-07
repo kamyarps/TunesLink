@@ -67,8 +67,7 @@ internal fun TunesLinkViewModel.commandResult(
         override fun success(value: Boolean) {
             val player = mutableState.value.player
             if (player.pending(mutation.action)?.operationId != mutation.operationId) return
-            // HTTP success means the bridge accepted the command. The mutation remains pending
-            // until the SSE stream confirms the resulting authoritative player state.
+            scheduleMutationReconciliation(mutation)
         }
 
         override fun failure(message: String, unauthorized: Boolean) {
@@ -149,18 +148,53 @@ internal fun TunesLinkViewModel.scheduleMutationReconciliation(mutation: Pending
     mutationTimeoutJobs.remove(mutation.operationId)?.cancel()
     mutationTimeoutJobs[mutation.operationId] = viewModelScope.launch {
         delay(mutation.timeoutMillis)
-        val current = mutableState.value.player.pending(mutation.action)
-        if (current?.operationId != mutation.operationId) return@launch
-        mutableState.update { state ->
-            val pending = state.player.pending(mutation.action)
-            if (pending?.operationId != mutation.operationId) state else state.copy(
-                player = state.player.copy(
-                    pendingMutations = state.player.pendingMutations +
-                        (mutation.action to pending.copy(refreshRequested = true)),
-                ),
-            )
+        if (!requestMutationRefresh(mutation)) return@launch
+        delay(mutation.deadlineMillis)
+        settleUnconfirmedMutation(mutation)
+    }
+}
+
+private fun TunesLinkViewModel.requestMutationRefresh(mutation: PendingMutation): Boolean {
+    if (mutableState.value.player.pending(mutation.action)?.operationId != mutation.operationId) {
+        return false
+    }
+    mutableState.update { state ->
+        val pending = state.player.pending(mutation.action)
+        if (pending?.operationId != mutation.operationId) state else state.copy(
+            player = state.player.copy(
+                pendingMutations = state.player.pendingMutations +
+                    (mutation.action to pending.copy(refreshRequested = true)),
+            ),
+        )
+    }
+    repository.requestStateRefresh()
+    return true
+}
+
+private fun TunesLinkViewModel.settleUnconfirmedMutation(mutation: PendingMutation) {
+    if (mutableState.value.player.pending(mutation.action)?.operationId != mutation.operationId) {
+        return
+    }
+    val authoritative = latestAuthoritativeState
+    val notApplied = getApplication<Application>()
+        .getString(R.string.playback_change_not_applied)
+    mutableState.update { state ->
+        val pending = state.player.pending(mutation.action)
+        if (pending?.operationId != mutation.operationId) return@update state
+        val withoutExpired = state.player.copy(
+            pendingMutations = state.player.pendingMutations - mutation.action,
+        )
+        val settled = if (authoritative == null) {
+            withoutExpired
+        } else {
+            mergePlaybackState(withoutExpired, authoritative)
         }
-        repository.requestStateRefresh()
+        state.copy(player = settled.copy(commandError = notApplied))
+    }
+    mutationTimeoutJobs.remove(mutation.operationId)
+    announce(R.string.playback_change_not_applied, haptic = HapticIntent.Reject)
+    if (mutation.action == PlaybackAction.PlayTrack) {
+        loadArtwork(mutableState.value.player.artworkId)
     }
 }
 

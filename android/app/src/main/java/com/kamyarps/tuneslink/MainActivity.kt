@@ -247,9 +247,14 @@ private fun TunesLinkApp(
     }
 
     val connectedDestination = (state.route as? TunesLinkRoute.Connected)?.destination
+    val searchBackable = searchBackEnabled(
+        destination = connectedDestination,
+        searchActive = state.library.searchActive,
+        editingQuery = state.library.editingQuery,
+    )
     val backHandled = !imeVisible && (state.modal != null || showRecoveryDialog ||
-        state.browse.canNavigateUp || state.library.searchActive ||
-        state.library.editingQuery.isNotEmpty() || connectedDestination == TunesLinkDestination.NowPlaying)
+        state.browse.canNavigateUp || searchBackable ||
+        connectedDestination == TunesLinkDestination.NowPlaying)
     TunesLinkSharedTransitionRoot {
         BackHandler(enabled = backHandled) {
         if (showRecoveryDialog) {
@@ -259,7 +264,7 @@ private fun TunesLinkApp(
         } else {
             when (navigationBackAction(
                 hasModal = state.modal != null,
-                searchActive = state.library.searchActive || state.library.editingQuery.isNotEmpty(),
+                searchActive = searchBackable,
                 destination = connectedDestination,
             )) {
                 NavigationBackAction.DismissModal -> viewModel.requestModalDismiss()

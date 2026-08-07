@@ -307,10 +307,7 @@ private fun PlayerDetails(
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                listOf(
-                    player.artist.ifBlank { stringResource(R.string.unknown_artist) },
-                    player.album,
-                ).filter(String::isNotBlank).joinToString(" · "),
+                playerSubtitle(player, includeAlbum = true, unavailableHint = false),
                 style = MaterialTheme.typography.bodyLarge,
                 color = TunesLinkTheme.colors.secondaryText,
                 maxLines = if (compactHeight) 1 else 2,
@@ -487,5 +484,8 @@ internal fun TunesLinkSlider(
 
 internal fun formatTime(seconds: Double): String {
     val safe = max(0, seconds.toInt())
-    return "${safe / 60}:${(safe % 60).toString().padStart(2, '0')}"
+    val minutes = safe / 60
+    val remainder = (safe % 60).toString().padStart(2, '0')
+    if (minutes < 60) return "$minutes:$remainder"
+    return "${minutes / 60}:${(minutes % 60).toString().padStart(2, '0')}:$remainder"
 }

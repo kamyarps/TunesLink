@@ -9,6 +9,7 @@ internal static class BridgeProtocol
     public const int DefaultDiscoveryPort = 45831;
     public static readonly TimeSpan HandshakeTimeout = TimeSpan.FromSeconds(18);
     public static readonly TimeSpan RequestIdleTimeout = TimeSpan.FromSeconds(125);
+    public static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(150);
     public static readonly TimeSpan ConnectionLifetime = TimeSpan.FromMinutes(10);
     public static readonly TimeSpan SseWriteTimeout = TimeSpan.FromSeconds(5);
     public static readonly TimeSpan SseHeartbeatInterval = TimeSpan.FromSeconds(15);

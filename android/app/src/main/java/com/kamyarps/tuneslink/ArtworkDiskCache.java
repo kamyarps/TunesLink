@@ -68,7 +68,7 @@ final class ArtworkDiskCache implements AutoCloseable {
             File destination = file(scope, key);
             File temporary = new File(directory, destination.getName() + ".tmp");
             try (FileOutputStream output = new FileOutputStream(temporary)) {
-                if (!bitmap.compress(Bitmap.CompressFormat.PNG, 100, output)) return;
+                if (!bitmap.compress(Bitmap.CompressFormat.JPEG, 88, output)) return;
                 output.getFD().sync();
                 if (destination.exists() && !destination.delete()) return;
                 if (!temporary.renameTo(destination)) return;
@@ -112,7 +112,7 @@ final class ArtworkDiskCache implements AutoCloseable {
     }
 
     private File file(String scope, String key) {
-        return new File(directory, digest(scope) + "-" + digest(key) + ".png");
+        return new File(directory, digest(scope) + "-" + digest(key) + ".jpg");
     }
 
     private static String digest(String value) {

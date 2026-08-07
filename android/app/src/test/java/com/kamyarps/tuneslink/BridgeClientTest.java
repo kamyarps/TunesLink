@@ -87,12 +87,6 @@ public final class BridgeClientTest {
         assertEquals("", legacy.revision);
     }
 
-    @Test
-    public void playerStateUsesUnknownArtistForMissingMetadata() {
-        assertEquals("Unknown Artist", BridgeClient.displayArtist(null));
-        assertEquals("Unknown Artist", BridgeClient.displayArtist("   "));
-        assertEquals("Artist", BridgeClient.displayArtist("  Artist  "));
-    }
 
     @Test
     public void collectionRevisionIsStoredWithItsPage() {

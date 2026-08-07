@@ -196,15 +196,18 @@ internal sealed partial class BridgeServer : IDisposable
                 DateTimeOffset connectionExpiresAt = DateTimeOffset.UtcNow.Add(BridgeProtocol.ConnectionLifetime);
                 for (int requestCount = 0; requestCount < MaxRequestsPerConnection; requestCount++)
                 {
-                    TimeSpan remaining = connectionExpiresAt - DateTimeOffset.UtcNow;
-                    if (remaining <= TimeSpan.Zero) break;
-                    using CancellationTokenSource requestTimeout =
+                    TimeSpan idleRemaining = connectionExpiresAt - DateTimeOffset.UtcNow;
+                    if (idleRemaining <= TimeSpan.Zero) break;
+                    using CancellationTokenSource idleTimeout =
                         CancellationTokenSource.CreateLinkedTokenSource(cancellation.Token);
-                    requestTimeout.CancelAfter(remaining < BridgeProtocol.RequestIdleTimeout
-                        ? remaining : BridgeProtocol.RequestIdleTimeout);
-                    HttpRequest? request = await reader.ReadAsync(secureStream, requestTimeout.Token)
+                    idleTimeout.CancelAfter(idleRemaining < BridgeProtocol.RequestIdleTimeout
+                        ? idleRemaining : BridgeProtocol.RequestIdleTimeout);
+                    HttpRequest? request = await reader.ReadAsync(secureStream, idleTimeout.Token)
                         .ConfigureAwait(false);
                     if (request is null) break;
+                    using CancellationTokenSource requestTimeout =
+                        CancellationTokenSource.CreateLinkedTokenSource(cancellation.Token);
+                    requestTimeout.CancelAfter(BridgeProtocol.RequestTimeout);
                     bool keepAlive = request.Version == "HTTP/1.1"
                         && (!request.Headers.TryGetValue("Connection", out string? connection)
                             || !connection.Equals("close", StringComparison.OrdinalIgnoreCase))

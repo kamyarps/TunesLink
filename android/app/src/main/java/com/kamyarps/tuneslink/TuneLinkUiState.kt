@@ -118,17 +118,11 @@ internal data class SelectedLibraryCollection(
     val id: String,
     val title: String,
     val subtitle: String,
-    val parentTotal: Int,
-    val parentHasMore: Boolean,
-    val parentWindowStart: Int,
-    val parentRevision: String,
 )
 
-internal data class LibraryBrowseUiState(
-    val kind: LibraryBrowseKind? = null,
-    val selectedCollection: SelectedLibraryCollection? = null,
-    val collections: List<LibraryCollectionUiState> = emptyList(),
-    val tracks: List<TrackUiState> = emptyList(),
+internal enum class LibraryBrowseTarget { Collections, Tracks }
+
+internal data class LibraryPageCursor(
     val total: Int = 0,
     val windowStart: Int = 0,
     val revision: String = "",
@@ -139,7 +133,40 @@ internal data class LibraryBrowseUiState(
     val isLoadingPrevious: Boolean = false,
     val error: String? = null,
 ) {
+    val isBusy: Boolean get() = isLoading || isLoadingMore || isLoadingPrevious
+}
+
+internal data class LibraryBrowseUiState(
+    val kind: LibraryBrowseKind? = null,
+    val selectedCollection: SelectedLibraryCollection? = null,
+    val collections: List<LibraryCollectionUiState> = emptyList(),
+    val tracks: List<TrackUiState> = emptyList(),
+    val collectionsCursor: LibraryPageCursor = LibraryPageCursor(),
+    val tracksCursor: LibraryPageCursor = LibraryPageCursor(),
+) {
     val canNavigateUp: Boolean get() = kind != null
+    val showingTracks: Boolean
+        get() = kind == LibraryBrowseKind.Songs || selectedCollection != null
+    val visibleTarget: LibraryBrowseTarget
+        get() = if (showingTracks) LibraryBrowseTarget.Tracks else LibraryBrowseTarget.Collections
+
+    fun cursor(target: LibraryBrowseTarget): LibraryPageCursor =
+        if (target == LibraryBrowseTarget.Tracks) tracksCursor else collectionsCursor
+
+    fun withCursor(target: LibraryBrowseTarget, cursor: LibraryPageCursor): LibraryBrowseUiState =
+        if (target == LibraryBrowseTarget.Tracks) {
+            copy(tracksCursor = cursor)
+        } else {
+            copy(collectionsCursor = cursor)
+        }
+
+    val visibleCursor: LibraryPageCursor get() = cursor(visibleTarget)
+    val total: Int get() = visibleCursor.total
+    val hasMore: Boolean get() = visibleCursor.hasMore
+    val isLoading: Boolean get() = visibleCursor.isLoading
+    val isLoadingMore: Boolean get() = visibleCursor.isLoadingMore
+    val isLoadingPrevious: Boolean get() = visibleCursor.isLoadingPrevious
+    val error: String? get() = visibleCursor.error
 }
 
 internal data class LibraryUiState(

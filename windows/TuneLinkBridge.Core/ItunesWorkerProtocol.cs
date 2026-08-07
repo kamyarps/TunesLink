@@ -62,23 +62,55 @@ internal static class ItunesWorkerProtocol
         category is ItunesWorkerFailureCategory.Validation
             or ItunesWorkerFailureCategory.NotFound;
 
-    internal static async Task<string?> ReadBoundedLineAsync(TextReader reader, int maxCharacters,
-        CancellationToken cancellationToken = default)
+}
+
+internal sealed class BoundedLineReader
+{
+    private readonly TextReader reader;
+    private readonly int maxCharacters;
+    private readonly char[] buffer = new char[4096];
+    private string residual = "";
+
+    internal BoundedLineReader(TextReader reader, int maxCharacters)
     {
-        char[] buffer = new char[4096];
-        StringBuilder value = new(Math.Min(maxCharacters, buffer.Length));
+        this.reader = reader;
+        this.maxCharacters = maxCharacters;
+    }
+
+    internal async Task<string?> ReadLineAsync(CancellationToken cancellationToken = default)
+    {
+        StringBuilder value = new();
         while (true)
         {
+            if (residual.Length > 0)
+            {
+                int newline = residual.IndexOf('\n', StringComparison.Ordinal);
+                if (newline >= 0)
+                {
+                    Append(value, residual.AsSpan(0, newline));
+                    residual = residual[(newline + 1)..];
+                    return Complete(value);
+                }
+                Append(value, residual.AsSpan());
+                residual = "";
+            }
             int read = await reader.ReadAsync(buffer.AsMemory(), cancellationToken)
                 .ConfigureAwait(false);
-            if (read == 0) return value.Length == 0 ? null : value.ToString();
-            int newline = Array.IndexOf(buffer, '\n', 0, read);
-            int count = newline >= 0 ? newline : read;
-            if (count > 0 && buffer[count - 1] == '\r') count--;
-            if (value.Length + count > maxCharacters)
-                throw new IOException("The iTunes worker message exceeded its safety limit");
-            value.Append(buffer, 0, count);
-            if (newline >= 0) return value.ToString();
+            if (read == 0) return value.Length == 0 ? null : Complete(value);
+            residual = new string(buffer, 0, read);
         }
+    }
+
+    private void Append(StringBuilder value, ReadOnlySpan<char> chunk)
+    {
+        if (value.Length + chunk.Length > maxCharacters)
+            throw new IOException("The iTunes worker message exceeded its safety limit");
+        value.Append(chunk);
+    }
+
+    private static string Complete(StringBuilder value)
+    {
+        if (value.Length > 0 && value[^1] == '\r') value.Length--;
+        return value.ToString();
     }
 }

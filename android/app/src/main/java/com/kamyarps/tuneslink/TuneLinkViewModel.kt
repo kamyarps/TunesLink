@@ -50,12 +50,17 @@ internal class TunesLinkViewModel(
 
     internal val editingQuery = MutableStateFlow(savedStateHandle[KEY_EDITING_QUERY] ?: "")
     internal var libraryGeneration = 0
-    internal var browseGeneration = 0
+    internal var announcedResultQuery: String? = null
+    internal var browseCollectionsGeneration = 0
+    internal var browseTracksGeneration = 0
     private var connectedOnce = false
     private var stateUpdatesActive = false
     internal var artworkRequest: BridgeRepository.RequestHandle = BridgeRepository.RequestHandle.NONE
     internal var libraryRequest: BridgeRepository.RequestHandle = BridgeRepository.RequestHandle.NONE
-    internal var browseRequest: BridgeRepository.RequestHandle = BridgeRepository.RequestHandle.NONE
+    internal var browseCollectionsRequest: BridgeRepository.RequestHandle =
+        BridgeRepository.RequestHandle.NONE
+    internal var browseTracksRequest: BridgeRepository.RequestHandle =
+        BridgeRepository.RequestHandle.NONE
     private var restoreDestination = mutableState.value.navigation.destination
     private var pendingPermissionAction: PendingPermissionAction? = savedStateHandle
         .get<String>(KEY_PENDING_PERMISSION_ACTION)
@@ -466,7 +471,8 @@ internal class TunesLinkViewModel(
         stateUpdatesActive = false
         relocationRequest.cancel()
         libraryRequest.cancel()
-        browseRequest.cancel()
+        browseCollectionsRequest.cancel()
+        browseTracksRequest.cancel()
         repository.cancelRelocation()
         val generation = ++relocationGeneration
         mutableState.update { it.copy(connection = ConnectionState.Connecting) }
@@ -507,7 +513,8 @@ internal class TunesLinkViewModel(
     fun chooseAnotherComputer() {
         cancelTransientOperations()
         libraryRequest.cancel()
-        browseRequest.cancel()
+        browseCollectionsRequest.cancel()
+        browseTracksRequest.cancel()
         repository.stopStateUpdates()
         stateUpdatesActive = false
         savedStateHandle[KEY_SWITCHING_COMPUTER] = true
@@ -698,7 +705,8 @@ internal class TunesLinkViewModel(
     private fun finishLocalForget(messageRes: Int, haptic: HapticIntent) {
         artworkRequest.cancel()
         libraryRequest.cancel()
-        browseRequest.cancel()
+        browseCollectionsRequest.cancel()
+        browseTracksRequest.cancel()
         mutationTimeoutJobs.values.forEach(Job::cancel)
         mutationTimeoutJobs.clear()
         connectedOnce = false
@@ -883,7 +891,7 @@ internal class TunesLinkViewModel(
             "could not find the paired computer" in normalized -> R.string.error_computer_not_found
             "local network" in normalized || "private ipv4" in normalized ->
                 R.string.error_local_network_only
-            "not a TunesLink bridge" in normalized -> R.string.error_not_TunesLink_bridge
+            "not a tuneslink bridge" in normalized -> R.string.error_not_TunesLink_bridge
             "identity" in normalized || "security" in normalized || "invalid token" in normalized ->
                 R.string.error_bridge_identity
             "pairing" in normalized && ("failed" in normalized || "code" in normalized) ->
@@ -904,7 +912,8 @@ internal class TunesLinkViewModel(
         cancelTransientOperations()
         artworkRequest.cancel()
         libraryRequest.cancel()
-        browseRequest.cancel()
+        browseCollectionsRequest.cancel()
+        browseTracksRequest.cancel()
         mutationTimeoutJobs.values.forEach(Job::cancel)
         mutationTimeoutJobs.clear()
         stateUpdatesActive = false

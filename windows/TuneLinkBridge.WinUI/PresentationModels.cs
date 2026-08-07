@@ -211,7 +211,6 @@ internal static class MotionTokens
     public const int FeedbackHoldMs = 1200;
     public const int StatusCrossfadeMs = 180;
     public const int ReducedFeedbackMs = 160;
-    public const int ProblemReflowMs = 180;
     public const double EaseOutX1 = 0.23;
     public const double EaseOutY1 = 1.0;
     public const double EaseOutX2 = 0.32;

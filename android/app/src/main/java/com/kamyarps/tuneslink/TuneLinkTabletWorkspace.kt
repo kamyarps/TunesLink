@@ -525,8 +525,7 @@ private fun TabletNowPlayingHeader(
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                listOf(player.artist, player.album).filter(String::isNotBlank).joinToString(" · ")
-                    .ifBlank { stringResource(R.string.unknown_artist) },
+                playerSubtitle(player, includeAlbum = true, unavailableHint = true),
                 style = MaterialTheme.typography.labelMedium,
                 color = TunesLinkTheme.colors.secondaryText,
                 maxLines = 1,
@@ -665,13 +664,13 @@ private fun TabletLibraryPane(state: TunesLinkUiState, viewModel: TunesLinkViewM
         LibraryBrowseKind.Songs -> TabletSongsPane(
             title = stringResource(R.string.songs),
             tracks = state.browse.tracks,
-            total = state.browse.total,
-            loading = state.browse.isLoading,
-            error = state.browse.error,
-            hasMore = state.browse.hasMore,
-            onLoadMore = viewModel::loadMoreBrowse,
+            total = state.browse.tracksCursor.total,
+            loading = state.browse.tracksCursor.isLoading,
+            error = state.browse.tracksCursor.error,
+            onLoadMore = { viewModel.loadMoreBrowse(LibraryBrowseTarget.Tracks) },
             state = state,
             viewModel = viewModel,
+            onRetry = { viewModel.openLibraryKind(LibraryBrowseKind.Songs) },
         )
         LibraryBrowseKind.Artists,
         LibraryBrowseKind.Genres,
@@ -689,21 +688,23 @@ private fun TabletLibraryPane(state: TunesLinkUiState, viewModel: TunesLinkViewM
 private fun TabletAlbumsPane(state: TunesLinkUiState, viewModel: TunesLinkViewModel) {
     val browse = state.browse
     val gridState = rememberLazyGridState()
-    LaunchedEffect(gridState, browse.collections.size) {
-        snapshotFlow { gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0 }
+    LaunchedEffect(gridState) {
+        snapshotFlow { gridState.canScrollForward to gridState.layoutInfo.totalItemsCount }
             .distinctUntilChanged()
-            .collect { last -> if (last >= gridState.layoutInfo.totalItemsCount - 6) viewModel.loadMoreBrowse() }
+            .collect { (canScrollForward, _) ->
+                if (!canScrollForward) viewModel.loadMoreBrowse(LibraryBrowseTarget.Collections)
+            }
     }
     when {
-        browse.isLoading && browse.collections.isEmpty() -> ContentState(
+        browse.collectionsCursor.isLoading && browse.collections.isEmpty() -> ContentState(
             stringResource(R.string.loading_library),
             stringResource(R.string.loading_library_detail),
             loading = true,
             modifier = Modifier.fillMaxSize(),
         )
-        browse.error != null && browse.collections.isEmpty() -> ContentState(
+        browse.collectionsCursor.error != null && browse.collections.isEmpty() -> ContentState(
             stringResource(R.string.library_unavailable),
-            browse.error,
+            browse.collectionsCursor.error,
             onRetry = { viewModel.openLibraryKind(LibraryBrowseKind.Albums) },
             modifier = Modifier.fillMaxSize(),
         )
@@ -736,7 +737,7 @@ private fun TabletAlbumsPane(state: TunesLinkUiState, viewModel: TunesLinkViewMo
                 item(key = "albums-heading", span = { GridItemSpan(maxLineSpan) }) {
                     TabletPaneHeading(
                         stringResource(R.string.albums),
-                        browse.selectedCollection?.parentTotal ?: browse.total,
+                        browse.collectionsCursor.total,
                     )
                 }
                 browse.collections.forEachIndexed { index, collection ->
@@ -766,7 +767,7 @@ private fun TabletAlbumsPane(state: TunesLinkUiState, viewModel: TunesLinkViewMo
                                     artworkId = browse.collections
                                         .firstOrNull { it.id == selected.id }?.artworkId.orEmpty(),
                                     tracks = browse.tracks,
-                                    loading = browse.isLoading,
+                                    loading = browse.tracksCursor.isLoading,
                                     state = state,
                                     viewModel = viewModel,
                                     onCollapse = { viewModel.navigateUpLibrary() },
@@ -797,7 +798,7 @@ private fun TabletAlbumsPane(state: TunesLinkUiState, viewModel: TunesLinkViewMo
                         }
                     }
                 }
-                if (browse.isLoadingMore) {
+                if (browse.collectionsCursor.isLoadingMore) {
                     item(key = "album-progress", span = { GridItemSpan(maxLineSpan) }) {
                         TabletProgress()
                     }
@@ -1011,10 +1012,12 @@ private fun TabletCollectionMasterDetail(state: TunesLinkUiState, viewModel: Tun
     val browse = state.browse
     val kind = browse.kind ?: return
     val listState = rememberLazyListState()
-    LaunchedEffect(listState, browse.collections.size) {
-        snapshotFlow { listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0 }
+    LaunchedEffect(listState) {
+        snapshotFlow { listState.canScrollForward to listState.layoutInfo.totalItemsCount }
             .distinctUntilChanged()
-            .collect { last -> if (last >= browse.collections.lastIndex - 5) viewModel.loadMoreBrowse() }
+            .collect { (canScrollForward, _) ->
+                if (!canScrollForward) viewModel.loadMoreBrowse(LibraryBrowseTarget.Collections)
+            }
     }
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val masterWidth = if (maxWidth < 700.dp) 196.dp else 280.dp
@@ -1029,10 +1032,10 @@ private fun TabletCollectionMasterDetail(state: TunesLinkUiState, viewModel: Tun
             )
             HorizontalDivider(color = TunesLinkTheme.colors.separator)
             when {
-                browse.isLoading && browse.collections.isEmpty() -> TabletProgress()
-                browse.error != null && browse.collections.isEmpty() -> ContentState(
+                browse.collectionsCursor.isLoading && browse.collections.isEmpty() -> TabletProgress()
+                browse.collectionsCursor.error != null && browse.collections.isEmpty() -> ContentState(
                     stringResource(R.string.library_unavailable),
-                    browse.error,
+                    browse.collectionsCursor.error,
                     onRetry = { viewModel.openLibraryKind(kind) },
                     modifier = Modifier.fillMaxSize(),
                 )
@@ -1049,7 +1052,7 @@ private fun TabletCollectionMasterDetail(state: TunesLinkUiState, viewModel: Tun
                             onClick = { viewModel.openLibraryCollection(collection) },
                         )
                     }
-                    if (browse.isLoadingMore) item { TabletProgress() }
+                    if (browse.collectionsCursor.isLoadingMore) item { TabletProgress() }
                 }
             }
         }
@@ -1062,7 +1065,7 @@ private fun TabletCollectionMasterDetail(state: TunesLinkUiState, viewModel: Tun
                     stringResource(R.string.albums_and_songs),
                     modifier = Modifier.fillMaxSize(),
                 )
-                browse.isLoading && browse.tracks.isEmpty() -> ContentState(
+                browse.tracksCursor.isLoading && browse.tracks.isEmpty() -> ContentState(
                     stringResource(R.string.loading_library),
                     stringResource(R.string.loading_library_detail),
                     loading = true,
@@ -1131,10 +1134,12 @@ private fun TabletGroupedCollectionDetail(
 ) {
     val groups = state.browse.tracks.groupBy { it.album.ifBlank { stringResource(R.string.album) } }
     val listState = rememberLazyListState()
-    LaunchedEffect(listState, state.browse.tracks.size) {
-        snapshotFlow { listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0 }
+    LaunchedEffect(listState) {
+        snapshotFlow { listState.canScrollForward to listState.layoutInfo.totalItemsCount }
             .distinctUntilChanged()
-            .collect { last -> if (last >= listState.layoutInfo.totalItemsCount - 4) viewModel.loadMoreBrowse() }
+            .collect { (canScrollForward, _) ->
+                if (!canScrollForward) viewModel.loadMoreBrowse(LibraryBrowseTarget.Tracks)
+            }
     }
     LazyColumn(
         state = listState,
@@ -1145,7 +1150,7 @@ private fun TabletGroupedCollectionDetail(
         item {
             TabletPaneHeading(
                 title = selected.title,
-                total = state.browse.total,
+                total = state.browse.tracksCursor.total,
                 detail = selected.subtitle,
             )
         }
@@ -1182,7 +1187,7 @@ private fun TabletGroupedCollectionDetail(
                 }
             }
         }
-        if (state.browse.isLoadingMore) item { TabletProgress() }
+        if (state.browse.tracksCursor.isLoadingMore) item { TabletProgress() }
     }
 }
 
@@ -1193,16 +1198,16 @@ private fun TabletSongsPane(
     total: Int,
     loading: Boolean,
     error: String?,
-    hasMore: Boolean,
     onLoadMore: () -> Unit,
     state: TunesLinkUiState,
     viewModel: TunesLinkViewModel,
+    onRetry: (() -> Unit)? = null,
 ) {
     val listState = rememberLazyListState()
-    LaunchedEffect(listState, tracks.size, hasMore) {
-        snapshotFlow { listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0 }
+    LaunchedEffect(listState) {
+        snapshotFlow { listState.canScrollForward to listState.layoutInfo.totalItemsCount }
             .distinctUntilChanged()
-            .collect { last -> if (hasMore && last >= tracks.lastIndex - 6) onLoadMore() }
+            .collect { (canScrollForward, _) -> if (!canScrollForward) onLoadMore() }
     }
     when {
         loading && tracks.isEmpty() -> ContentState(
@@ -1214,6 +1219,7 @@ private fun TabletSongsPane(
         error != null && tracks.isEmpty() -> ContentState(
             stringResource(R.string.library_unavailable),
             error,
+            onRetry = onRetry,
             modifier = Modifier.fillMaxSize(),
         )
         tracks.isEmpty() -> ContentState(
@@ -1386,10 +1392,10 @@ private fun TabletSearchPane(state: TunesLinkUiState, viewModel: TunesLinkViewMo
             total = library.total,
             loading = library.isRefreshing || library.isLoadingMore,
             error = library.error,
-            hasMore = library.hasMore,
             onLoadMore = viewModel::loadMore,
             state = state,
             viewModel = viewModel,
+            onRetry = viewModel::refreshLibrary,
         )
     }
 }

@@ -34,16 +34,26 @@ internal static partial class BridgeSelfTest
             "track-1");
         LibraryIndexData cachedIndex = new(
             [cachedTrack],
+            ["Rock"],
             [new LibraryCollection("artist-1", "Artist", "", 1, "track-1")],
             [new LibraryCollection("album-1", "Album", "Artist", 1, "track-1")],
+            [new LibraryCollection("genre-1", "Rock", "", 1, "track-1")],
             new string('a', 64),
             new string('b', 64),
             DateTimeOffset.UtcNow);
         libraryIndexStore.Save(cachedIndex);
         LibraryIndexData? reloadedIndex = new LibraryIndexStore(libraryIndexDirectory).Load();
         Ensure(reloadedIndex is not null && reloadedIndex.Tracks.SequenceEqual([cachedTrack])
+            && reloadedIndex.TrackGenres.SequenceEqual(["Rock"])
+            && reloadedIndex.Genres.Length == 1
             && reloadedIndex.Revision == cachedIndex.Revision,
             "library index survives a complete store restart");
+        LibraryIndexData mismatchedIndex = cachedIndex with { TrackGenres = [] };
+        bool mismatchedIndexRejected = false;
+        try { libraryIndexStore.Save(mismatchedIndex); }
+        catch (ArgumentException) { mismatchedIndexRejected = true; }
+        Ensure(mismatchedIndexRejected,
+            "library index rejects a genre column that does not match its tracks");
         string libraryIndexPath = Path.Combine(libraryIndexDirectory, "Cache",
             "library-index-v1.json");
         File.WriteAllText(libraryIndexPath, "{not-json");
@@ -55,8 +65,8 @@ internal static partial class BridgeSelfTest
         {
             using StringReader oversized = new(new string('x',
                 ItunesWorkerProtocol.MaxRequestCharacters + 1));
-            await ItunesWorkerProtocol.ReadBoundedLineAsync(oversized,
-                ItunesWorkerProtocol.MaxRequestCharacters);
+            await new BoundedLineReader(oversized,
+                ItunesWorkerProtocol.MaxRequestCharacters).ReadLineAsync();
         }
         catch (IOException)
         {
