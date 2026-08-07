@@ -112,22 +112,6 @@ or that device is removed from **Paired phones** in the Windows bridge.
 
 ## How it works
 
-```text
-┌──────────────────┐       private LAN       ┌────────────────────┐
-│ Android app      │  pinned HTTPS + SSE     │ Windows bridge     │
-│ Compose UI       │ ◀────────────────────▶ │ local API/security │
-└──────────────────┘                         └─────────┬──────────┘
-                                                      │ isolated worker protocol
-                                            ┌─────────▼──────────┐
-                                            │ iTunes worker      │
-                                            │ Windows COM        │
-                                            └─────────┬──────────┘
-                                                      │
-                                            ┌─────────▼──────────┐
-                                            │ iTunes Legacy      │
-                                            └────────────────────┘
-```
-
 The Android app discovers the bridge over UDP or connects to its private IPv4 address manually.
 After pairing, it sends authenticated commands over pinned HTTPS. Current playback updates arrive
 through an authenticated Server-Sent Events channel, with compatible polling available for mixed
