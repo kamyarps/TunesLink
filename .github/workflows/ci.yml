@@ -230,6 +230,15 @@ jobs:
           if ($process.ExitCode -ne 0) {
             throw "Published UI verification failed with exit code $($process.ExitCode)."
           }
+          $renamed = Join-Path $env:RUNNER_TEMP "TunesLink.Bridge (1).exe"
+          Copy-Item -LiteralPath $executable -Destination $renamed -Force
+          $process = Start-Process -FilePath $renamed `
+            -ArgumentList "--verify-layout", "--viewport", "420x640", `
+              "--text-scale", "2.0", "--ui-state", "runtime-unavailable" `
+            -PassThru -Wait
+          if ($process.ExitCode -ne 0) {
+            throw "Renamed-download UI verification failed with exit code $($process.ExitCode)."
+          }
       - name: Verify repository hygiene
         shell: pwsh
         run: ./scripts/verify-repository.ps1 -RequireCleanWorktree
