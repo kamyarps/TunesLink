@@ -38,6 +38,11 @@ internal static class LiveItunesTest
                     populated!.Id, "", 0, 5).ConfigureAwait(false);
                 Require(scoped.Total > 0 && scoped.Items.Count > 0,
                     $"The first {kind} collection returned no tracks");
+                // A library whose every song answers "Unknown Genre" satisfies a count check but
+                // means the genre tag is not being read at all, which is how that shipped once.
+                Require(kind != "genres" || collections.Total > 1
+                    || collections.Items[0].Title != LibraryGrouping.UnknownGenre,
+                    "Every song reported Unknown Genre, so the genre tag was not read");
                 passed.Add($"{kind} ({collections.Total})");
             }
 

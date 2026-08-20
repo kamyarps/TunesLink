@@ -1071,6 +1071,19 @@ private fun TabletCollectionMasterDetail(state: TunesLinkUiState, viewModel: Tun
                     loading = true,
                     modifier = Modifier.fillMaxSize(),
                 )
+                // A playlist is shown in the order it was arranged, which is also the order the
+                // bridge plays it in. Only artists and genres are grouped into albums.
+                !browse.groupsTracksByAlbum() -> TabletSongsPane(
+                    title = selected.title,
+                    tracks = browse.tracks,
+                    total = browse.tracksCursor.total,
+                    loading = browse.tracksCursor.isLoadingMore,
+                    error = browse.tracksCursor.error,
+                    onLoadMore = { viewModel.loadMoreBrowse(LibraryBrowseTarget.Tracks) },
+                    state = state,
+                    viewModel = viewModel,
+                    collection = selected,
+                )
                 else -> TabletGroupedCollectionDetail(selected, state, viewModel)
             }
         }
@@ -1132,7 +1145,8 @@ private fun TabletGroupedCollectionDetail(
     state: TunesLinkUiState,
     viewModel: TunesLinkViewModel,
 ) {
-    val groups = state.browse.tracks.groupBy { it.album.ifBlank { stringResource(R.string.album) } }
+    val albumLabel = stringResource(R.string.album)
+    val albums = remember(state.browse.tracks) { libraryBrowseAlbums(state.browse.tracks) }
     val listState = rememberLazyListState()
     LaunchedEffect(listState) {
         snapshotFlow { listState.canScrollForward to listState.layoutInfo.totalItemsCount }
@@ -1154,35 +1168,33 @@ private fun TabletGroupedCollectionDetail(
                 detail = selected.subtitle,
             )
         }
-        groups.forEach { (album, tracks) ->
-            item(key = "album:$album") {
-                Row(horizontalArrangement = Arrangement.spacedBy(18.dp)) {
-                    TabletArtwork(
-                        artworkId = tracks.firstOrNull()?.artworkId.orEmpty(),
-                        title = album,
-                        viewModel = viewModel,
-                        maxSize = 256,
-                        modifier = Modifier.size(132.dp),
+        items(albums, key = { it.heading.key }) { album ->
+            Row(horizontalArrangement = Arrangement.spacedBy(18.dp)) {
+                TabletArtwork(
+                    artworkId = album.heading.artworkId,
+                    title = album.heading.album,
+                    viewModel = viewModel,
+                    maxSize = 256,
+                    modifier = Modifier.size(132.dp),
+                )
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        album.heading.album.ifBlank { albumLabel },
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.SemiBold,
+                        color = TunesLinkTheme.colors.primaryText,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
-                    Column(Modifier.weight(1f)) {
-                        Text(
-                            album,
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.SemiBold,
-                            color = TunesLinkTheme.colors.primaryText,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
+                    album.songs.forEach { song ->
+                        TabletTrackRow(
+                            track = song.track,
+                            position = song.position,
+                            state = state,
+                            viewModel = viewModel,
+                            showColumns = false,
+                            collection = selected,
                         )
-                        tracks.forEachIndexed { index, track ->
-                            TabletTrackRow(
-                                track = track,
-                                position = track.trackNumber.takeIf { it > 0 } ?: index + 1,
-                                state = state,
-                                viewModel = viewModel,
-                                showColumns = false,
-                                collection = selected,
-                            )
-                        }
                     }
                 }
             }
@@ -1202,6 +1214,7 @@ private fun TabletSongsPane(
     state: TunesLinkUiState,
     viewModel: TunesLinkViewModel,
     onRetry: (() -> Unit)? = null,
+    collection: SelectedLibraryCollection? = null,
 ) {
     val listState = rememberLazyListState()
     LaunchedEffect(listState) {
@@ -1246,6 +1259,7 @@ private fun TabletSongsPane(
                         state = state,
                         viewModel = viewModel,
                         showColumns = showFullColumns,
+                        collection = collection,
                         showMetadataUnderTitle = !showFullColumns,
                         striped = index % 2 == 1,
                     )

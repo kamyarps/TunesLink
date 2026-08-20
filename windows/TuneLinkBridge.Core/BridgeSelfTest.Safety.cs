@@ -13,20 +13,112 @@ namespace TunesLinkBridge;
 
 internal static partial class BridgeSelfTest
 {
+    /// <summary>
+    /// Stands in for an iTunes track so the property readers can be exercised without COM. Genre,
+    /// AlbumArtist, and Compilation are on the readers' fast paths; Comment, Size, Year, and
+    /// Enabled are deliberately not, so reading them proves the reflection fallback still runs.
+    /// </summary>
+    private sealed class TrackMetadataProbe
+    {
+        public string Name { get; } = "Song";
+        public string Genre { get; } = "Rock";
+        public string AlbumArtist { get; } = "Band";
+        public string Comment { get; } = "Note";
+        public bool Compilation { get; } = true;
+        public bool Enabled { get; } = true;
+        public double Duration { get; } = 180;
+        public double Size { get; } = 4096;
+        public int TrackNumber { get; } = 7;
+        public int Year { get; } = 1994;
+    }
+
     private static async Task TestSafetyRegressionsAsync(string rootDirectory)
     {
         Ensure(ItunesController.SearchAllFields == 0, "iTunes search covers all metadata fields");
+        // Every library reported one empty genre for as long as an unlisted property answered with
+        // an empty string rather than falling through to reflection. The demo library cannot catch
+        // that, because its genres are a plain field, so the readers are exercised directly here.
+        TrackMetadataProbe probe = new();
+        Ensure(ItunesController.ReadString(probe, "Name") == "Song"
+            && ItunesController.ReadString(probe, "Genre") == "Rock"
+            && ItunesController.ReadString(probe, "AlbumArtist") == "Band"
+            && ItunesController.ReadBool(probe, "Compilation")
+            && ItunesController.ReadDouble(probe, "Duration") == 180
+            && ItunesController.ReadInt(probe, "TrackNumber") == 7,
+            "the tags an iTunes track is grouped by are read from the track");
+        Ensure(ItunesController.ReadString(probe, "Comment") == "Note"
+            && ItunesController.ReadBool(probe, "Enabled")
+            && ItunesController.ReadDouble(probe, "Size") == 4096
+            && ItunesController.ReadInt(probe, "Year") == 1994,
+            "a property outside the fast path is still read instead of reading as empty");
+        Ensure(ItunesController.ReadString(probe, "Absent").Length == 0
+            && !ItunesController.ReadBool(probe, "Absent")
+            && ItunesController.ReadDouble(probe, "Absent") == 0
+            && ItunesController.ReadInt(probe, "Absent") == 0,
+            "a property the track does not carry fails closed");
         Ensure(ItunesController.DisplayArtist("") == "Unknown Artist"
             && ItunesController.DisplayArtist("  Artist  ") == "Artist",
             "missing iTunes artist metadata has a stable display value");
         Ensure(ItunesController.DisplayAlbum("   ") == "Unknown Album"
             && ItunesController.DisplayAlbum("  Album  ") == "Album",
             "missing iTunes album metadata has a stable display value");
+        Ensure(ItunesController.DisplayGenre("") == "Unknown Genre"
+            && ItunesController.DisplayGenre("  Rock  ") == "Rock",
+            "missing iTunes genre metadata has a stable display value");
+        Ensure(LibraryGrouping.AlbumArtist("Performer", "", false) == "Performer"
+            && LibraryGrouping.AlbumArtist("Performer", " Band ", false) == "Band"
+            && LibraryGrouping.AlbumArtist("Performer", "Band", true) == "Various Artists"
+            && LibraryGrouping.AlbumArtist("", "", false) == "Unknown Artist",
+            "an album is filed under its album artist, and a compilation under Various Artists");
+        Ensure(LibraryGrouping.AlbumKey("Band", "Record")
+                == LibraryGrouping.AlbumKey("Band", "  Record  ")
+            && LibraryGrouping.AlbumKey("Band", "Hits")
+                != LibraryGrouping.AlbumKey("Other Band", "Hits"),
+            "albums stay distinct per album artist");
+        Ensure(LibraryGrouping.AlbumNameFromKey(LibraryGrouping.AlbumKey("Band", "Record"))
+                == "Record"
+            && LibraryGrouping.AlbumNameFromKey("no-separator") is null,
+            "an album name round-trips through its collection key");
+        Ensure(LibraryGrouping.InCollectionOrder(
+                new[] { (Album: "B", Disc: 1, Track: 1, Index: 0),
+                        (Album: "A", Disc: 2, Track: 1, Index: 1),
+                        (Album: "A", Disc: 1, Track: 9, Index: 2),
+                        (Album: "A", Disc: 1, Track: 0, Index: 3) },
+                item => item.Album, item => item.Disc, item => item.Track, item => item.Index)
+            .Select(item => item.Index).SequenceEqual([2, 3, 1, 0]),
+            "collection songs order by album, then disc and track, then library order");
         Ensure(ItunesController.NormalizeArtwork("invalid", [1, 2, 3, 4], 180) is null,
             "invalid artwork fails closed");
         Ensure(ItunesController.NormalizeArtwork("large",
             new byte[ItunesController.MaxArtworkSourceBytes + 1], 180) is null,
             "oversized artwork rejected before decoding");
+
+        DemoTrack[] groupingCatalog = DemoLibrary.CreateGroupingTracks();
+        LibraryCollectionPage groupedAlbums = DemoLibrary.GetCollections(groupingCatalog, "albums",
+            "", 0, 40);
+        Ensure(groupedAlbums.Total == 2
+            && groupedAlbums.Items.Any(album => album.Title == "Night Ferry"
+                && album.Subtitle == "Neon Palms" && album.TrackCount == 2)
+            && groupedAlbums.Items.Any(album => album.Title == "Summer Sessions"
+                && album.Subtitle == "Various Artists" && album.TrackCount == 2),
+            "guest performers and compilations stay one album each");
+        LibraryCollectionPage groupedArtists = DemoLibrary.GetCollections(groupingCatalog,
+            "artists", "", 0, 40);
+        Ensure(groupedArtists.Total == 2
+            && groupedArtists.Items.Any(artist => artist.Title == "Neon Palms")
+            && groupedArtists.Items.Any(artist => artist.Title == "Various Artists"),
+            "a compilation does not list every performer as its own artist");
+        LibraryCollection compilation = groupedAlbums.Items
+            .First(album => album.Title == "Summer Sessions");
+        Ensure(DemoLibrary.TryGetCollectionTracks(groupingCatalog, "albums", compilation.Id, "",
+                0, 40, out LibraryPage compilationTracks)
+            && compilationTracks.Total == 2,
+            "a compilation album opens to every song on it");
+        LibraryCollectionPage groupedGenres = DemoLibrary.GetCollections(groupingCatalog, "genres",
+            "", 0, 40);
+        Ensure(groupedGenres.Total == 2
+            && groupedGenres.Items.All(genre => genre.Title != "Unknown Genre"),
+            "genres come from the genre tag rather than collapsing into one bucket");
 
         string libraryIndexDirectory = Path.Combine(rootDirectory, "library-index");
         LibraryIndexStore libraryIndexStore = new(libraryIndexDirectory);
@@ -35,6 +127,7 @@ internal static partial class BridgeSelfTest
         LibraryIndexData cachedIndex = new(
             [cachedTrack],
             ["Rock"],
+            ["Artist"],
             [new LibraryCollection("artist-1", "Artist", "", 1, "track-1")],
             [new LibraryCollection("album-1", "Album", "Artist", 1, "track-1")],
             [new LibraryCollection("genre-1", "Rock", "", 1, "track-1")],
@@ -45,15 +138,20 @@ internal static partial class BridgeSelfTest
         LibraryIndexData? reloadedIndex = new LibraryIndexStore(libraryIndexDirectory).Load();
         Ensure(reloadedIndex is not null && reloadedIndex.Tracks.SequenceEqual([cachedTrack])
             && reloadedIndex.TrackGenres.SequenceEqual(["Rock"])
+            && reloadedIndex.TrackAlbumArtists.SequenceEqual(["Artist"])
             && reloadedIndex.Genres.Length == 1
             && reloadedIndex.Revision == cachedIndex.Revision,
             "library index survives a complete store restart");
-        LibraryIndexData mismatchedIndex = cachedIndex with { TrackGenres = [] };
         bool mismatchedIndexRejected = false;
-        try { libraryIndexStore.Save(mismatchedIndex); }
+        try { libraryIndexStore.Save(cachedIndex with { TrackGenres = [] }); }
         catch (ArgumentException) { mismatchedIndexRejected = true; }
         Ensure(mismatchedIndexRejected,
             "library index rejects a genre column that does not match its tracks");
+        bool mismatchedAlbumArtistsRejected = false;
+        try { libraryIndexStore.Save(cachedIndex with { TrackAlbumArtists = [] }); }
+        catch (ArgumentException) { mismatchedAlbumArtistsRejected = true; }
+        Ensure(mismatchedAlbumArtistsRejected,
+            "library index rejects an album-artist column that does not match its tracks");
         string libraryIndexPath = Path.Combine(libraryIndexDirectory, "Cache",
             "library-index-v1.json");
         File.WriteAllText(libraryIndexPath, "{not-json");

@@ -86,16 +86,24 @@ internal fun LibraryBrowseScreen(
     val collectionsListState = key(browse.kind?.name ?: "root") { rememberLazyListState() }
     val tracksListState = key(browseIdentity) { rememberLazyListState() }
     val listState = if (showingTracks) tracksListState else collectionsListState
+    val groupTracksByAlbum = browse.groupsTracksByAlbum()
+    val trackRows = remember(browse.tracks, groupTracksByAlbum) {
+        if (groupTracksByAlbum) libraryBrowseRows(browse.tracks) else emptyList()
+    }
 
-    LaunchedEffect(listState, browse.collections.size, browse.tracks.size, showingTracks) {
+    LaunchedEffect(listState, browse.collections.size, trackRows.size, browse.tracks.size, showingTracks) {
         val target = browse.visibleTarget
+        val lastDataIndex = when {
+            !showingTracks -> browse.collections.lastIndex
+            groupTracksByAlbum -> trackRows.lastIndex
+            else -> browse.tracks.lastIndex
+        }
         snapshotFlow {
             val visible = listState.layoutInfo.visibleItemsInfo
             (visible.firstOrNull()?.index ?: 0) to (visible.lastOrNull()?.index ?: 0)
         }
             .distinctUntilChanged()
             .collect { (firstVisibleIndex, lastVisibleIndex) ->
-                val lastDataIndex = if (showingTracks) browse.tracks.lastIndex else browse.collections.lastIndex
                 if (firstVisibleIndex <= 6) viewModel.loadPreviousBrowse(target)
                 if (lastVisibleIndex >= lastDataIndex - 6) viewModel.loadMoreBrowse(target)
             }
@@ -195,7 +203,25 @@ internal fun LibraryBrowseScreen(
                 if (browse.isLoadingPrevious) {
                     item { LibraryPageProgress() }
                 }
-                if (showingTracks) {
+                if (showingTracks && groupTracksByAlbum) {
+                    items(trackRows, key = LibraryBrowseRow::key) { row ->
+                        when (row) {
+                            is LibraryBrowseRow.AlbumHeading ->
+                                LibraryAlbumHeading(row, viewModel)
+                            is LibraryBrowseRow.Song -> TrackRow(
+                                row.track,
+                                viewModel,
+                                enabled = ConnectionAvailability.from(state.connection).controlsEnabled &&
+                                    !state.player.hasPendingConflict(PlaybackAction.PlayTrack),
+                                pending = state.player.pending(PlaybackAction.PlayTrack) != null &&
+                                    state.player.trackId == row.track.id,
+                                current = state.player.trackId == row.track.id,
+                                playing = state.player.playing,
+                                onClick = { viewModel.playTrack(row.track, browse.selectedCollection) },
+                            )
+                        }
+                    }
+                } else if (showingTracks) {
                     itemsIndexed(browse.tracks, key = { _, track -> track.id }) { _, track ->
                         TrackRow(
                             track,
@@ -286,10 +312,14 @@ private fun LibraryCollectionRow(
 }
 
 @Composable
-private fun CollectionArtwork(collection: LibraryCollectionUiState, viewModel: TunesLinkViewModel) {
-    var artwork by remember(collection.artworkId) { mutableStateOf<Bitmap?>(null) }
-    DisposableEffect(collection.artworkId) {
-        val request = viewModel.requestArtwork(collection.artworkId, 128, object : BridgeClient.Result<Bitmap> {
+private fun CollectionArtwork(collection: LibraryCollectionUiState, viewModel: TunesLinkViewModel) =
+    BrowseArtwork(collection.artworkId, collection.title, viewModel)
+
+@Composable
+private fun BrowseArtwork(artworkId: String, title: String, viewModel: TunesLinkViewModel) {
+    var artwork by remember(artworkId) { mutableStateOf<Bitmap?>(null) }
+    DisposableEffect(artworkId) {
+        val request = viewModel.requestArtwork(artworkId, 128, object : BridgeClient.Result<Bitmap> {
             override fun success(value: Bitmap?) { artwork = value }
             override fun failure(message: String, unauthorized: Boolean) = Unit
         })
@@ -297,9 +327,41 @@ private fun CollectionArtwork(collection: LibraryCollectionUiState, viewModel: T
     }
     ArtworkSurface(
         artwork,
-        if (artwork != null) stringResource(R.string.artwork_for, collection.title) else null,
+        if (artwork != null) stringResource(R.string.artwork_for, title) else null,
         Modifier.size(TunesLinkSizes.compactArtwork),
     )
+}
+
+@Composable
+private fun LibraryAlbumHeading(
+    heading: LibraryBrowseRow.AlbumHeading,
+    viewModel: TunesLinkViewModel,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 12.dp, end = 12.dp, top = 14.dp, bottom = 4.dp)
+            .semantics(mergeDescendants = true) { heading() },
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        BrowseArtwork(heading.artworkId, heading.album, viewModel)
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                heading.album,
+                style = MaterialTheme.typography.titleMedium,
+                color = TunesLinkTheme.colors.primaryText,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                pluralStringResource(R.plurals.song_count, heading.trackCount, heading.trackCount),
+                style = MaterialTheme.typography.labelMedium,
+                color = TunesLinkTheme.colors.secondaryText,
+                maxLines = 1,
+            )
+        }
+    }
 }
 
 @Composable
@@ -522,24 +584,8 @@ internal fun ComputerConnectionAction(
 }
 
 @Composable
-private fun TrackArtwork(track: TrackUiState, viewModel: TunesLinkViewModel) {
-    var artwork by remember(track.artworkId) { mutableStateOf<Bitmap?>(null) }
-    DisposableEffect(track.artworkId) {
-        val request = viewModel.requestArtwork(track.artworkId, 128, object : BridgeClient.Result<Bitmap> {
-            override fun success(value: Bitmap?) {
-                artwork = value
-            }
-
-            override fun failure(message: String, unauthorized: Boolean) = Unit
-        })
-        onDispose(request::cancel)
-    }
-    ArtworkSurface(
-        artwork,
-        if (artwork != null) stringResource(R.string.artwork_for, track.title) else null,
-        Modifier.size(TunesLinkSizes.compactArtwork),
-    )
-}
+private fun TrackArtwork(track: TrackUiState, viewModel: TunesLinkViewModel) =
+    BrowseArtwork(track.artworkId, track.title, viewModel)
 
 @Composable
 private fun trailingChevronIcon(): ImageVector =

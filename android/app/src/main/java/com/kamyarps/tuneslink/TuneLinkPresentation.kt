@@ -175,6 +175,69 @@ internal data class NavigationState(
     val switchingComputer: Boolean = false,
 )
 
+/** One row of a browse list that shows an artist's or a genre's songs album by album. */
+internal sealed interface LibraryBrowseRow {
+    val key: String
+
+    data class AlbumHeading(
+        override val key: String,
+        val album: String,
+        val artworkId: String,
+        val trackCount: Int,
+    ) : LibraryBrowseRow
+
+    data class Song(val track: TrackUiState, val position: Int) : LibraryBrowseRow {
+        override val key: String get() = "song:${track.id}"
+    }
+}
+
+internal data class LibraryBrowseAlbum(
+    val heading: LibraryBrowseRow.AlbumHeading,
+    val songs: List<LibraryBrowseRow.Song>,
+)
+
+/**
+ * Splits an already ordered track list into albums. The bridge returns a collection album by
+ * album, so each album is a run of neighbouring songs; grouping the runs rather than collecting
+ * matching titles keeps the displayed order identical to the order the bridge will play, and lets
+ * two albums that happen to share a title stay apart.
+ */
+internal fun libraryBrowseAlbums(tracks: List<TrackUiState>): List<LibraryBrowseAlbum> {
+    val albums = mutableListOf<LibraryBrowseAlbum>()
+    var start = 0
+    while (start < tracks.size) {
+        val album = tracks[start].album
+        var end = start
+        while (end < tracks.size && tracks[end].album == album) end++
+        val run = tracks.subList(start, end)
+        albums += LibraryBrowseAlbum(
+            heading = LibraryBrowseRow.AlbumHeading(
+                key = "album:${run.first().id}",
+                album = album,
+                artworkId = run.firstOrNull { it.artworkId.isNotBlank() }?.artworkId.orEmpty(),
+                trackCount = run.size,
+            ),
+            songs = run.mapIndexed { offset, track ->
+                LibraryBrowseRow.Song(track, track.trackNumber.takeIf { it > 0 } ?: offset + 1)
+            },
+        )
+        start = end
+    }
+    return albums
+}
+
+/** The same albums flattened for a single-column list. */
+internal fun libraryBrowseRows(tracks: List<TrackUiState>): List<LibraryBrowseRow> =
+    libraryBrowseAlbums(tracks).flatMap { album -> listOf(album.heading) + album.songs }
+
+/**
+ * An artist or a genre is browsed to reach an album, so their songs are shown album by album.
+ * Albums are already one album, and a playlist keeps the order it was arranged in.
+ */
+internal fun LibraryBrowseUiState.groupsTracksByAlbum(): Boolean =
+    selectedCollection?.kind == LibraryBrowseKind.Artists ||
+        selectedCollection?.kind == LibraryBrowseKind.Genres
+
 /**
  * Keeps the connected destinations in one root content slot while giving every other route its own
  * transition identity. The route itself remains the AnimatedContent target so outgoing content

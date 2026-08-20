@@ -10,7 +10,6 @@ namespace TunesLinkBridge;
 internal sealed class ItunesController : IMediaController
 {
     internal const int SearchAllFields = 0;
-    internal const int SearchArtists = 2;
     internal const int SearchAlbums = 3;
     internal const int MaxArtworkSourceBytes = 8 * 1024 * 1024;
     internal const int MaxArtworkCacheBytes = 24 * 1024 * 1024;
@@ -35,9 +34,13 @@ internal sealed class ItunesController : IMediaController
         public int TrackCount { get; set; }
     }
 
+    // TrackGenres and TrackAlbumArtists are parallel to Tracks. They stay out of LibraryTrack so
+    // they are never paid for on the wire, and they let artist, album, and genre filtering be a
+    // string compare instead of re-deriving each key per request.
     private sealed record LibrarySnapshot(
         LibraryTrack[] Tracks,
         string[] TrackGenres,
+        string[] TrackAlbumArtists,
         LibraryCollection[] Artists,
         LibraryCollection[] Albums,
         LibraryCollection[] Genres,
@@ -48,6 +51,7 @@ internal sealed class ItunesController : IMediaController
 
     private sealed record QueueTrack(
         string Id,
+        string Album,
         int DiscNumber,
         int TrackNumber,
         int OriginalIndex);
@@ -185,17 +189,18 @@ internal sealed class ItunesController : IMediaController
                     if (!ItunesCollectionId.TryDecodeText(id, kind, out filter))
                         throw new MediaNotFoundException("That collection is no longer available");
                     playlist = app.LibraryPlaylist;
+                    // A search here only narrows the candidates; the exact match still runs per
+                    // track below. It is therefore only safe when every song in the collection is
+                    // certain to be found. The album name qualifies. The artist name does not:
+                    // artists are grouped by album artist, which a compilation's songs do not
+                    // carry in the artist field iTunes searches.
                     if (!string.IsNullOrWhiteSpace(query))
                     {
                         tracks = playlist.Search(query.Trim(), SearchAllFields);
                     }
-                    else if (kind == "artists" && filter != "Unknown Artist")
-                    {
-                        tracks = playlist.Search(filter, SearchArtists);
-                    }
                     else if (kind == "albums"
                              && CollectionAlbumName(filter) is string albumName
-                             && albumName != "Unknown Album")
+                             && albumName != LibraryGrouping.UnknownAlbum)
                     {
                         tracks = playlist.Search(albumName, SearchAlbums);
                     }
@@ -334,6 +339,7 @@ internal sealed class ItunesController : IMediaController
                     if (!MatchesCollection(track, kind, filter)) continue;
                     selected.Add(new QueueTrack(
                         RegisterTrack(track),
+                        LibraryGrouping.DisplayAlbum(ReadString(track, "Album")),
                         Math.Max(0, ReadInt(track, "DiscNumber")),
                         Math.Max(0, ReadInt(track, "TrackNumber")),
                         originalIndex));
@@ -347,14 +353,10 @@ internal sealed class ItunesController : IMediaController
             ReleaseCom(library);
         }
 
-        if (kind == "albums")
-        {
-            selected = selected
-                .OrderBy(item => item.DiscNumber > 0 ? item.DiscNumber : int.MaxValue)
-                .ThenBy(item => item.TrackNumber > 0 ? item.TrackNumber : int.MaxValue)
-                .ThenBy(item => item.OriginalIndex)
-                .ToList();
-        }
+        // The queue order has to match the order the browse list showed, or a song started from
+        // that list would carry on through a different running order than the one on screen.
+        selected = [.. LibraryGrouping.InCollectionOrder(selected, item => item.Album,
+            item => item.DiscNumber, item => item.TrackNumber, item => item.OriginalIndex)];
         int targetIndex = selected.FindIndex(item =>
             string.Equals(item.Id, trackId, StringComparison.Ordinal));
         if (targetIndex < 0)
@@ -632,44 +634,59 @@ internal sealed class ItunesController : IMediaController
             return new LibraryPage(page, safeOffset, safeLimit, available, end < available);
         }
 
-        int requestedOffset = Math.Max(0, offset);
-        int matching = 0;
-        List<LibraryTrack> items = new(safeLimit);
+        // A collection has to be ordered as a whole before it can be paged, so this fallback
+        // materializes every match. It only runs when no library snapshot is available.
+        List<LibraryTrack> matches = [];
         foreach (object trackObject in tracks)
         {
             cancellationToken.ThrowIfCancellationRequested();
             dynamic track = trackObject;
             try
             {
-                if (!MatchesCollection(track, collectionKind, collectionValue)) continue;
-                if (matching >= requestedOffset && items.Count < safeLimit)
-                    items.Add(ReadLibraryTrack(track));
-                matching++;
+                if (MatchesCollection(track, collectionKind, collectionValue))
+                    matches.Add(ReadLibraryTrack(track));
             }
             finally { ReleaseCom(trackObject); }
         }
-        int safeFilteredOffset = Math.Clamp(requestedOffset, 0, matching);
-        return new LibraryPage(items, safeFilteredOffset, safeLimit, matching,
-            safeFilteredOffset + items.Count < matching);
+        LibraryTrack[] ordered = InCollectionOrder(matches);
+        int safeFilteredOffset = Math.Clamp(Math.Max(0, offset), 0, ordered.Length);
+        LibraryTrack[] items = ordered.Skip(safeFilteredOffset).Take(safeLimit).ToArray();
+        return new LibraryPage(items, safeFilteredOffset, safeLimit, ordered.Length,
+            safeFilteredOffset + items.Length < ordered.Length);
     }
 
     private static bool RequiresTrackFilter(string collectionKind) =>
         collectionKind is "artists" or "albums" or "genres";
 
-    private LibraryTrack ReadLibraryTrack(dynamic track)
+    private LibraryTrack ReadLibraryTrack(dynamic track) => ReadLibraryTrack(track,
+        LibraryGrouping.DisplayArtist(ReadString(track, "Artist")),
+        LibraryGrouping.DisplayAlbum(ReadString(track, "Album")));
+
+    // The snapshot build has already read the artist and album to derive its grouping keys, so it
+    // hands them over instead of paying for the same two COM reads a second time per track.
+    private LibraryTrack ReadLibraryTrack(dynamic track, string artist, string album)
     {
         string id = RegisterTrack(track);
         string title = ReadString(track, "Name");
         return new LibraryTrack(
             id,
             string.IsNullOrWhiteSpace(title) ? "Untitled" : title,
-            DisplayArtist(ReadString(track, "Artist")),
-            DisplayAlbum(ReadString(track, "Album")),
+            artist,
+            album,
             Math.Max(0, ReadDouble(track, "Duration")),
             Math.Max(0, ReadInt(track, "TrackNumber")),
             Math.Max(0, ReadInt(track, "DiscNumber")),
             id);
     }
+
+    /// <summary>Album by album, then disc and track order, with library order breaking ties.</summary>
+    private static LibraryTrack[] InCollectionOrder(IReadOnlyList<LibraryTrack> tracks) =>
+        [.. LibraryGrouping.InCollectionOrder(
+            tracks.Select((track, index) => (Track: track, Index: index)),
+            item => item.Track.Album,
+            item => item.Track.DiscNumber,
+            item => item.Track.TrackNumber,
+            item => item.Index).Select(item => item.Track)];
 
     private LibraryCollectionPage ReadGroupedCollections(object appObject, string kind, string query,
         int offset, int limit, CancellationToken cancellationToken)
@@ -710,38 +727,46 @@ internal sealed class ItunesController : IMediaController
             int expectedTracks = Math.Max(0, Convert.ToInt32(tracks.Count));
             List<LibraryTrack> libraryTracks = new(expectedTracks);
             List<string> libraryGenres = new(expectedTracks);
+            List<string> libraryAlbumArtists = new(expectedTracks);
             foreach (object trackObject in tracks)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 dynamic track = trackObject;
                 try
                 {
-                    string artist = DisplayArtist(ReadString(track, "Artist"));
-                    string album = DisplayAlbum(ReadString(track, "Album"));
-                    string albumKey = artist + "\u001f" + album;
-                    string genre = DisplayGenre(ReadString(track, "Genre"));
-                    LibraryTrack libraryTrack = ReadLibraryTrack(track);
+                    string artist = LibraryGrouping.DisplayArtist(ReadString(track, "Artist"));
+                    string album = LibraryGrouping.DisplayAlbum(ReadString(track, "Album"));
+                    string albumArtist = LibraryGrouping.AlbumArtist(artist,
+                        ReadString(track, "AlbumArtist"), ReadBool(track, "Compilation"));
+                    string albumKey = LibraryGrouping.AlbumKey(albumArtist, album);
+                    string genre = LibraryGrouping.DisplayGenre(ReadString(track, "Genre"));
+                    LibraryTrack libraryTrack = ReadLibraryTrack(track, artist, album);
                     libraryTracks.Add(libraryTrack);
                     libraryGenres.Add(genre);
-                    string artworkId = !artists.ContainsKey(artist) || !albums.ContainsKey(albumKey)
-                        ? libraryTrack.ArtworkId : "";
-                    AddCollection(artists, artist, artist, "", artworkId);
-                    AddCollection(albums, albumKey, album, artist, artworkId);
+                    libraryAlbumArtists.Add(albumArtist);
+                    string artworkId =
+                        !artists.ContainsKey(albumArtist) || !albums.ContainsKey(albumKey)
+                            ? libraryTrack.ArtworkId : "";
+                    AddCollection(artists, albumArtist, albumArtist, "", artworkId);
+                    AddCollection(albums, albumKey, album, albumArtist, artworkId);
                     AddCollection(genres, genre, genre, "", libraryTrack.ArtworkId);
                 }
                 finally { ReleaseCom(trackObject); }
             }
             LibraryTrack[] materializedTracks = libraryTracks.ToArray();
             string[] materializedGenres = libraryGenres.ToArray();
+            string[] materializedAlbumArtists = libraryAlbumArtists.ToArray();
             string sourceSignature = ComputeLibrarySourceSignature(appObject, (object)playlist,
                 (object)tracks);
             return new LibrarySnapshot(
                 materializedTracks,
                 materializedGenres,
+                materializedAlbumArtists,
                 MaterializeCollections("artists", artists),
                 MaterializeCollections("albums", albums),
                 MaterializeCollections("genres", genres),
-                ComputeLibraryRevision(materializedTracks, materializedGenres),
+                ComputeLibraryRevision(materializedTracks, materializedGenres,
+                    materializedAlbumArtists),
                 sourceSignature,
                 DateTimeOffset.UtcNow,
                 DateTimeOffset.UtcNow);
@@ -865,6 +890,7 @@ internal sealed class ItunesController : IMediaController
             LibraryIndexData persisted = new(
                 snapshot.Tracks,
                 snapshot.TrackGenres,
+                snapshot.TrackAlbumArtists,
                 snapshot.Artists,
                 snapshot.Albums,
                 snapshot.Genres,
@@ -924,9 +950,9 @@ internal sealed class ItunesController : IMediaController
     {
         LibraryIndexData? persisted = store.Load();
         return persisted is null ? null : new LibrarySnapshot(
-            persisted.Tracks, persisted.TrackGenres, persisted.Artists, persisted.Albums,
-            persisted.Genres, persisted.Revision, persisted.SourceSignature,
-            persisted.CreatedAt, null);
+            persisted.Tracks, persisted.TrackGenres, persisted.TrackAlbumArtists,
+            persisted.Artists, persisted.Albums, persisted.Genres, persisted.Revision,
+            persisted.SourceSignature, persisted.CreatedAt, null);
     }
 
     private static string ComputeLibrarySourceSignature(object appObject, object playlistObject,
@@ -974,14 +1000,17 @@ internal sealed class ItunesController : IMediaController
             LibraryTrack track = snapshot.Tracks[index];
             if (term.Length > 0 && !MatchesTerm(track, term)) continue;
             if (collectionKind.Length > 0 && !MatchesCollection(track,
-                    snapshot.TrackGenres[index], collectionKind, collectionValue)) continue;
+                    snapshot.TrackGenres[index], snapshot.TrackAlbumArtists[index],
+                    collectionKind, collectionValue)) continue;
             results.Add(track);
         }
+        IReadOnlyList<LibraryTrack> ordered = RequiresTrackFilter(collectionKind)
+            ? InCollectionOrder(results) : results;
         int safeLimit = Math.Clamp(limit, 1, 60);
-        int safeOffset = Math.Clamp(offset, 0, results.Count);
-        LibraryTrack[] page = results.Skip(safeOffset).Take(safeLimit).ToArray();
-        return new LibraryPage(page, safeOffset, safeLimit, results.Count,
-            safeOffset + page.Length < results.Count, snapshot.Revision);
+        int safeOffset = Math.Clamp(offset, 0, ordered.Count);
+        LibraryTrack[] page = ordered.Skip(safeOffset).Take(safeLimit).ToArray();
+        return new LibraryPage(page, safeOffset, safeLimit, ordered.Count,
+            safeOffset + page.Length < ordered.Count, snapshot.Revision);
     }
 
     private static bool MatchesTerm(LibraryTrack track, string term) =>
@@ -989,20 +1018,20 @@ internal sealed class ItunesController : IMediaController
         || track.Artist.Contains(term, StringComparison.OrdinalIgnoreCase)
         || track.Album.Contains(term, StringComparison.OrdinalIgnoreCase);
 
-    private static bool MatchesCollection(LibraryTrack track, string genre, string kind,
-        string value)
+    private static bool MatchesCollection(LibraryTrack track, string genre, string albumArtist,
+        string kind, string value)
     {
         if (kind == "genres") return string.Equals(genre, value,
             StringComparison.OrdinalIgnoreCase);
-        string artist = DisplayArtist(track.Artist);
-        if (kind == "artists") return string.Equals(artist, value,
+        if (kind == "artists") return string.Equals(albumArtist, value,
             StringComparison.OrdinalIgnoreCase);
         if (kind != "albums") return true;
-        string albumKey = artist + "\u001f" + DisplayAlbum(track.Album);
-        return string.Equals(albumKey, value, StringComparison.OrdinalIgnoreCase);
+        return string.Equals(LibraryGrouping.AlbumKey(albumArtist, track.Album), value,
+            StringComparison.OrdinalIgnoreCase);
     }
 
-    private static string ComputeLibraryRevision(LibraryTrack[] tracks, string[] genres)
+    private static string ComputeLibraryRevision(LibraryTrack[] tracks, string[] genres,
+        string[] albumArtists)
     {
         using IncrementalHash hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         for (int index = 0; index < tracks.Length; index++)
@@ -1010,6 +1039,7 @@ internal sealed class ItunesController : IMediaController
             LibraryTrack track = tracks[index];
             byte[] encoded = Encoding.UTF8.GetBytes(string.Join('\u001f',
                 track.Id, track.Title, track.Artist, track.Album, genres[index],
+                albumArtists[index],
                 track.Duration.ToString("R", CultureInfo.InvariantCulture),
                 track.TrackNumber.ToString(CultureInfo.InvariantCulture),
                 track.DiscNumber.ToString(CultureInfo.InvariantCulture)) + "\u001e");
@@ -1020,32 +1050,30 @@ internal sealed class ItunesController : IMediaController
 
     private static bool MatchesCollection(dynamic track, string kind, string value)
     {
-        string artist = DisplayArtist(ReadString(track, "Artist"));
-        if (kind == "artists") return string.Equals(artist, value,
-            StringComparison.OrdinalIgnoreCase);
+        // Genre is settled before the album artist so filtering by genre never pays for the
+        // album artist and compilation reads.
         if (kind == "genres") return string.Equals(
-            DisplayGenre(ReadString(track, "Genre")), value,
+            LibraryGrouping.DisplayGenre(ReadString(track, "Genre")), value,
+            StringComparison.OrdinalIgnoreCase);
+        string albumArtist = LibraryGrouping.AlbumArtist(ReadString(track, "Artist"),
+            ReadString(track, "AlbumArtist"), ReadBool(track, "Compilation"));
+        if (kind == "artists") return string.Equals(albumArtist, value,
             StringComparison.OrdinalIgnoreCase);
         if (kind != "albums") return true;
-        string albumKey = artist + "\u001f" + DisplayAlbum(ReadString(track, "Album"));
-        return string.Equals(albumKey, value, StringComparison.OrdinalIgnoreCase);
+        return string.Equals(
+            LibraryGrouping.AlbumKey(albumArtist, ReadString(track, "Album")), value,
+            StringComparison.OrdinalIgnoreCase);
     }
 
     internal static string DisplayArtist(string artist) =>
-        string.IsNullOrWhiteSpace(artist) ? "Unknown Artist" : artist.Trim();
+        LibraryGrouping.DisplayArtist(artist);
 
-    internal static string DisplayAlbum(string album) =>
-        string.IsNullOrWhiteSpace(album) ? "Unknown Album" : album.Trim();
+    internal static string DisplayAlbum(string album) => LibraryGrouping.DisplayAlbum(album);
 
-    private static string DisplayGenre(string genre) =>
-        string.IsNullOrWhiteSpace(genre) ? "Unknown Genre" : genre.Trim();
+    internal static string DisplayGenre(string genre) => LibraryGrouping.DisplayGenre(genre);
 
-    private static string? CollectionAlbumName(string value)
-    {
-        int separator = value.IndexOf('\u001f');
-        return separator >= 0 && separator + 1 < value.Length
-            ? value[(separator + 1)..] : null;
-    }
+    private static string? CollectionAlbumName(string value) =>
+        LibraryGrouping.AlbumNameFromKey(value);
 
     private static dynamic? ResolvePlaylist(object appObject, ItunesPlaylistLocator locator)
     {
@@ -1110,13 +1138,14 @@ internal sealed class ItunesController : IMediaController
         }
     }
 
-    private static bool ReadBool(dynamic value, string property)
+    internal static bool ReadBool(dynamic value, string property)
     {
         try
         {
             return property switch
             {
                 "Shuffle" => Convert.ToBoolean(value.Shuffle),
+                "Compilation" => Convert.ToBoolean(value.Compilation),
                 _ => throw new ArgumentException("Unknown Boolean property"),
             };
         }
@@ -1134,7 +1163,9 @@ internal sealed class ItunesController : IMediaController
         }
     }
 
-    private static string ReadString(dynamic value, string property)
+    // Every default arm below throws so that an unlisted property falls through to the reflection
+    // path instead of silently reading as an empty string, a zero, or a false.
+    internal static string ReadString(dynamic value, string property)
     {
         try
         {
@@ -1143,8 +1174,12 @@ internal sealed class ItunesController : IMediaController
                 "Name" => Convert.ToString(value.Name) ?? "",
                 "Artist" => Convert.ToString(value.Artist) ?? "",
                 "Album" => Convert.ToString(value.Album) ?? "",
+                // AlbumArtist belongs to IITFileOrCDTrack, so other track kinds fail both the
+                // dynamic and the reflection read and are treated as having no album artist.
+                "AlbumArtist" => Convert.ToString(value.AlbumArtist) ?? "",
+                "Genre" => Convert.ToString(value.Genre) ?? "",
                 "PersistentID" => Convert.ToString(value.PersistentID) ?? "",
-                _ => ""
+                _ => throw new ArgumentException("Unknown text property"),
             };
         }
         catch
@@ -1158,11 +1193,15 @@ internal sealed class ItunesController : IMediaController
         }
     }
 
-    private static double ReadDouble(dynamic value, string property)
+    internal static double ReadDouble(dynamic value, string property)
     {
         try
         {
-            return property == "Duration" ? Convert.ToDouble(value.Duration) : 0;
+            return property switch
+            {
+                "Duration" => Convert.ToDouble(value.Duration),
+                _ => throw new ArgumentException("Unknown numeric property"),
+            };
         }
         catch
         {
@@ -1175,7 +1214,7 @@ internal sealed class ItunesController : IMediaController
         }
     }
 
-    private static int ReadInt(dynamic value, string property)
+    internal static int ReadInt(dynamic value, string property)
     {
         try
         {
@@ -1189,7 +1228,7 @@ internal sealed class ItunesController : IMediaController
                 "DiscNumber" => Convert.ToInt32(value.DiscNumber),
                 "Kind" => Convert.ToInt32(value.Kind),
                 "SongRepeat" => Convert.ToInt32(value.SongRepeat),
-                _ => 0
+                _ => throw new ArgumentException("Unknown integer property"),
             };
         }
         catch

@@ -6,7 +6,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>TunesLink Demo Bridge</AssemblyName>
     <RootNamespace>TunesLinkBridge</RootNamespace>
-    <Version>1.1.2</Version>
+    <Version>1.1.3</Version>
     <AnalysisLevel>latest-recommended</AnalysisLevel>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
   </PropertyGroup>
@@ -24,6 +24,7 @@
     <Compile Include="..\..\windows\TuneLinkBridge.Core\DemoLibrary.cs" Link="Bridge\DemoLibrary.cs" />
     <Compile Include="..\..\windows\TuneLinkBridge.Core\ItunesCollectionId.cs" Link="Bridge\ItunesCollectionId.cs" />
     <Compile Include="..\..\windows\TuneLinkBridge.Core\ItunesTrackId.cs" Link="Bridge\ItunesTrackId.cs" />
+    <Compile Include="..\..\windows\TuneLinkBridge.Core\LibraryGrouping.cs" Link="Bridge\LibraryGrouping.cs" />
     <Compile Include="..\..\windows\TuneLinkBridge.Core\Models.cs" Link="Bridge\Models.cs" />
     <Compile Include="..\..\windows\TuneLinkBridge.Core\NetworkAddressSelector.cs" Link="Bridge\NetworkAddressSelector.cs" />
     <Compile Include="..\..\windows\TuneLinkBridge.Core\PairingRateLimiter.cs" Link="Bridge\PairingRateLimiter.cs" />

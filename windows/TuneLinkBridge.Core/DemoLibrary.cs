@@ -8,7 +8,15 @@ internal sealed record DemoTrack(
     string Artist,
     string Album,
     double Duration,
-    string Genre = "Electronic");
+    string Genre = "Electronic",
+    string AlbumArtist = "",
+    bool Compilation = false)
+{
+    public string GroupingArtist =>
+        LibraryGrouping.AlbumArtist(Artist, AlbumArtist, Compilation);
+
+    public string AlbumKey => LibraryGrouping.AlbumKey(GroupingArtist, Album);
+}
 
 internal static class DemoLibrary
 {
@@ -30,6 +38,22 @@ internal static class DemoLibrary
         }
         return [.. tracks];
     }
+
+    /// <summary>
+    /// A library whose albums only group correctly when the album artist and compilation tags are
+    /// honoured: one album shared by two performers, and one compilation of unrelated performers.
+    /// </summary>
+    public static DemoTrack[] CreateGroupingTracks() =>
+    [
+        new("Harbour Lights", "Neon Palms", "Night Ferry", 212, "Electronic",
+            AlbumArtist: "Neon Palms", Compilation: false),
+        new("Harbour Lights (Reprise)", "Neon Palms feat. Ida Vance", "Night Ferry", 176,
+            "Electronic", AlbumArtist: "Neon Palms", Compilation: false),
+        new("Coast Road", "Miriam Okonkwo", "Summer Sessions", 205, "Ambient",
+            AlbumArtist: "", Compilation: true),
+        new("Salt Flats", "The Satellites", "Summer Sessions", 231, "Ambient",
+            AlbumArtist: "", Compilation: true),
+    ];
 
     public static LibraryPage GetTracks(IEnumerable<DemoTrack> tracks, string query, int offset,
         int limit)
@@ -53,11 +77,11 @@ internal static class DemoLibrary
         DemoTrack[] catalog = tracks.ToArray();
         IEnumerable<LibraryCollection> collections = kind switch
         {
-            "artists" => catalog.GroupBy(track => track.Artist)
+            "artists" => catalog.GroupBy(track => track.GroupingArtist)
                 .Select(group => Collection(kind, group.Key, group.Key, "", group)),
-            "albums" => catalog.GroupBy(track => track.Artist + "\u001f" + track.Album)
+            "albums" => catalog.GroupBy(track => track.AlbumKey)
                 .Select(group => Collection(kind, group.Key, group.First().Album,
-                    group.First().Artist, group)),
+                    group.First().GroupingArtist, group)),
             "genres" => catalog.GroupBy(track => track.Genre)
                 .Select(group => Collection(kind, group.Key, group.Key, "", group)),
             "playlists" =>
@@ -94,10 +118,10 @@ internal static class DemoLibrary
         }
         IEnumerable<DemoTrack> matching = kind switch
         {
-            "artists" => catalog.Where(track => track.Artist.Equals(value,
+            "artists" => catalog.Where(track => track.GroupingArtist.Equals(value,
                 StringComparison.OrdinalIgnoreCase)),
-            "albums" => catalog.Where(track => (track.Artist + "\u001f" + track.Album)
-                .Equals(value, StringComparison.OrdinalIgnoreCase)),
+            "albums" => catalog.Where(track => track.AlbumKey.Equals(value,
+                StringComparison.OrdinalIgnoreCase)),
             "genres" => catalog.Where(track => track.Genre.Equals(value,
                 StringComparison.OrdinalIgnoreCase)),
             "playlists" when value == "Night Drive" => catalog.Take(1),
@@ -121,7 +145,8 @@ internal static class DemoLibrary
     public static string Revision(IEnumerable<DemoTrack> tracks)
     {
         string catalog = string.Join('\u001e', tracks.Select(track => string.Join('\u001f',
-            track.Title, track.Artist, track.Album, track.Duration, track.Genre)));
+            track.Title, track.Artist, track.Album, track.Duration, track.Genre,
+            track.GroupingArtist)));
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(catalog)))
             .ToLowerInvariant();
     }
