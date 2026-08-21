@@ -36,6 +36,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -276,12 +277,18 @@ private fun PlayerDetails(
     var seekValue by remember(player.trackId, player.duration) {
         mutableFloatStateOf(player.position.toFloat())
     }
+    var seeking by remember(player.trackId) { mutableStateOf(false) }
     var volumeValue by remember { mutableFloatStateOf(player.volume.toFloat()) }
-    LaunchedEffect(player.position, player.pending(PlaybackAction.Position)) {
-        if (player.pending(PlaybackAction.Position) == null) seekValue = player.position.toFloat()
+    var adjustingVolume by remember { mutableStateOf(false) }
+    LaunchedEffect(player.position, player.pending(PlaybackAction.Position), seeking) {
+        if (!seeking && player.pending(PlaybackAction.Position) == null) {
+            seekValue = player.position.toFloat()
+        }
     }
-    LaunchedEffect(player.volume, player.pending(PlaybackAction.Volume)) {
-        if (player.pending(PlaybackAction.Volume) == null) volumeValue = player.volume.toFloat()
+    LaunchedEffect(player.volume, player.pending(PlaybackAction.Volume), adjustingVolume) {
+        if (!adjustingVolume && player.pending(PlaybackAction.Volume) == null) {
+            volumeValue = player.volume.toFloat()
+        }
     }
     val seekDescription = stringResource(
         R.string.track_position_accessibility,
@@ -317,14 +324,17 @@ private fun PlayerDetails(
         Spacer(Modifier.height(if (compactHeight) 2.dp else 12.dp))
         TunesLinkSlider(
             value = seekValue.coerceIn(0f, max(1f, player.duration.toFloat())),
-            onValueChange = { seekValue = it },
+            onValueChange = {
+                seeking = true
+                seekValue = it
+            },
             onValueChangeFinished = {
+                seeking = false
                 viewModel.seek(seekValue.toDouble())
                 haptic.performHapticFeedback(HapticFeedbackType.Confirm)
             },
             valueRange = 0f..max(1f, player.duration.toFloat()),
-            enabled = controlsEnabled && player.duration > 0 &&
-                !player.hasPendingConflict(PlaybackAction.Position),
+            enabled = controlsEnabled && player.duration > 0,
             modifier = Modifier.widthIn(max = 520.dp).fillMaxWidth().semantics {
                 contentDescription = seekDescription
             },
@@ -345,7 +355,7 @@ private fun PlayerDetails(
                     if (player.shuffleEnabled) R.string.turn_shuffle_off else R.string.turn_shuffle_on,
                 ),
                 selected = player.shuffleEnabled,
-                enabled = controlsEnabled && !player.hasPendingConflict(PlaybackAction.Shuffle),
+                enabled = controlsEnabled,
                 onClick = viewModel::toggleShuffle,
             )
             TransportCluster(
@@ -369,7 +379,7 @@ private fun PlayerDetails(
                     RepeatMode.One -> stringResource(R.string.turn_repeat_off)
                 },
                 selected = player.repeatMode != RepeatMode.Off,
-                enabled = controlsEnabled && !player.hasPendingConflict(PlaybackAction.Repeat),
+                enabled = controlsEnabled,
                 onClick = viewModel::cycleRepeat,
             )
         }
@@ -381,14 +391,18 @@ private fun PlayerDetails(
             Icon(Icons.AutoMirrored.Rounded.VolumeDown, null, tint = TunesLinkTheme.colors.secondaryText, modifier = Modifier.size(18.dp))
             TunesLinkSlider(
                 value = volumeValue,
-                onValueChange = { volumeValue = it },
+                onValueChange = {
+                    adjustingVolume = true
+                    volumeValue = it
+                },
                 onValueChangeFinished = {
+                    adjustingVolume = false
                     viewModel.setVolume(volumeValue.toInt())
                     haptic.performHapticFeedback(HapticFeedbackType.Confirm)
                 },
                 valueRange = 0f..100f,
                 lowEmphasis = true,
-                enabled = controlsEnabled && !player.hasPendingConflict(PlaybackAction.Volume),
+                enabled = controlsEnabled,
                 modifier = Modifier.weight(1f).padding(horizontal = 8.dp).semantics {
                     contentDescription = volumeDescription
                 },

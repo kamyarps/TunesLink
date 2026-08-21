@@ -230,8 +230,17 @@ internal sealed partial class BridgeServer : IDisposable
                         break;
                     }
 
-                    await RouteAsync(secureStream, request, remote, requestTimeout.Token)
-                        .ConfigureAwait(false);
+                    try
+                    {
+                        await RouteAsync(secureStream, request, remote, requestTimeout.Token)
+                            .ConfigureAwait(false);
+                    }
+                    catch (Exception exception) when (IsMediaUnavailable(exception))
+                    {
+                        await WriteJsonAsync(secureStream, 503,
+                            new { error = exception.Message }, requestTimeout.Token)
+                            .ConfigureAwait(false);
+                    }
                     if (!keepAlive) break;
                 }
             }
@@ -293,6 +302,10 @@ internal sealed partial class BridgeServer : IDisposable
             else activeConnectionsByAddress[key] = count - 1;
         }
     }
+
+    private static bool IsMediaUnavailable(Exception exception) =>
+        exception is MediaUnavailableException
+            or ItunesWorkerException { Category: ItunesWorkerFailureCategory.Unavailable };
 
     internal static bool IsLocalAddress(IPAddress address)
     {

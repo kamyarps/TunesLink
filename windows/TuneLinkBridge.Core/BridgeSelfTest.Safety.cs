@@ -80,13 +80,23 @@ internal static partial class BridgeSelfTest
             && LibraryGrouping.AlbumNameFromKey("no-separator") is null,
             "an album name round-trips through its collection key");
         Ensure(LibraryGrouping.InCollectionOrder(
-                new[] { (Album: "B", Disc: 1, Track: 1, Index: 0),
-                        (Album: "A", Disc: 2, Track: 1, Index: 1),
-                        (Album: "A", Disc: 1, Track: 9, Index: 2),
-                        (Album: "A", Disc: 1, Track: 0, Index: 3) },
-                item => item.Album, item => item.Disc, item => item.Track, item => item.Index)
+                new[] { (Album: "B", Artist: "One", Disc: 1, Track: 1, Index: 0),
+                        (Album: "A", Artist: "One", Disc: 2, Track: 1, Index: 1),
+                        (Album: "A", Artist: "One", Disc: 1, Track: 9, Index: 2),
+                        (Album: "A", Artist: "One", Disc: 1, Track: 0, Index: 3) },
+                item => item.Album, item => item.Artist, item => item.Disc, item => item.Track,
+                item => item.Index)
             .Select(item => item.Index).SequenceEqual([2, 3, 1, 0]),
             "collection songs order by album, then disc and track, then library order");
+        Ensure(LibraryGrouping.InCollectionOrder(
+                new[] { (Album: "Hits", Artist: "Second Band", Disc: 1, Track: 1, Index: 0),
+                        (Album: "Hits", Artist: "First Band", Disc: 1, Track: 2, Index: 1),
+                        (Album: "Hits", Artist: "Second Band", Disc: 1, Track: 2, Index: 2),
+                        (Album: "Hits", Artist: "First Band", Disc: 1, Track: 1, Index: 3) },
+                item => item.Album, item => item.Artist, item => item.Disc, item => item.Track,
+                item => item.Index)
+            .Select(item => item.Index).SequenceEqual([3, 1, 0, 2]),
+            "two albums sharing a title stay separate runs instead of interleaving");
         Ensure(ItunesController.NormalizeArtwork("invalid", [1, 2, 3, 4], 180) is null,
             "invalid artwork fails closed");
         Ensure(ItunesController.NormalizeArtwork("large",
@@ -123,11 +133,10 @@ internal static partial class BridgeSelfTest
         string libraryIndexDirectory = Path.Combine(rootDirectory, "library-index");
         LibraryIndexStore libraryIndexStore = new(libraryIndexDirectory);
         LibraryTrack cachedTrack = new("track-1", "Song", "Artist", "Album", 180, 1, 1,
-            "track-1");
+            "track-1", "Artist");
         LibraryIndexData cachedIndex = new(
             [cachedTrack],
             ["Rock"],
-            ["Artist"],
             [new LibraryCollection("artist-1", "Artist", "", 1, "track-1")],
             [new LibraryCollection("album-1", "Album", "Artist", 1, "track-1")],
             [new LibraryCollection("genre-1", "Rock", "", 1, "track-1")],
@@ -138,7 +147,7 @@ internal static partial class BridgeSelfTest
         LibraryIndexData? reloadedIndex = new LibraryIndexStore(libraryIndexDirectory).Load();
         Ensure(reloadedIndex is not null && reloadedIndex.Tracks.SequenceEqual([cachedTrack])
             && reloadedIndex.TrackGenres.SequenceEqual(["Rock"])
-            && reloadedIndex.TrackAlbumArtists.SequenceEqual(["Artist"])
+            && reloadedIndex.Tracks[0].AlbumArtist == "Artist"
             && reloadedIndex.Genres.Length == 1
             && reloadedIndex.Revision == cachedIndex.Revision,
             "library index survives a complete store restart");
@@ -147,11 +156,6 @@ internal static partial class BridgeSelfTest
         catch (ArgumentException) { mismatchedIndexRejected = true; }
         Ensure(mismatchedIndexRejected,
             "library index rejects a genre column that does not match its tracks");
-        bool mismatchedAlbumArtistsRejected = false;
-        try { libraryIndexStore.Save(cachedIndex with { TrackAlbumArtists = [] }); }
-        catch (ArgumentException) { mismatchedAlbumArtistsRejected = true; }
-        Ensure(mismatchedAlbumArtistsRejected,
-            "library index rejects an album-artist column that does not match its tracks");
         string libraryIndexPath = Path.Combine(libraryIndexDirectory, "Cache",
             "library-index-v1.json");
         File.WriteAllText(libraryIndexPath, "{not-json");

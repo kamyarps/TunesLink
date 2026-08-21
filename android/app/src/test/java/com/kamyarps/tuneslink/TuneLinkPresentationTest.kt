@@ -318,6 +318,77 @@ class TunesLinkPresentationTest {
     }
 
     @Test
+    fun skipConfirmationAcceptsQueueEndAndTrackRestart() {
+        fun state(trackId: String, position: Double) = BridgeClient.PlayerState(
+            true, true, "Song", "Artist", "Album", 200.0, position, 50, "art",
+            trackId, false, "off",
+        )
+
+        val next = PendingMutation(
+            operationId = 1,
+            action = PlaybackAction.Next,
+            affectedFields = PlaybackAction.Next.playerFields(),
+            previousTrackId = "track-1",
+            startedAtMillis = 0,
+        )
+        assertTrue(next.matches(state("track-2", 4.0)))
+        assertTrue(next.matches(state("", 0.0)))
+        assertFalse(next.matches(state("track-1", 90.0)))
+
+        val previous = PendingMutation(
+            operationId = 2,
+            action = PlaybackAction.Previous,
+            affectedFields = PlaybackAction.Previous.playerFields(),
+            previousTrackId = "track-1",
+            startedAtMillis = 0,
+        )
+        assertTrue(previous.matches(state("track-0", 50.0)))
+        assertTrue(previous.matches(state("track-1", 1.0)))
+        assertFalse(previous.matches(state("track-1", 90.0)))
+    }
+
+    @Test
+    fun seekConfirmationToleratesSamplingLatency() {
+        val seek = PendingMutation(
+            operationId = 3,
+            action = PlaybackAction.Position,
+            affectedFields = PlaybackAction.Position.playerFields(),
+            expectedNumber = 100.0,
+            startedAtMillis = 0,
+        )
+        val nearby = BridgeClient.PlayerState(
+            true, true, "Song", "Artist", "Album", 200.0, 102.5, 50, "art",
+            "track", false, "off",
+        )
+        val distant = BridgeClient.PlayerState(
+            true, true, "Song", "Artist", "Album", 200.0, 110.0, 50, "art",
+            "track", false, "off",
+        )
+        assertTrue(seek.matches(nearby))
+        assertFalse(seek.matches(distant))
+    }
+
+    @Test
+    fun cachedPagesKeepTheCursorBusyUntilTheNetworkSettles() {
+        val cursor = LibraryPageCursor(isLoadingMore = true, revision = "old")
+        val window = PageWindow(List(120) { "track-$it" }, 0)
+
+        val provisional = provisionalCursor(cursor, window, total = 400, revision = "new",
+            windowWasEmpty = false)
+
+        assertTrue(provisional.isLoadingMore)
+        assertTrue(provisional.isBusy)
+        assertEquals(400, provisional.total)
+        assertEquals("old", provisional.revision)
+        assertTrue(provisional.hasMore)
+
+        val firstPage = provisionalCursor(LibraryPageCursor(isLoading = true), window,
+            total = 400, revision = "new", windowWasEmpty = true)
+        assertTrue(firstPage.isLoading)
+        assertEquals("new", firstPage.revision)
+    }
+
+    @Test
     fun playbackActionsMatchTheBridgeCommandContract() {
         assertEquals(
             setOf("playPause", "previous", "next", "position", "volume", "shuffle", "repeat"),

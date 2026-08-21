@@ -9,11 +9,24 @@ internal static class ItunesWorkerHost
     {
         using (media)
         {
-            Console.InputEncoding = System.Text.Encoding.UTF8;
             Console.OutputEncoding = System.Text.Encoding.UTF8;
-            BoundedLineReader requests = new(Console.In, ItunesWorkerProtocol.MaxRequestCharacters);
-            while (await requests.ReadLineAsync().ConfigureAwait(false) is { } line)
+            using StreamReader input = new(Console.OpenStandardInput(),
+                System.Text.Encoding.UTF8, detectEncodingFromByteOrderMarks: false);
+            BoundedLineReader requests = new(input, ItunesWorkerProtocol.MaxRequestCharacters);
+            Task<string?>? pendingRead = null;
+            while (true)
             {
+                string? line;
+                if (pendingRead is not null)
+                {
+                    line = await pendingRead.ConfigureAwait(false);
+                    pendingRead = null;
+                }
+                else
+                {
+                    line = await requests.ReadLineAsync().ConfigureAwait(false);
+                }
+                if (line is null) return 0;
                 int requestId = 0;
                 ItunesWorkerRequest request;
                 try
@@ -36,20 +49,51 @@ internal static class ItunesWorkerHost
                     return 1;
                 }
 
+                if (request.Operation == "cancel") continue;
+
                 if (request.Operation == "selfTestMalformedResponse")
                 {
                     await Console.Out.WriteLineAsync("{").ConfigureAwait(false);
                     return 1;
                 }
 
+                using CancellationTokenSource cancellation = new();
+                Task<ItunesWorkerResponse> execution =
+                    ExecuteAsync(media, request, cancellation.Token);
+                while (!execution.IsCompleted)
+                {
+                    pendingRead ??= requests.ReadLineAsync();
+                    Task completed = await Task.WhenAny(execution, pendingRead)
+                        .ConfigureAwait(false);
+                    if (completed != pendingRead) break;
+                    string? next = await pendingRead.ConfigureAwait(false);
+                    pendingRead = null;
+                    if (next is null)
+                    {
+                        cancellation.Cancel();
+                        try { await execution.ConfigureAwait(false); } catch { }
+                        return 0;
+                    }
+                    ItunesWorkerRequest? control = TryParseRequest(next);
+                    if (control is { Operation: "cancel" }
+                        && control.CancelTargetId == request.Id)
+                    {
+                        cancellation.Cancel();
+                    }
+                }
+
                 ItunesWorkerResponse response;
                 try
                 {
-                    response = await ExecuteAsync(media, request).ConfigureAwait(false);
+                    response = await execution.ConfigureAwait(false);
                 }
                 catch (Exception exception)
                 {
-                    ItunesWorkerFailureCategory category = ClassifyFailure(exception);
+                    ItunesWorkerFailureCategory category =
+                        cancellation.IsCancellationRequested
+                        && exception is OperationCanceledException
+                            ? ItunesWorkerFailureCategory.Cancelled
+                            : ClassifyFailure(exception);
                     await WriteFailureAsync(requestId, exception, category).ConfigureAwait(false);
                     if (!ItunesWorkerProtocol.CanReuseWorker(category)) return 1;
                     continue;
@@ -59,45 +103,64 @@ internal static class ItunesWorkerHost
                 if (request.Operation == "shutdown") return 0;
             }
         }
-        return 0;
+    }
+
+    private static ItunesWorkerRequest? TryParseRequest(string line)
+    {
+        try
+        {
+            return JsonSerializer.Deserialize<ItunesWorkerRequest>(
+                line, ItunesWorkerProtocol.JsonOptions);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
     }
 
     private static async Task<ItunesWorkerResponse> ExecuteAsync(
-        IMediaController media, ItunesWorkerRequest request)
+        IMediaController media, ItunesWorkerRequest request, CancellationToken cancellationToken)
     {
         switch (request.Operation)
         {
             case "state":
                 return new ItunesWorkerResponse(request.Id, true,
-                    State: await media.GetStateAsync().ConfigureAwait(false));
+                    State: await media.GetStateAsync(cancellationToken).ConfigureAwait(false));
             case "library":
                 return new ItunesWorkerResponse(request.Id, true,
-                    Library: await media.GetLibraryAsync(request.Query, request.Offset, request.Limit)
-                        .ConfigureAwait(false));
+                    Library: await media.GetLibraryAsync(request.Query, request.Offset,
+                        request.Limit, cancellationToken).ConfigureAwait(false));
             case "collections":
                 return new ItunesWorkerResponse(request.Id, true,
                     Collections: await media.GetCollectionsAsync(request.CollectionKind,
-                        request.Query, request.Offset, request.Limit).ConfigureAwait(false));
+                        request.Query, request.Offset, request.Limit, cancellationToken)
+                        .ConfigureAwait(false));
             case "collectionTracks":
                 return new ItunesWorkerResponse(request.Id, true,
                     Library: await media.GetCollectionTracksAsync(request.CollectionKind,
-                        request.CollectionId, request.Query, request.Offset, request.Limit)
-                        .ConfigureAwait(false));
+                        request.CollectionId, request.Query, request.Offset, request.Limit,
+                        cancellationToken).ConfigureAwait(false));
             case "play":
                 await media.PlayTrackAsync(new PlaybackSelection(
-                    request.TrackId, request.CollectionKind, request.CollectionId))
-                    .ConfigureAwait(false);
+                    request.TrackId, request.CollectionKind, request.CollectionId),
+                    cancellationToken).ConfigureAwait(false);
                 return new ItunesWorkerResponse(request.Id, true);
             case "command":
                 await media.ExecuteAsync(request.Command
-                    ?? throw new ArgumentException("Player command is required")).ConfigureAwait(false);
+                    ?? throw new ArgumentException("Player command is required"),
+                    cancellationToken).ConfigureAwait(false);
                 return new ItunesWorkerResponse(request.Id, true);
             case "artwork":
                 return new ItunesWorkerResponse(request.Id, true,
-                    Artwork: await media.GetArtworkAsync(request.TrackId, request.MaxSize)
-                        .ConfigureAwait(false));
+                    Artwork: await media.GetArtworkAsync(request.TrackId, request.MaxSize,
+                        cancellationToken).ConfigureAwait(false));
             case "selfTestHang":
-                await Task.Delay(Timeout.InfiniteTimeSpan).ConfigureAwait(false);
+                await Task.Delay(Timeout.InfiniteTimeSpan, CancellationToken.None)
+                    .ConfigureAwait(false);
+                throw new InvalidOperationException("Unreachable");
+            case "selfTestCancellableHang":
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken)
+                    .ConfigureAwait(false);
                 throw new InvalidOperationException("Unreachable");
             case "selfTestInternalFailure":
                 throw new InvalidOperationException("Self-test worker failure");
@@ -127,6 +190,7 @@ internal static class ItunesWorkerHost
         return failure switch
         {
             MediaNotFoundException => ItunesWorkerFailureCategory.NotFound,
+            MediaUnavailableException => ItunesWorkerFailureCategory.Unavailable,
             ArgumentException => ItunesWorkerFailureCategory.Validation,
             OperationCanceledException => ItunesWorkerFailureCategory.Timeout,
             TimeoutException => ItunesWorkerFailureCategory.Timeout,

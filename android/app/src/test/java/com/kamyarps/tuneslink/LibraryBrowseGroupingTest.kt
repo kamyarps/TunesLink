@@ -11,6 +11,7 @@ class LibraryBrowseGroupingTest {
         album: String,
         trackNumber: Int = 0,
         artworkId: String = id,
+        albumArtist: String = "",
     ) = TrackUiState(
         id = id,
         title = "Song $id",
@@ -19,6 +20,7 @@ class LibraryBrowseGroupingTest {
         duration = 180.0,
         artworkId = artworkId,
         trackNumber = trackNumber,
+        albumArtist = albumArtist,
     )
 
     @Test
@@ -51,6 +53,20 @@ class LibraryBrowseGroupingTest {
 
         assertEquals(sent.map { it.id }, songs.map { it.track.id })
         assertEquals(3, libraryBrowseAlbums(sent).size)
+    }
+
+    @Test
+    fun adjacentAlbumsSharingATitleStaySeparatePerAlbumArtist() {
+        val albums = libraryBrowseAlbums(
+            listOf(
+                track("1", "Greatest Hits", trackNumber = 1, albumArtist = "First Band"),
+                track("2", "Greatest Hits", trackNumber = 2, albumArtist = "First Band"),
+                track("3", "Greatest Hits", trackNumber = 1, albumArtist = "Second Band"),
+            ),
+        )
+
+        assertEquals(2, albums.size)
+        assertEquals(listOf(2, 1), albums.map { it.heading.trackCount })
     }
 
     @Test

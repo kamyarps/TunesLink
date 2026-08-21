@@ -151,12 +151,13 @@ internal fun LibraryBrowseScreen(
                     LibraryCategoryRow(kind, onClick = { viewModel.openLibraryKind(kind) })
                 }
             }
-            browse.isLoading -> ContentState(
-                stringResource(R.string.loading_library),
-                stringResource(R.string.loading_library_detail),
-                loading = true,
-                modifier = Modifier.fillMaxSize(),
-            )
+            browse.isLoading && browse.collections.isEmpty() && browse.tracks.isEmpty() ->
+                ContentState(
+                    stringResource(R.string.loading_library),
+                    stringResource(R.string.loading_library_detail),
+                    loading = true,
+                    modifier = Modifier.fillMaxSize(),
+                )
             browseError != null && browse.collections.isEmpty() && browse.tracks.isEmpty() -> ContentState(
                 stringResource(R.string.library_unavailable),
                 browseError,
@@ -211,8 +212,7 @@ internal fun LibraryBrowseScreen(
                             is LibraryBrowseRow.Song -> TrackRow(
                                 row.track,
                                 viewModel,
-                                enabled = ConnectionAvailability.from(state.connection).controlsEnabled &&
-                                    !state.player.hasPendingConflict(PlaybackAction.PlayTrack),
+                                enabled = ConnectionAvailability.from(state.connection).controlsEnabled,
                                 pending = state.player.pending(PlaybackAction.PlayTrack) != null &&
                                     state.player.trackId == row.track.id,
                                 current = state.player.trackId == row.track.id,
@@ -226,8 +226,7 @@ internal fun LibraryBrowseScreen(
                         TrackRow(
                             track,
                             viewModel,
-                            enabled = ConnectionAvailability.from(state.connection).controlsEnabled &&
-                                !state.player.hasPendingConflict(PlaybackAction.PlayTrack),
+                            enabled = ConnectionAvailability.from(state.connection).controlsEnabled,
                             pending = state.player.pending(PlaybackAction.PlayTrack) != null &&
                                 state.player.trackId == track.id,
                             current = state.player.trackId == track.id,
@@ -491,8 +490,7 @@ internal fun SearchScreen(state: TunesLinkUiState, viewModel: TunesLinkViewModel
                     TrackRow(
                         track,
                         viewModel = viewModel,
-                        enabled = ConnectionAvailability.from(state.connection).controlsEnabled &&
-                            !state.player.hasPendingConflict(PlaybackAction.PlayTrack),
+                        enabled = ConnectionAvailability.from(state.connection).controlsEnabled,
                         pending = state.player.pending(PlaybackAction.PlayTrack) != null &&
                             state.player.trackId == track.id,
                         current = state.player.trackId == track.id,

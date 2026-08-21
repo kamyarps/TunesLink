@@ -6,7 +6,6 @@ namespace TunesLinkBridge;
 internal sealed record LibraryIndexData(
     LibraryTrack[] Tracks,
     string[] TrackGenres,
-    string[] TrackAlbumArtists,
     LibraryCollection[] Artists,
     LibraryCollection[] Albums,
     LibraryCollection[] Genres,
@@ -16,9 +15,9 @@ internal sealed record LibraryIndexData(
 
 internal sealed class LibraryIndexStore
 {
-    // Version 3 added the album-artist column and changed how albums and artists are grouped.
+    // Version 4 moved the album artist onto each track so the wire model and the queue share it.
     // An older index is discarded rather than reused so a stale grouping never survives an update.
-    internal const int SchemaVersion = 3;
+    internal const int SchemaVersion = 4;
     internal const int MaxFileBytes = 128 * 1024 * 1024;
     internal const int MaxItems = 1_000_000;
 
@@ -26,7 +25,6 @@ internal sealed class LibraryIndexStore
         int SchemaVersion,
         LibraryTrack[] Tracks,
         string[] TrackGenres,
-        string[] TrackAlbumArtists,
         LibraryCollection[] Artists,
         LibraryCollection[] Albums,
         LibraryCollection[] Genres,
@@ -56,7 +54,7 @@ internal sealed class LibraryIndexStore
                 reader.ReadToEnd());
             if (!IsValid(value)) return null;
             return new LibraryIndexData(value!.Tracks, value.TrackGenres,
-                value.TrackAlbumArtists, value.Artists, value.Albums, value.Genres,
+                value.Artists, value.Albums, value.Genres,
                 value.Revision, value.SourceSignature, value.CreatedAt);
         }
         catch
@@ -69,7 +67,7 @@ internal sealed class LibraryIndexStore
     {
         ArgumentNullException.ThrowIfNull(value);
         Envelope envelope = new(SchemaVersion, value.Tracks, value.TrackGenres,
-            value.TrackAlbumArtists, value.Artists, value.Albums, value.Genres, value.Revision,
+            value.Artists, value.Albums, value.Genres, value.Revision,
             value.SourceSignature, value.CreatedAt);
         if (!IsValid(envelope))
             throw new ArgumentException("The library index contains invalid data", nameof(value));
@@ -85,17 +83,15 @@ internal sealed class LibraryIndexStore
     {
         if (value is null || value.SchemaVersion != SchemaVersion
             || value.Tracks is null || value.TrackGenres is null
-            || value.TrackAlbumArtists is null || value.Artists is null
+            || value.Artists is null
             || value.Albums is null || value.Genres is null
             || value.TrackGenres.Length != value.Tracks.Length
-            || value.TrackAlbumArtists.Length != value.Tracks.Length
             || value.Tracks.Length > MaxItems || value.Artists.Length > MaxItems
             || value.Albums.Length > MaxItems || value.Genres.Length > MaxItems
             || !IsSha256(value.Revision) || !IsSha256(value.SourceSignature))
             return false;
         return value.Tracks.All(IsValidTrack)
             && value.TrackGenres.All(IsValidText)
-            && value.TrackAlbumArtists.All(IsValidText)
             && value.Artists.All(IsValidCollection)
             && value.Albums.All(IsValidCollection)
             && value.Genres.All(IsValidCollection);
@@ -104,6 +100,7 @@ internal sealed class LibraryIndexStore
     private static bool IsValidTrack(LibraryTrack track) => track is not null
         && IsValidText(track.Id) && IsValidText(track.Title)
         && IsValidText(track.Artist) && IsValidText(track.Album)
+        && IsValidText(track.AlbumArtist)
         && IsValidText(track.ArtworkId) && double.IsFinite(track.Duration)
         && track.Duration >= 0 && track.TrackNumber >= 0 && track.DiscNumber >= 0;
 
@@ -121,9 +118,9 @@ internal sealed class LibraryIndexStore
     private static long EstimatedMaximumBytes(Envelope value)
     {
         long characters = value.Tracks.Sum(track => (long)track.Id.Length + track.Title.Length
-            + track.Artist.Length + track.Album.Length + track.ArtworkId.Length)
+            + track.Artist.Length + track.Album.Length + track.AlbumArtist.Length
+            + track.ArtworkId.Length)
             + value.TrackGenres.Sum(genre => (long)genre.Length)
-            + value.TrackAlbumArtists.Sum(artist => (long)artist.Length)
             + value.Artists.Concat(value.Albums).Concat(value.Genres)
                 .Sum(collection => (long)collection.Id.Length + collection.Title.Length
                     + collection.Subtitle.Length + collection.ArtworkId.Length);

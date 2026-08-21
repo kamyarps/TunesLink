@@ -8,7 +8,7 @@ function Assert-True {
 }
 
 $requirements = Get-TunesLinkBuildRequirements -Root $root
-Assert-True ($requirements.DotNetSdk -eq "10.0.302") "global.json SDK"
+Assert-True ($requirements.DotNetSdk -eq "10.0.303") "global.json SDK"
 Assert-True ($requirements.JavaMajor -eq 17) "JDK major"
 Assert-True ($requirements.CompileSdk -eq 37 -and $requirements.TargetSdk -eq 37) "Android API"
 Assert-True (Test-TunesLinkDotNetSdkList @("10.0.302 [C:\dotnet\sdk]") "10.0.302") "exact SDK accepted"

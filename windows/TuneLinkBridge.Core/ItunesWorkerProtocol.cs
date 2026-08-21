@@ -13,7 +13,8 @@ internal sealed record ItunesWorkerRequest(
     string CollectionKind = "",
     string CollectionId = "",
     PlayerCommand? Command = null,
-    int MaxSize = 0);
+    int MaxSize = 0,
+    int CancelTargetId = 0);
 
 internal sealed record ItunesWorkerResponse(
     int Id,
@@ -35,10 +36,15 @@ internal enum ItunesWorkerFailureCategory
     ItunesTerminated = 4,
     Timeout = 5,
     MalformedResponse = 6,
-    Internal = 7
+    Internal = 7,
+    Cancelled = 8,
+    Unavailable = 9
 }
 
 internal sealed class MediaNotFoundException(string message) : ArgumentException(message);
+
+internal sealed class MediaUnavailableException(string message)
+    : InvalidOperationException(message);
 
 internal sealed class ItunesWorkerException(
     ItunesWorkerFailureCategory category, string message, Exception? innerException = null)
@@ -60,7 +66,9 @@ internal static class ItunesWorkerProtocol
 
     internal static bool CanReuseWorker(ItunesWorkerFailureCategory category) =>
         category is ItunesWorkerFailureCategory.Validation
-            or ItunesWorkerFailureCategory.NotFound;
+            or ItunesWorkerFailureCategory.NotFound
+            or ItunesWorkerFailureCategory.Cancelled
+            or ItunesWorkerFailureCategory.Unavailable;
 
 }
 
@@ -69,6 +77,7 @@ internal sealed class BoundedLineReader
     private readonly TextReader reader;
     private readonly int maxCharacters;
     private readonly char[] buffer = new char[4096];
+    private readonly StringBuilder partial = new();
     private string residual = "";
 
     internal BoundedLineReader(TextReader reader, int maxCharacters)
@@ -79,7 +88,6 @@ internal sealed class BoundedLineReader
 
     internal async Task<string?> ReadLineAsync(CancellationToken cancellationToken = default)
     {
-        StringBuilder value = new();
         while (true)
         {
             if (residual.Length > 0)
@@ -87,30 +95,32 @@ internal sealed class BoundedLineReader
                 int newline = residual.IndexOf('\n', StringComparison.Ordinal);
                 if (newline >= 0)
                 {
-                    Append(value, residual.AsSpan(0, newline));
+                    Append(residual.AsSpan(0, newline));
                     residual = residual[(newline + 1)..];
-                    return Complete(value);
+                    return Complete();
                 }
-                Append(value, residual.AsSpan());
+                Append(residual.AsSpan());
                 residual = "";
             }
             int read = await reader.ReadAsync(buffer.AsMemory(), cancellationToken)
                 .ConfigureAwait(false);
-            if (read == 0) return value.Length == 0 ? null : Complete(value);
+            if (read == 0) return partial.Length == 0 ? null : Complete();
             residual = new string(buffer, 0, read);
         }
     }
 
-    private void Append(StringBuilder value, ReadOnlySpan<char> chunk)
+    private void Append(ReadOnlySpan<char> chunk)
     {
-        if (value.Length + chunk.Length > maxCharacters)
+        if (partial.Length + chunk.Length > maxCharacters)
             throw new IOException("The iTunes worker message exceeded its safety limit");
-        value.Append(chunk);
+        partial.Append(chunk);
     }
 
-    private static string Complete(StringBuilder value)
+    private string Complete()
     {
-        if (value.Length > 0 && value[^1] == '\r') value.Length--;
-        return value.ToString();
+        if (partial.Length > 0 && partial[^1] == '\r') partial.Length--;
+        string value = partial.ToString();
+        partial.Clear();
+        return value;
     }
 }

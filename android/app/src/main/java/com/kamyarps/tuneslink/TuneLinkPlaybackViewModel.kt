@@ -10,7 +10,9 @@ import kotlinx.coroutines.launch
 
 internal fun TunesLinkViewModel.sendCommand(action: PlaybackAction, value: Double? = null) {
     val previous = mutableState.value.player
-    if (previous.hasPendingConflict(action)) return
+    previous.pending(action)?.let { replaced ->
+        mutationTimeoutJobs.remove(replaced.operationId)?.cancel()
+    }
     val mutation = pendingMutation(action, previous, value)
     val pending = previous.pendingMutations + (action to mutation)
     val optimistic = when (action) {
@@ -158,16 +160,14 @@ private fun TunesLinkViewModel.requestMutationRefresh(mutation: PendingMutation)
     if (mutableState.value.player.pending(mutation.action)?.operationId != mutation.operationId) {
         return false
     }
-    mutableState.update { state ->
-        val pending = state.player.pending(mutation.action)
-        if (pending?.operationId != mutation.operationId) state else state.copy(
-            player = state.player.copy(
-                pendingMutations = state.player.pendingMutations +
-                    (mutation.action to pending.copy(refreshRequested = true)),
-            ),
-        )
-    }
     repository.requestStateRefresh()
+    repository.refreshState(object : BridgeClient.Result<BridgeClient.PlayerState> {
+        override fun success(value: BridgeClient.PlayerState) {
+            applyAuthoritativeState(value)
+        }
+
+        override fun failure(message: String, unauthorized: Boolean) = Unit
+    })
     return true
 }
 

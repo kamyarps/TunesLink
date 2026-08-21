@@ -49,13 +49,15 @@ internal static class LibraryGrouping
     /// <summary>
     /// Orders the songs of an artist, album, or genre the way a listener expects to see and hear
     /// them: album by album, then in disc and track order, with the library's own order breaking
-    /// ties for untagged songs. The browse list and the playback queue share this ordering so a
-    /// song started from a list carries on in the order that list showed.
+    /// ties for untagged songs. Two albums that share a title but not an album artist stay
+    /// separate. The browse list and the playback queue share this ordering so a song started
+    /// from a list carries on in the order that list showed.
     /// </summary>
     internal static IEnumerable<T> InCollectionOrder<T>(IEnumerable<T> tracks,
-        Func<T, string> album, Func<T, int> discNumber, Func<T, int> trackNumber,
-        Func<T, int> libraryIndex) => tracks
+        Func<T, string> album, Func<T, string> albumArtist, Func<T, int> discNumber,
+        Func<T, int> trackNumber, Func<T, int> libraryIndex) => tracks
         .OrderBy(album, StringComparer.OrdinalIgnoreCase)
+        .ThenBy(albumArtist, StringComparer.OrdinalIgnoreCase)
         .ThenBy(track => discNumber(track) > 0 ? discNumber(track) : int.MaxValue)
         .ThenBy(track => trackNumber(track) > 0 ? trackNumber(track) : int.MaxValue)
         .ThenBy(libraryIndex);

@@ -29,6 +29,11 @@ final class BridgeRepository implements AutoCloseable {
         void cancel();
     }
 
+    interface PageResult<T> {
+        void page(T value, boolean authoritative);
+        void failure(String message, boolean unauthorized);
+    }
+
     static final class Relocation {
         enum Status { RELOCATED, IDENTITY_CHANGED }
 
@@ -435,6 +440,11 @@ final class BridgeRepository implements AutoCloseable {
             client.requestStateRefresh();
     }
 
+    void refreshState(BridgeClient.Result<BridgeClient.PlayerState> result) {
+        BridgeSession.Request request = capture();
+        if (request != null) client.getState(request.bridge, guarded(request, result));
+    }
+
     void command(String command, Double value, BridgeClient.Result<Boolean> result) {
         BridgeSession.Request request = capture();
         if (request != null) client.command(request.bridge, command, value,
@@ -442,7 +452,7 @@ final class BridgeRepository implements AutoCloseable {
     }
 
     public RequestHandle getLibrary(String query, int offset, int limit,
-                                    BridgeClient.Result<BridgeClient.LibraryPage> result) {
+                                    PageResult<BridgeClient.LibraryPage> result) {
         BridgeSession.Request request = capture();
         if (request == null) return RequestHandle.NONE;
         String key = libraryRequestKey("songs", "", query, offset, limit);
@@ -452,7 +462,7 @@ final class BridgeRepository implements AutoCloseable {
     }
 
     RequestHandle getCollectionTracks(String kind, String id, String query, int offset, int limit,
-                                      BridgeClient.Result<BridgeClient.LibraryPage> result) {
+                                      PageResult<BridgeClient.LibraryPage> result) {
         BridgeSession.Request request = capture();
         if (request == null) return RequestHandle.NONE;
         String key = libraryRequestKey(kind, id, query, offset, limit);
@@ -462,14 +472,14 @@ final class BridgeRepository implements AutoCloseable {
     }
 
     RequestHandle getCollections(String kind, String query, int offset, int limit,
-                                 BridgeClient.Result<BridgeClient.LibraryCollectionPage> result) {
+                                 PageResult<BridgeClient.LibraryCollectionPage> result) {
         BridgeSession.Request request = capture();
         if (request == null) return RequestHandle.NONE;
         String key = libraryRequestKey(kind, "", query, offset, limit);
         if (libraryCache == null) {
             BridgeClient.Cancellation network = client.getCollections(
                     request.bridge, kind, query, offset, limit,
-                    guarded(request, result));
+                    authoritativeOnly(request, result));
             return network::cancel;
         }
         AtomicBoolean cancelled = new AtomicBoolean();
@@ -478,7 +488,7 @@ final class BridgeRepository implements AutoCloseable {
         LibraryCacheStore.LoadHandle load = libraryCache.loadCollections(
                 BridgeSession.cacheScope(request.bridge), key, cached -> {
                     if (cancelled.get() || !session.isCurrent(request)) return;
-                    if (cached != null) result.success(cached);
+                    if (cached != null) result.page(cached, false);
                     BridgeClient.Cancellation started = client.getCollections(request.bridge,
                             kind, query, offset, limit,
                             cacheCollectionsResult(request, key, cancelled, result));
@@ -499,10 +509,11 @@ final class BridgeRepository implements AutoCloseable {
     private RequestHandle loadCachedTracksThenNetwork(
             BridgeSession.Request request,
             String key,
-            BridgeClient.Result<BridgeClient.LibraryPage> result,
+            PageResult<BridgeClient.LibraryPage> result,
             TrackNetworkStart networkStart) {
         if (libraryCache == null) {
-            BridgeClient.Cancellation network = networkStart.start(guarded(request, result));
+            BridgeClient.Cancellation network = networkStart.start(
+                    authoritativeOnly(request, result));
             return network::cancel;
         }
         AtomicBoolean cancelled = new AtomicBoolean();
@@ -511,7 +522,7 @@ final class BridgeRepository implements AutoCloseable {
         LibraryCacheStore.LoadHandle load = libraryCache.loadTracks(
                 BridgeSession.cacheScope(request.bridge), key, cached -> {
                     if (cancelled.get() || !session.isCurrent(request)) return;
-                    if (cached != null) result.success(cached);
+                    if (cached != null) result.page(cached, false);
                     BridgeClient.Cancellation started = networkStart.start(
                             cacheTracksResult(request, key, cancelled, result));
                     network.set(started);
@@ -524,14 +535,27 @@ final class BridgeRepository implements AutoCloseable {
         };
     }
 
+    private <T> BridgeClient.Result<T> authoritativeOnly(BridgeSession.Request request,
+                                                         PageResult<T> result) {
+        return new BridgeClient.Result<>() {
+            @Override public void success(T value) {
+                if (session.isCurrent(request)) result.page(value, true);
+            }
+
+            @Override public void failure(String message, boolean unauthorized) {
+                if (session.isCurrent(request)) result.failure(message, unauthorized);
+            }
+        };
+    }
+
     private BridgeClient.Result<BridgeClient.LibraryPage> cacheTracksResult(
             BridgeSession.Request request, String key, AtomicBoolean cancelled,
-            BridgeClient.Result<BridgeClient.LibraryPage> result) {
+            PageResult<BridgeClient.LibraryPage> result) {
         return new BridgeClient.Result<>() {
             @Override public void success(BridgeClient.LibraryPage value) {
                 if (cancelled.get() || !session.isCurrent(request)) return;
                 libraryCache.saveTracks(BridgeSession.cacheScope(request.bridge), key, value);
-                result.success(value);
+                result.page(value, true);
             }
 
             @Override public void failure(String message, boolean unauthorized) {
@@ -543,12 +567,12 @@ final class BridgeRepository implements AutoCloseable {
 
     private BridgeClient.Result<BridgeClient.LibraryCollectionPage> cacheCollectionsResult(
             BridgeSession.Request request, String key, AtomicBoolean cancelled,
-            BridgeClient.Result<BridgeClient.LibraryCollectionPage> result) {
+            PageResult<BridgeClient.LibraryCollectionPage> result) {
         return new BridgeClient.Result<>() {
             @Override public void success(BridgeClient.LibraryCollectionPage value) {
                 if (cancelled.get() || !session.isCurrent(request)) return;
                 libraryCache.saveCollections(BridgeSession.cacheScope(request.bridge), key, value);
-                result.success(value);
+                result.page(value, true);
             }
 
             @Override public void failure(String message, boolean unauthorized) {

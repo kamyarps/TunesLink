@@ -160,7 +160,7 @@ internal static class DemoLibrary
         LibraryTrack[] items = results.Skip(safeOffset).Take(safeLimit)
             .Select((track, itemIndex) => new LibraryTrack(
                 TrackId(track), track.Title, track.Artist, track.Album, track.Duration,
-                safeOffset + itemIndex + 1, 1, TrackId(track)))
+                safeOffset + itemIndex + 1, 1, TrackId(track), track.GroupingArtist))
             .ToArray();
         return new LibraryPage(items, safeOffset, safeLimit, results.Length,
             safeOffset + items.Length < results.Length, revision);

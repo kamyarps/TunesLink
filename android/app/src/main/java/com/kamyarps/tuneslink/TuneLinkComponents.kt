@@ -333,7 +333,7 @@ internal fun TransportCluster(
             onPrevious,
             large = false,
             compact = compact,
-            enabled = enabled && !player.hasPendingConflict(PlaybackAction.Previous),
+            enabled = enabled,
         )
         TransportButton(
             if (player.playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
@@ -341,7 +341,7 @@ internal fun TransportCluster(
             onPlayPause,
             large = true,
             compact = compact,
-            enabled = enabled && !player.hasPendingConflict(PlaybackAction.PlayPause),
+            enabled = enabled,
         )
         TransportButton(
             Icons.Rounded.SkipNext,
@@ -349,7 +349,7 @@ internal fun TransportCluster(
             onNext,
             large = false,
             compact = compact,
-            enabled = enabled && !player.hasPendingConflict(PlaybackAction.Next),
+            enabled = enabled,
         )
     }
 }
@@ -572,7 +572,7 @@ private fun MiniPlayerContent(
         }
         IconButton(
             onClick = onPlayPause,
-            enabled = controlsEnabled && !player.hasPendingConflict(PlaybackAction.PlayPause),
+            enabled = controlsEnabled,
             modifier = Modifier.size(48.dp).semantics {
                 contentDescription = playPauseDescription
             },

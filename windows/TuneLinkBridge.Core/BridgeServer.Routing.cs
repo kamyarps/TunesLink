@@ -107,7 +107,17 @@ internal sealed partial class BridgeServer
         if (request.Method == "GET" && path == "/api/state")
         {
             if (options.Demo) Console.WriteLine("state-poll");
-            PlaybackState state = await stateHub.GetStateAsync(token).ConfigureAwait(false);
+            PlaybackState state;
+            try
+            {
+                state = await stateHub.GetStateAsync(token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (!token.IsCancellationRequested)
+            {
+                await WriteJsonAsync(stream, 503,
+                    new { error = "The computer is busy. Try again." }, token);
+                return;
+            }
             await WriteJsonAsync(stream, 200, state, token);
             return;
         }
@@ -295,6 +305,8 @@ internal sealed partial class BridgeServer
         if (options.Demo) Console.WriteLine("state-stream:open");
         try
         {
+            await using PlaybackStateSubscription subscription = await stateHub.SubscribeAsync(token)
+                .ConfigureAwait(false);
             const string responseHeaders =
                 "HTTP/1.1 200 OK\r\n" +
                 "Content-Type: text/event-stream; charset=utf-8\r\n" +
@@ -303,8 +315,6 @@ internal sealed partial class BridgeServer
                 "Transfer-Encoding: chunked\r\n" +
                 "Connection: keep-alive\r\n\r\n";
             await WriteWithTimeoutAsync(stream, Encoding.ASCII.GetBytes(responseHeaders), token)
-                .ConfigureAwait(false);
-            await using PlaybackStateSubscription subscription = await stateHub.SubscribeAsync(token)
                 .ConfigureAwait(false);
 
             while (!token.IsCancellationRequested)

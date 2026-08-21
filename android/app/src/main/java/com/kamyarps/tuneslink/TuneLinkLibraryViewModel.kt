@@ -188,7 +188,11 @@ internal fun TunesLinkViewModel.playTrack(
     collection: SelectedLibraryCollection? = null,
 ) {
     val previous = mutableState.value.player
-    if (previous.hasPendingConflict(PlaybackAction.PlayTrack)) return
+    val superseded = previous.pendingMutations.values.filter { pending ->
+        pending.affectedFields.any(PlaybackAction.PlayTrack.playerFields()::contains)
+    }
+    superseded.forEach { mutationTimeoutJobs.remove(it.operationId)?.cancel() }
+    val retained = previous.pendingMutations - superseded.map(PendingMutation::action).toSet()
     val mutation = pendingMutation(
         action = PlaybackAction.PlayTrack,
         previous = previous,
@@ -210,13 +214,12 @@ internal fun TunesLinkViewModel.playTrack(
                 } else {
                     ArtworkLoadState.Loading(previous.artwork)
                 },
-                pendingMutations = previous.pendingMutations + (PlaybackAction.PlayTrack to mutation),
+                pendingMutations = retained + (PlaybackAction.PlayTrack to mutation),
                 commandError = null,
             ),
         )
     }
     loadArtwork(track.artworkId)
-    scheduleMutationReconciliation(mutation)
     repository.playTrack(
         track.id,
         collection?.kind?.wireValue.orEmpty(),
@@ -290,8 +293,8 @@ internal fun TunesLinkViewModel.loadLibrary(refresh: Boolean) {
 }
 
 internal fun TunesLinkViewModel.libraryResult(query: String, generation: Int, replace: Boolean) =
-    object : BridgeClient.Result<BridgeClient.LibraryPage> {
-        override fun success(value: BridgeClient.LibraryPage) {
+    object : BridgeRepository.PageResult<BridgeClient.LibraryPage> {
+        override fun page(value: BridgeClient.LibraryPage, authoritative: Boolean) {
             val current = mutableState.value.library
             if (generation != libraryGeneration || current.loadedQuery != query) return
             val alreadyAnnounced = announcedResultQuery == query && current.total == value.total
@@ -299,23 +302,48 @@ internal fun TunesLinkViewModel.libraryResult(query: String, generation: Int, re
                 it.toUiState()
             }
             mutableState.update { state ->
-                val revisionChanged = state.library.revision.isNotBlank()
-                    && value.revision.isNotBlank() && state.library.revision != value.revision
+                val library = state.library
+                if (!authoritative) {
+                    if (library.items.isNotEmpty() &&
+                        revisionChanged(library.revision, value.revision)
+                    ) {
+                        return@update state
+                    }
+                    val window = mergePageWindow(
+                        library.items,
+                        library.windowStart,
+                        converted,
+                        value.offset,
+                        replace || library.items.isEmpty(),
+                        TunesLinkViewModel.MAX_LIBRARY_WINDOW_ITEMS,
+                    )
+                    return@update state.copy(
+                        library = library.copy(
+                            items = window.items,
+                            windowStart = window.startOffset,
+                            revision = if (library.items.isEmpty()) value.revision else library.revision,
+                            total = value.total,
+                            hasMore = window.startOffset + window.items.size < value.total,
+                            hasPrevious = window.startOffset > 0,
+                        ),
+                    )
+                }
+                val revisionReplaced = revisionChanged(library.revision, value.revision)
                 val window = mergePageWindow(
-                    state.library.items,
-                    state.library.windowStart,
+                    library.items,
+                    library.windowStart,
                     converted,
                     value.offset,
-                    replace || revisionChanged,
+                    replace || revisionReplaced,
                     TunesLinkViewModel.MAX_LIBRARY_WINDOW_ITEMS,
                 )
                 state.copy(
-                    library = state.library.copy(
+                    library = library.copy(
                         items = window.items,
                         windowStart = window.startOffset,
-                        revision = if (value.revision.isNotBlank() || replace || revisionChanged) {
+                        revision = if (value.revision.isNotBlank() || replace || revisionReplaced) {
                             value.revision
-                        } else state.library.revision,
+                        } else library.revision,
                         total = value.total,
                         hasMore = window.startOffset + window.items.size < value.total,
                         hasPrevious = window.startOffset > 0,
@@ -326,7 +354,7 @@ internal fun TunesLinkViewModel.libraryResult(query: String, generation: Int, re
                     ),
                 )
             }
-            if (alreadyAnnounced) return
+            if (!authoritative || alreadyAnnounced) return
             announcedResultQuery = query
             announcePlural(R.plurals.result_count, value.total, listOf(value.total))
         }
@@ -347,8 +375,8 @@ internal fun TunesLinkViewModel.libraryResult(query: String, generation: Int, re
     }
 
 internal fun TunesLinkViewModel.browseCollectionsResult(generation: Int, replace: Boolean) =
-    object : BridgeClient.Result<BridgeClient.LibraryCollectionPage> {
-        override fun success(value: BridgeClient.LibraryCollectionPage) {
+    object : BridgeRepository.PageResult<BridgeClient.LibraryCollectionPage> {
+        override fun page(value: BridgeClient.LibraryCollectionPage, authoritative: Boolean) {
             if (generation != browseCollectionsGeneration) return
             val converted = value.items.map {
                 LibraryCollectionUiState(
@@ -361,6 +389,30 @@ internal fun TunesLinkViewModel.browseCollectionsResult(generation: Int, replace
             }
             mutableState.update { state ->
                 val cursor = state.browse.collectionsCursor
+                if (!authoritative) {
+                    if (state.browse.collections.isNotEmpty() &&
+                        revisionChanged(cursor.revision, value.revision)
+                    ) {
+                        return@update state
+                    }
+                    val window = mergePageWindow(
+                        state.browse.collections,
+                        cursor.windowStart,
+                        converted,
+                        value.offset,
+                        replace || state.browse.collections.isEmpty(),
+                        TunesLinkViewModel.MAX_LIBRARY_WINDOW_ITEMS,
+                    )
+                    return@update state.copy(
+                        browse = state.browse.copy(
+                            collections = window.items,
+                            collectionsCursor = provisionalCursor(
+                                cursor, window, value.total, value.revision,
+                                state.browse.collections.isEmpty(),
+                            ),
+                        ),
+                    )
+                }
                 val replaced = replace || revisionChanged(cursor.revision, value.revision)
                 val window = mergePageWindow(
                     state.browse.collections,
@@ -388,12 +440,36 @@ internal fun TunesLinkViewModel.browseCollectionsResult(generation: Int, replace
     }
 
 internal fun TunesLinkViewModel.browseTracksResult(generation: Int, replace: Boolean) =
-    object : BridgeClient.Result<BridgeClient.LibraryPage> {
-        override fun success(value: BridgeClient.LibraryPage) {
+    object : BridgeRepository.PageResult<BridgeClient.LibraryPage> {
+        override fun page(value: BridgeClient.LibraryPage, authoritative: Boolean) {
             if (generation != browseTracksGeneration) return
             val converted = value.items.map { it.toUiState() }
             mutableState.update { state ->
                 val cursor = state.browse.tracksCursor
+                if (!authoritative) {
+                    if (state.browse.tracks.isNotEmpty() &&
+                        revisionChanged(cursor.revision, value.revision)
+                    ) {
+                        return@update state
+                    }
+                    val window = mergePageWindow(
+                        state.browse.tracks,
+                        cursor.windowStart,
+                        converted,
+                        value.offset,
+                        replace || state.browse.tracks.isEmpty(),
+                        TunesLinkViewModel.MAX_LIBRARY_WINDOW_ITEMS,
+                    )
+                    return@update state.copy(
+                        browse = state.browse.copy(
+                            tracks = window.items,
+                            tracksCursor = provisionalCursor(
+                                cursor, window, value.total, value.revision,
+                                state.browse.tracks.isEmpty(),
+                            ),
+                        ),
+                    )
+                }
                 val replaced = replace || revisionChanged(cursor.revision, value.revision)
                 val window = mergePageWindow(
                     state.browse.tracks,
@@ -458,15 +534,30 @@ internal fun <T> settledCursor(
     error = null,
 )
 
+internal fun <T> provisionalCursor(
+    cursor: LibraryPageCursor,
+    window: PageWindow<T>,
+    total: Int,
+    revision: String,
+    windowWasEmpty: Boolean,
+): LibraryPageCursor = cursor.copy(
+    total = total,
+    windowStart = window.startOffset,
+    revision = if (windowWasEmpty) revision else cursor.revision,
+    hasMore = window.startOffset + window.items.size < total,
+    hasPrevious = window.startOffset > 0,
+)
+
 private fun BridgeClient.LibraryTrack.toUiState() = TrackUiState(
-    id,
-    title,
-    artist,
-    album,
-    duration,
-    artworkId,
-    trackNumber,
-    discNumber,
+    id = id,
+    title = title,
+    artist = artist,
+    album = album,
+    duration = duration,
+    artworkId = artworkId,
+    trackNumber = trackNumber,
+    discNumber = discNumber,
+    albumArtist = albumArtist,
 )
 
 internal data class PageWindow<T>(val items: List<T>, val startOffset: Int)

@@ -194,14 +194,14 @@ private fun TabletWorkspaceHeader(
                     TabletTransportButton(
                         Icons.Rounded.SkipPrevious,
                         stringResource(R.string.previous_song),
-                        controlsEnabled && !state.player.hasPendingConflict(PlaybackAction.Previous),
+                        controlsEnabled,
                         compact = compactWidth,
                         onClick = viewModel::previous,
                     )
                     TabletTransportButton(
                         if (state.player.playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
                         stringResource(if (state.player.playing) R.string.pause else R.string.play),
-                        controlsEnabled && !state.player.hasPendingConflict(PlaybackAction.PlayPause),
+                        controlsEnabled,
                         emphasized = true,
                         compact = compactWidth,
                         onClick = viewModel::togglePlayback,
@@ -209,7 +209,7 @@ private fun TabletWorkspaceHeader(
                     TabletTransportButton(
                         Icons.Rounded.SkipNext,
                         stringResource(R.string.next_song),
-                        controlsEnabled && !state.player.hasPendingConflict(PlaybackAction.Next),
+                        controlsEnabled,
                         compact = compactWidth,
                         onClick = viewModel::next,
                     )
@@ -319,8 +319,7 @@ private fun TabletNowPlayingSurface(
                     },
                 ),
                 selected = player.shuffleEnabled,
-                enabled = controlsEnabled &&
-                    !player.hasPendingConflict(PlaybackAction.Shuffle),
+                enabled = controlsEnabled,
                 compact = compact,
                 onClick = onShuffle,
             )
@@ -336,8 +335,7 @@ private fun TabletNowPlayingSurface(
                     RepeatMode.One -> stringResource(R.string.turn_repeat_off)
                 },
                 selected = player.repeatMode != RepeatMode.Off,
-                enabled = controlsEnabled &&
-                    !player.hasPendingConflict(PlaybackAction.Repeat),
+                enabled = controlsEnabled,
                 compact = compact,
                 onClick = onRepeat,
             )
@@ -386,7 +384,7 @@ private fun TabletVolumeControl(
                 haptic.performHapticFeedback(HapticFeedbackType.Confirm)
             },
             valueRange = 0f..100f,
-            enabled = controlsEnabled && !player.hasPendingConflict(PlaybackAction.Volume),
+            enabled = controlsEnabled,
             lowEmphasis = true,
             modifier = Modifier
                 .weight(1f)
@@ -544,8 +542,7 @@ private fun TabletNowPlayingHeader(
                 haptic.performHapticFeedback(HapticFeedbackType.Confirm)
             },
             valueRange = 0f..duration,
-            enabled = controlsEnabled && player.duration > 0 &&
-                !player.hasPendingConflict(PlaybackAction.Position),
+            enabled = controlsEnabled && player.duration > 0,
             lowEmphasis = true,
             modifier = Modifier
                 .align(Alignment.BottomCenter)
@@ -1306,8 +1303,7 @@ private fun TabletTrackRow(
     striped: Boolean = false,
 ) {
     val current = state.player.trackId == track.id
-    val enabled = ConnectionAvailability.from(state.connection).controlsEnabled &&
-        !state.player.hasPendingConflict(PlaybackAction.PlayTrack)
+    val enabled = ConnectionAvailability.from(state.connection).controlsEnabled
     Row(
         Modifier
             .fillMaxWidth()

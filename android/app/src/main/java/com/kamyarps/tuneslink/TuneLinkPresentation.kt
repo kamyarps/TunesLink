@@ -51,18 +51,18 @@ internal data class PendingMutation(
     val startedAtMillis: Long,
     val timeoutMillis: Long = 2_000,
     val deadlineMillis: Long = 4_000,
-    val refreshRequested: Boolean = false,
 ) {
     fun matches(state: BridgeClient.PlayerState): Boolean = when (action) {
         PlaybackAction.PlayPause -> state.playing == expectedBoolean
-        PlaybackAction.Position -> kotlin.math.abs(state.position - (expectedNumber ?: state.position)) <= 1.5
+        PlaybackAction.Position -> kotlin.math.abs(state.position - (expectedNumber ?: state.position)) <= 3.0
         PlaybackAction.Volume -> kotlin.math.abs(
             state.volume.toDouble() - (expectedNumber ?: state.volume.toDouble()),
         ) <= 1.0
         PlaybackAction.Shuffle -> state.shuffleEnabled == expectedBoolean
         PlaybackAction.Repeat -> RepeatMode.fromWire(state.repeatMode) == expectedRepeat
-        PlaybackAction.Previous, PlaybackAction.Next ->
-            state.trackId.isNotBlank() && state.trackId != previousTrackId
+        PlaybackAction.Next -> state.trackId != previousTrackId
+        PlaybackAction.Previous ->
+            state.trackId != previousTrackId || state.position <= 3.0
         PlaybackAction.PlayTrack -> state.trackId == expectedTrackId
     }
 }
@@ -207,8 +207,13 @@ internal fun libraryBrowseAlbums(tracks: List<TrackUiState>): List<LibraryBrowse
     var start = 0
     while (start < tracks.size) {
         val album = tracks[start].album
+        val albumArtist = tracks[start].albumArtist
         var end = start
-        while (end < tracks.size && tracks[end].album == album) end++
+        while (end < tracks.size && tracks[end].album == album &&
+            tracks[end].albumArtist == albumArtist
+        ) {
+            end++
+        }
         val run = tracks.subList(start, end)
         albums += LibraryBrowseAlbum(
             heading = LibraryBrowseRow.AlbumHeading(
@@ -303,7 +308,7 @@ internal fun mergePlaybackState(
     incoming: BridgeClient.PlayerState,
 ): PlayerUiState {
     val completed = current.pendingMutations.values.filter { mutation ->
-        mutation.refreshRequested || mutation.matches(incoming)
+        mutation.matches(incoming)
     }.map(PendingMutation::action).toSet()
     val remaining = current.pendingMutations - completed
     val protectedFields = remaining.values.flatMap(PendingMutation::affectedFields).toSet()

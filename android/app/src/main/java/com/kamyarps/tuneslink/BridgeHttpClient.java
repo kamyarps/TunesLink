@@ -14,6 +14,7 @@ import java.security.cert.CertificateException;
 import java.security.cert.X509Certificate;
 import java.util.Locale;
 
+import javax.net.ssl.HostnameVerifier;
 import javax.net.ssl.HttpsURLConnection;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLSocket;
@@ -40,12 +41,14 @@ final class BridgeHttpClient {
 
     private String cachedTlsFingerprint = "";
     private SSLSocketFactory cachedTlsFactory;
+    private HostnameVerifier cachedTlsVerifier;
 
     Response request(String host, int port, String tlsFingerprint, String token,
                      String method, String path, byte[] body,
                      BridgeClient.ConnectionCancellation cancellation) throws IOException {
         HttpsURLConnection connection = openPinnedConnection(host, port, tlsFingerprint, path);
         if (cancellation != null) cancellation.attach(connection);
+        boolean reusable = false;
         try {
             connection.setConnectTimeout(CONNECT_TIMEOUT_MS);
             connection.setReadTimeout(BridgeClient.readTimeoutFor(path));
@@ -70,10 +73,11 @@ final class BridgeHttpClient {
             byte[] response = stream == null ? new byte[0]
                     : readLimited(stream, MAX_RESPONSE_BYTES);
             String contentType = connection.getContentType();
+            reusable = true;
             return new Response(status, response, contentType == null ? "" : contentType);
         } finally {
             if (cancellation != null) cancellation.detach(connection);
-            connection.disconnect();
+            if (!reusable) connection.disconnect();
         }
     }
 
@@ -87,32 +91,34 @@ final class BridgeHttpClient {
         }
         URL url = new URL("https", host, port, path);
         HttpsURLConnection connection = (HttpsURLConnection) url.openConnection();
-        String expectedFingerprint = BridgeClient.normalizeFingerprint(tlsFingerprint);
-        connection.setSSLSocketFactory(socketFactoryFor(expectedFingerprint));
-        connection.setHostnameVerifier((ignoredHost, session) -> {
-            try {
-                Certificate[] peer = session.getPeerCertificates();
-                return peer.length > 0 && peer[0] instanceof X509Certificate
-                        && expectedFingerprint.equals(fingerprint((X509Certificate) peer[0]));
-            } catch (Exception invalidPeer) {
-                return false;
-            }
-        });
+        configurePinning(connection, BridgeClient.normalizeFingerprint(tlsFingerprint));
         return connection;
     }
 
-    private synchronized SSLSocketFactory socketFactoryFor(String expectedFingerprint)
-            throws IOException {
+    private synchronized void configurePinning(HttpsURLConnection connection,
+                                               String expectedFingerprint) throws IOException {
         if (cachedTlsFactory == null || !cachedTlsFingerprint.equals(expectedFingerprint)) {
             cachedTlsFactory = pinnedSocketFactory(expectedFingerprint);
+            cachedTlsVerifier = (ignoredHost, session) -> {
+                try {
+                    Certificate[] peer = session.getPeerCertificates();
+                    return peer.length > 0 && peer[0] instanceof X509Certificate
+                            && expectedFingerprint.equals(
+                                    fingerprint((X509Certificate) peer[0]));
+                } catch (Exception invalidPeer) {
+                    return false;
+                }
+            };
             cachedTlsFingerprint = expectedFingerprint;
         }
-        return cachedTlsFactory;
+        connection.setSSLSocketFactory(cachedTlsFactory);
+        connection.setHostnameVerifier(cachedTlsVerifier);
     }
 
     synchronized void clear() {
         cachedTlsFingerprint = "";
         cachedTlsFactory = null;
+        cachedTlsVerifier = null;
     }
 
     @SuppressLint("CustomX509TrustManager")

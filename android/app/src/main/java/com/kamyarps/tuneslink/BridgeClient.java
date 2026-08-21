@@ -98,9 +98,10 @@ class BridgeClient extends BridgeClientSupport {
         final int trackNumber;
         final int discNumber;
         final String artworkId;
+        final String albumArtist;
 
         LibraryTrack(String id, String title, String artist, String album, double duration,
-                     int trackNumber, int discNumber, String artworkId) {
+                     int trackNumber, int discNumber, String artworkId, String albumArtist) {
             this.id = id;
             this.title = title;
             this.artist = artist;
@@ -109,6 +110,7 @@ class BridgeClient extends BridgeClientSupport {
             this.trackNumber = trackNumber;
             this.discNumber = discNumber;
             this.artworkId = artworkId;
+            this.albumArtist = albumArtist == null ? "" : albumArtist;
         }
     }
 
@@ -304,7 +306,8 @@ class BridgeClient extends BridgeClientSupport {
                         Math.max(0, item.optDouble("duration", 0)),
                         Math.max(0, item.optInt("trackNumber", 0)),
                         Math.max(0, item.optInt("discNumber", 0)),
-                        item.optString("artworkId", "")));
+                        item.optString("artworkId", ""),
+                        item.optString("albumArtist", "")));
             }
         }
         return new LibraryPage(items,
@@ -345,7 +348,7 @@ class BridgeClient extends BridgeClientSupport {
     private static final class StopStreamException extends IOException {}
 
     private final ExecutorService executor = Executors.newFixedThreadPool(4);
-    private final ExecutorService artworkExecutor = Executors.newSingleThreadExecutor();
+    private final ExecutorService artworkExecutor = Executors.newFixedThreadPool(2);
     private final ExecutorService stateExecutor = Executors.newSingleThreadExecutor();
     private final BridgeHttpClient http = new BridgeHttpClient();
     private final Handler main = new Handler(Looper.getMainLooper());
@@ -775,8 +778,12 @@ class BridgeClient extends BridgeClientSupport {
                     deliverConnection(listener, generation, false, outcome.message);
                     return;
                 }
-                if (outcome.receivedState) failures = 0;
-                else failures++;
+                if (outcome.receivedState) {
+                    failures = 0;
+                    sleepWhileCurrent(generation, 300);
+                    continue;
+                }
+                failures++;
                 deliverConnection(listener, generation, false,
                         outcome.message == null ? "Reconnecting to the computer" : outcome.message);
                 long[] delays = {2_000, 4_000, 8_000, 15_000};

@@ -24,7 +24,8 @@ internal sealed record LibraryTrack(
     double Duration,
     int TrackNumber,
     int DiscNumber,
-    string ArtworkId);
+    string ArtworkId,
+    string AlbumArtist);
 
 internal sealed record LibraryPage(
     IReadOnlyList<LibraryTrack> Items,

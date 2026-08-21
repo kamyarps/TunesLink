@@ -16,12 +16,16 @@ internal static partial class BridgeSelfTest
             "worker iTunes termination classification");
         Ensure(ItunesWorkerHost.ClassifyFailure(new TimeoutException("timeout"))
                == ItunesWorkerFailureCategory.Timeout, "worker timeout classification");
+        Ensure(ItunesWorkerHost.ClassifyFailure(new MediaUnavailableException("closed"))
+               == ItunesWorkerFailureCategory.Unavailable, "worker unavailable classification");
         Ensure(ItunesWorkerHost.ClassifyFailure(new InvalidOperationException("failure"))
                == ItunesWorkerFailureCategory.Internal, "worker internal classification");
 
         Ensure(ItunesWorkerProtocol.CanReuseWorker(ItunesWorkerFailureCategory.Validation)
-               && ItunesWorkerProtocol.CanReuseWorker(ItunesWorkerFailureCategory.NotFound),
-            "validation and not-found failures preserve worker");
+               && ItunesWorkerProtocol.CanReuseWorker(ItunesWorkerFailureCategory.NotFound)
+               && ItunesWorkerProtocol.CanReuseWorker(ItunesWorkerFailureCategory.Cancelled)
+               && ItunesWorkerProtocol.CanReuseWorker(ItunesWorkerFailureCategory.Unavailable),
+            "recoverable failures preserve worker");
         Ensure(!ItunesWorkerProtocol.CanReuseWorker(ItunesWorkerFailureCategory.ComDisconnected)
                && !ItunesWorkerProtocol.CanReuseWorker(ItunesWorkerFailureCategory.ItunesTerminated)
                && !ItunesWorkerProtocol.CanReuseWorker(ItunesWorkerFailureCategory.Timeout)
@@ -54,6 +58,23 @@ internal static partial class BridgeSelfTest
         Ensure(isolated.WorkerRunningForTest
                && isolated.WorkerGenerationForTest == originalGeneration,
             "not-found failure keeps worker process");
+
+        using (CancellationTokenSource cancelled = new(TimeSpan.FromMilliseconds(250)))
+        {
+            try
+            {
+                await isolated.ExerciseCancellableHangForSelfTestAsync(cancelled.Token);
+                throw new InvalidOperationException(
+                    "Self-test failed: expected cancelled operation");
+            }
+            catch (OperationCanceledException) when (cancelled.IsCancellationRequested) { }
+        }
+        Ensure(isolated.WorkerRunningForTest
+               && isolated.WorkerGenerationForTest == originalGeneration,
+            "cancelled operation keeps worker process");
+        _ = await isolated.GetStateAsync();
+        Ensure(isolated.WorkerGenerationForTest == originalGeneration,
+            "worker answers normally after a cancelled operation");
 
         try
         {

@@ -162,6 +162,7 @@ final class LibraryCacheStore implements AutoCloseable {
             item.put("trackNumber", track.trackNumber);
             item.put("discNumber", track.discNumber);
             item.put("artworkId", track.artworkId);
+            item.put("albumArtist", track.albumArtist);
             items.put(item);
         }
         json.put("items", items);

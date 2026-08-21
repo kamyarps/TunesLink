@@ -40,10 +40,13 @@ internal sealed class IsolatedItunesController : IMediaController
 
     public Task<ArtworkData?> GetArtworkAsync(string id, int maxSize,
         CancellationToken cancellationToken = default) =>
-        interactiveWorker.GetArtworkAsync(id, maxSize, cancellationToken);
+        libraryWorker.GetArtworkAsync(id, maxSize, cancellationToken);
 
     internal Task ExerciseHangForSelfTestAsync(CancellationToken cancellationToken) =>
         interactiveWorker.ExerciseHangForSelfTestAsync(cancellationToken);
+
+    internal Task ExerciseCancellableHangForSelfTestAsync(CancellationToken cancellationToken) =>
+        interactiveWorker.ExerciseCancellableHangForSelfTestAsync(cancellationToken);
 
     internal Task ExerciseLibraryHangForSelfTestAsync(CancellationToken cancellationToken) =>
         libraryWorker.ExerciseHangForSelfTestAsync(cancellationToken);
@@ -67,6 +70,8 @@ internal sealed class IsolatedItunesController : IMediaController
 
 internal sealed class ItunesWorkerClient : IDisposable
 {
+    private static readonly TimeSpan CancelDrainTimeout = TimeSpan.FromSeconds(2);
+
     private readonly SemaphoreSlim requestGate = new(1, 1);
     private readonly string workerArgument;
     private readonly bool diagnostics;
@@ -136,6 +141,10 @@ internal sealed class ItunesWorkerClient : IDisposable
         CallAsync(new ItunesWorkerRequest(NextId(), "selfTestHang"),
             _ => true, TimeSpan.FromSeconds(30), cancellationToken);
 
+    internal Task ExerciseCancellableHangForSelfTestAsync(CancellationToken cancellationToken) =>
+        CallAsync(new ItunesWorkerRequest(NextId(), "selfTestCancellableHang"),
+            _ => true, TimeSpan.FromSeconds(30), cancellationToken);
+
     internal Task ExerciseInternalFailureForSelfTestAsync() =>
         CallAsync(new ItunesWorkerRequest(NextId(), "selfTestInternalFailure"),
             _ => true, TimeSpan.FromSeconds(5), CancellationToken.None);
@@ -164,6 +173,7 @@ internal sealed class ItunesWorkerClient : IDisposable
         operation.CancelAfter(timeout);
         bool entered = false;
         bool terminateOnFailure = true;
+        Task<string?>? responseTask = null;
         try
         {
             await requestGate.WaitAsync(operation.Token).ConfigureAwait(false);
@@ -174,7 +184,8 @@ internal sealed class ItunesWorkerClient : IDisposable
             await process.StandardInput.WriteLineAsync(requestJson.AsMemory(), operation.Token)
                 .ConfigureAwait(false);
             await process.StandardInput.FlushAsync(operation.Token).ConfigureAwait(false);
-            string? line = await responses.ReadLineAsync(operation.Token).ConfigureAwait(false);
+            responseTask = responses.ReadLineAsync(CancellationToken.None);
+            string? line = await responseTask.WaitAsync(operation.Token).ConfigureAwait(false);
             if (line is null) throw new IOException("The iTunes worker stopped unexpectedly");
             ItunesWorkerResponse response;
             try
@@ -197,6 +208,16 @@ internal sealed class ItunesWorkerClient : IDisposable
             }
             return select(response);
         }
+        catch (OperationCanceledException) when (entered && responseTask is not null)
+        {
+            if (!await TryCancelPendingRequestAsync(request.Id, responseTask)
+                    .ConfigureAwait(false))
+            {
+                AbandonPendingResponse(responseTask);
+                TerminateWorker();
+            }
+            throw;
+        }
         catch (Exception exception)
         {
             if (diagnostics && exception is not OperationCanceledException)
@@ -214,6 +235,39 @@ internal sealed class ItunesWorkerClient : IDisposable
             }
         }
     }
+
+    private async Task<bool> TryCancelPendingRequestAsync(int requestId,
+        Task<string?> pendingResponse)
+    {
+        Process? process = worker;
+        if (process is null || process.HasExited) return false;
+        try
+        {
+            string cancelJson = JsonSerializer.Serialize(
+                new ItunesWorkerRequest(NextId(), "cancel", CancelTargetId: requestId),
+                ItunesWorkerProtocol.JsonOptions);
+            using CancellationTokenSource drain = new(CancelDrainTimeout);
+            await process.StandardInput.WriteLineAsync(cancelJson.AsMemory(), drain.Token)
+                .ConfigureAwait(false);
+            await process.StandardInput.FlushAsync(drain.Token).ConfigureAwait(false);
+            string? line = await pendingResponse.WaitAsync(drain.Token).ConfigureAwait(false);
+            if (line is null) return false;
+            ItunesWorkerResponse? response = JsonSerializer.Deserialize<ItunesWorkerResponse>(
+                line, ItunesWorkerProtocol.JsonOptions);
+            return response is not null && response.Id == requestId;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static void AbandonPendingResponse(Task<string?> pendingResponse) =>
+        _ = pendingResponse.ContinueWith(
+            completed => _ = completed.Exception,
+            CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
 
     private void TerminateIdleWorker()
     {

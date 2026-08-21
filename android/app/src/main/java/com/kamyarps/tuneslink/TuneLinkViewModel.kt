@@ -81,6 +81,7 @@ internal class TunesLinkViewModel(
     private var resetAfterModalDismiss = false
     private var resetAnnouncement: UiAnnouncement? = null
     private var lastAvailabilityKind: ConnectionAvailabilityKind? = null
+    private var backgroundStopJob: Job? = null
 
     init {
         viewModelScope.launch {
@@ -93,6 +94,8 @@ internal class TunesLinkViewModel(
     }
 
     fun onForeground() {
+        backgroundStopJob?.cancel()
+        backgroundStopJob = null
         mutableState.update { it.copy(pendingRevocationCount = repository.pendingRevocationCount()) }
         if (repository.pendingRevocationCount() > 0) repository.retryPendingRevocations(null)
         if (!mutableState.value.navigation.switchingComputer && repository.current() != null) {
@@ -124,6 +127,13 @@ internal class TunesLinkViewModel(
 
     fun onBackground() {
         cancelTransientOperations()
+        backgroundStopJob?.cancel()
+        backgroundStopJob = viewModelScope.launch {
+            delay(BACKGROUND_STREAM_GRACE_MILLIS)
+            backgroundStopJob = null
+            stateUpdatesActive = false
+            repository.stopStateUpdates()
+        }
     }
 
     fun requestDiscovery(hasLocalNetworkAccess: Boolean) {
@@ -573,6 +583,25 @@ internal class TunesLinkViewModel(
         }
     }
 
+    internal fun applyAuthoritativeState(state: BridgeClient.PlayerState) {
+        latestAuthoritativeState = state
+        val before = mutableState.value.player
+        val confirmed = before.pendingMutations.values.filter { it.matches(state) }
+        val merged = mergePlaybackState(before, state)
+        mutableState.update {
+            it.copy(
+                player = merged.copy(
+                    commandError = if (confirmed.isNotEmpty()) null else merged.commandError,
+                ),
+            )
+        }
+        confirmed.forEach { mutation ->
+            mutationTimeoutJobs.remove(mutation.operationId)?.cancel()
+            announceMutationSuccess(mutation.action, merged)
+        }
+        if (before.artworkId != merged.artworkId) loadArtwork(merged.artworkId)
+    }
+
     private fun connect(initial: Boolean) {
         val bridge = repository.current() ?: run {
             mutableState.update { it.copy(route = TunesLinkRoute.Welcome, connection = ConnectionState.Unpaired) }
@@ -589,34 +618,7 @@ internal class TunesLinkViewModel(
         }
         repository.startStateUpdates(object : BridgeRepository.StateUpdatesListener {
             override fun state(state: BridgeClient.PlayerState) {
-                latestAuthoritativeState = state
-                val before = mutableState.value.player
-                val completed = before.pendingMutations.values.filter { mutation ->
-                    mutation.refreshRequested || mutation.matches(state)
-                }
-                val rejected = completed.filter { it.refreshRequested && !it.matches(state) }
-                val confirmed = completed - rejected.toSet()
-                val merged = mergePlaybackState(before, state)
-                mutableState.update {
-                    it.copy(
-                        player = merged.copy(
-                            commandError = when {
-                                rejected.isNotEmpty() ->
-                                    getApplication<Application>().getString(R.string.playback_change_not_applied)
-                                confirmed.isNotEmpty() -> null
-                                else -> merged.commandError
-                            },
-                        ),
-                    )
-                }
-                completed.forEach { mutation ->
-                    mutationTimeoutJobs.remove(mutation.operationId)?.cancel()
-                    if (mutation in confirmed) announceMutationSuccess(mutation.action, merged)
-                }
-                if (rejected.isNotEmpty()) {
-                    announce(R.string.playback_change_not_applied, haptic = HapticIntent.Reject)
-                }
-                if (before.artworkId != merged.artworkId) loadArtwork(merged.artworkId)
+                applyAuthoritativeState(state)
             }
 
             override fun connectionChanged(
@@ -933,6 +935,7 @@ internal class TunesLinkViewModel(
         private const val KEY_MODAL_RETURN = "modal_return"
         private const val PAIRING_CODE_LENGTH = 6
         private const val MAX_ADDRESS_LENGTH = 64
+        private const val BACKGROUND_STREAM_GRACE_MILLIS = 15_000L
         internal const val PAGE_SIZE = 60
         internal const val MAX_LIBRARY_WINDOW_ITEMS = PAGE_SIZE * 8
         internal const val ARTWORK_SIZE = 900

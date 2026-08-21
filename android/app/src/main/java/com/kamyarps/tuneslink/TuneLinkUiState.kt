@@ -103,6 +103,7 @@ internal data class TrackUiState(
     val artworkId: String,
     val trackNumber: Int = 0,
     val discNumber: Int = 0,
+    val albumArtist: String = "",
 )
 
 internal data class LibraryCollectionUiState(
