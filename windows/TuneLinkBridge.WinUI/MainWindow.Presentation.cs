@@ -5,6 +5,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Documents;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Animation;
@@ -63,10 +64,18 @@ public sealed partial class MainWindow
         animationsEnabled = policy.AnimationsEnabled;
         opacityFeedbackEnabled = policy.OpacityFeedbackEnabled;
         feedbackDurationMs = policy.FeedbackDurationMs;
-        RootGrid.Background = policy.MaterialsEnabled
+        // Snapshots render the XAML tree only, so the backdrop must be a solid canvas there
+        // and reflow transitions would be captured mid-flight.
+        bool isolatedCapture = launch.VerifyLayout || launch.SnapshotPath is not null;
+        bool materialsEnabled = policy.MaterialsEnabled && !isolatedCapture;
+        ContentStack.ChildrenTransitions = policy.ReflowMotionEnabled && !isolatedCapture
+            ? contentReflowTransitions : null;
+        ringPulseAllowedByPolicy = policy.SpatialMotionEnabled && !isolatedCapture && !heroRasterActive;
+        ApplyRingPulsePolicy(ringPulseAllowedByPolicy && heroReady);
+        RootGrid.Background = materialsEnabled
             ? new SolidColorBrush(Colors.Transparent)
             : (Brush)Microsoft.UI.Xaml.Application.Current.Resources["CanvasBrush"];
-        if (policy.MaterialsEnabled)
+        if (materialsEnabled)
         {
             if (SystemBackdrop is null)
             {
@@ -84,8 +93,16 @@ public sealed partial class MainWindow
     private async void RootGrid_Loaded(object sender, RoutedEventArgs eventArgs)
     {
         if (!launch.VerifyLayout && launch.SnapshotPath is null) return;
+        // Initial keyboard focus is timing-dependent; pointer-state focus draws no focus visual,
+        // so captures stay deterministic.
+        if (FocusManager.GetFocusedElement(RootGrid.XamlRoot) is Control focusedControl)
+            focusedControl.Focus(FocusState.Pointer);
+        await Task.WhenAny(
+            Task.WhenAll(WaitForImageReadyAsync(TitleBarIcon), WaitForImageReadyAsync(HeroBadgeImage),
+                WaitForImageReadyAsync(LaptopFrameImage), WaitForImageReadyAsync(PhoneFrameImage),
+                WaitForImageReadyAsync(PhoneShadowImage)),
+            Task.Delay(TimeSpan.FromSeconds(2)));
         ApplyVerificationTextScale();
-        RenderProblemsImmediately();
         RootGrid.UpdateLayout();
         if (AppWindow.Presenter is not OverlappedPresenter presenter
             || presenter.IsResizable
@@ -120,6 +137,27 @@ public sealed partial class MainWindow
         verificationExitTimer.Start();
     }
 
+    private void ApplyRingPulsePolicy(bool pulseEnabled)
+    {
+        // The backdrop rings march outward while a phone is connected; without motion the
+        // static ring positions are shown instead (reduced motion, captures).
+        ringPulseRunning = pulseEnabled;
+        if (pulseEnabled) EnsureBackdropWave();
+        if (backdropWave is not null) backdropWave.IsVisible = pulseEnabled;
+        BackdropRings.Visibility = heroReady && !pulseEnabled ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private static Task WaitForImageReadyAsync(Image image)
+    {
+        if (image.Source is not BitmapImage bitmap || bitmap.PixelWidth > 0)
+            return Task.CompletedTask;
+        TaskCompletionSource completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        image.ImageOpened += (_, _) => completion.TrySetResult();
+        image.ImageFailed += (_, _) => completion.TrySetResult();
+        if (bitmap.PixelWidth > 0) completion.TrySetResult();
+        return completion.Task;
+    }
+
     private void ApplyVerificationTextScale()
     {
         if (launch.TextScale == 1.0) return;
@@ -128,6 +166,7 @@ public sealed partial class MainWindow
             if (descendant is TextBlock text)
                 text.FontSize *= launch.TextScale;
         }
+        UpdateStatusChipOrientation(RootGrid.ActualWidth);
         RootGrid.UpdateLayout();
     }
 
@@ -264,9 +303,8 @@ public sealed partial class MainWindow
         {
             copyableAddress = null;
             AddressText.Text = UiStrings.Get("Unavailable", "Unavailable");
-            NetworkStatusText.Text = UiStrings.Get("PrivateAddressUnavailable", "Private address unavailable");
-            NetworkStatusText.Foreground = (Brush)Microsoft.UI.Xaml.Application.Current.Resources["DangerBrush"];
-            NetworkStatusIndicator.Fill = (Brush)Microsoft.UI.Xaml.Application.Current.Resources["DangerBrush"];
+            SetStatusChip(NetworkStatusIndicator, NetworkStatusText, healthy: false,
+                UiStrings.Get("PrivateAddressUnavailable", "Private address unavailable"));
             SetProblem(new BridgeProblem(BridgeProblemKind.NetworkUnavailable,
                 UiStrings.Get("PrivateAddressUnavailable", "Private address unavailable"),
                 forcedUnavailable
@@ -279,9 +317,8 @@ public sealed partial class MainWindow
                 selection.Address.ToString(),
                 runtime.Options.Port);
             AddressText.Text = copyableAddress;
-            NetworkStatusText.Text = UiStrings.Get("LocalNetworkReady", "Local network ready");
-            NetworkStatusText.Foreground = (Brush)Microsoft.UI.Xaml.Application.Current.Resources["SecondaryTextBrush"];
-            NetworkStatusIndicator.Fill = (Brush)Microsoft.UI.Xaml.Application.Current.Resources["SuccessBrush"];
+            SetStatusChip(NetworkStatusIndicator, NetworkStatusText, healthy: true,
+                UiStrings.Get("LocalNetworkReady", "Local network ready"));
             ClearProblem(BridgeProblemKind.NetworkUnavailable);
         }
         AutomationProperties.SetHelpText(AddressText, selection.Diagnostic);
@@ -346,13 +383,10 @@ public sealed partial class MainWindow
             bool forcedUnavailable = launch.UiState is "itunes-error" or "both-errors";
             PlaybackState state = await runtime.StateHub.GetStateAsync(timeout.Token);
             if (forcedUnavailable) state = state with { ITunesAvailable = false };
-            ItunesStatusText.Text = state.ITunesAvailable
-                ? UiStrings.Get("ItunesReady", "iTunes ready")
-                : UiStrings.Get("OpenItunes", "Open iTunes");
-            ItunesStatusText.Foreground = (Brush)Microsoft.UI.Xaml.Application.Current.Resources[
-                state.ITunesAvailable ? "SecondaryTextBrush" : "DangerBrush"];
-            ItunesStatusIndicator.Fill = (Brush)Microsoft.UI.Xaml.Application.Current.Resources[
-                state.ITunesAvailable ? "SuccessBrush" : "DangerBrush"];
+            SetStatusChip(ItunesStatusIndicator, ItunesStatusText, state.ITunesAvailable,
+                state.ITunesAvailable
+                    ? UiStrings.Get("ItunesReady", "iTunes ready")
+                    : UiStrings.Get("OpenItunes", "Open iTunes"));
             if (!state.ITunesAvailable)
                 SetProblem(new BridgeProblem(BridgeProblemKind.ITunesUnavailable,
                     UiStrings.Get("ItunesUnavailableTitle", "iTunes is unavailable"),
@@ -370,105 +404,79 @@ public sealed partial class MainWindow
 
     private void SetProblem(BridgeProblem problem)
     {
-        bool changed = healthState.Set(problem, problem.Kind);
-        if (!changed) return;
-        _ = RenderProblemsAsync();
-        Announce(problem.Title + ". " + problem.Detail, AutomationNotificationKind.Other);
+        // The status chips carry the visual state; the health map only deduplicates announcements.
+        if (healthState.Set(problem, problem.Kind))
+            Announce(problem.Title + ". " + problem.Detail, AutomationNotificationKind.Other);
     }
 
-    private void ClearProblem(BridgeProblemKind kind)
-    {
-        if (healthState.Set(null, kind)) _ = RenderProblemsAsync();
-    }
-
-    private async Task RenderProblemsAsync()
-    {
-        int generation = ++problemPresentationGeneration;
-        CancellationToken token = BeginProblemPresentation();
-        IReadOnlyList<BridgeProblem> problems = healthState.Active;
-        try
-        {
-            if (launch.VerifyLayout || launch.SnapshotPath is not null)
-            {
-                RenderProblemsImmediately();
-                return;
-            }
-            if (problems.Count == 0)
-            {
-                await AnimateOpacityAsync(ProblemBanner, 0, feedbackDurationMs, token);
-                if (generation == problemPresentationGeneration)
-                {
-                    ProblemBanner.Opacity = 0;
-                    ProblemBanner.Visibility = Visibility.Collapsed;
-                }
-                return;
-            }
-            if (ProblemBanner.Visibility == Visibility.Collapsed)
-            {
-                ProblemItems.ItemsSource = problems;
-                ProblemBanner.Opacity = 0;
-                ProblemBanner.Visibility = Visibility.Visible;
-                await AnimateOpacityAsync(ProblemBanner, 1, feedbackDurationMs, token);
-                if (generation == problemPresentationGeneration) ProblemBanner.Opacity = 1;
-                return;
-            }
-            await AnimateOpacityAsync(ProblemItems, 0, feedbackDurationMs / 2, token);
-            if (generation != problemPresentationGeneration) return;
-            ProblemItems.ItemsSource = problems;
-            await AnimateOpacityAsync(ProblemItems, 1, feedbackDurationMs / 2, token);
-        }
-        catch (OperationCanceledException) when (token.IsCancellationRequested) { }
-        finally
-        {
-            if (generation == problemPresentationGeneration)
-            {
-                IReadOnlyList<BridgeProblem> current = healthState.Active;
-                ProblemItems.ItemsSource = current;
-                ProblemItems.Opacity = 1;
-                ProblemBanner.Opacity = current.Count == 0 ? 0 : 1;
-                ProblemBanner.Visibility = current.Count == 0
-                    ? Visibility.Collapsed
-                    : Visibility.Visible;
-            }
-        }
-    }
-
-    private CancellationToken BeginProblemPresentation()
-    {
-        if (problemPresentationCancellation is not null)
-        {
-            problemPresentationCancellation.Cancel();
-            problemPresentationCancellation.Dispose();
-        }
-        problemPresentationCancellation = new CancellationTokenSource();
-        return problemPresentationCancellation.Token;
-    }
-
-    private void RenderProblemsImmediately()
-    {
-        IReadOnlyList<BridgeProblem> problems = healthState.Active;
-        ProblemItems.ItemsSource = problems;
-        ProblemItems.Opacity = 1;
-        ProblemBanner.Opacity = problems.Count == 0 ? 0 : 1;
-        ProblemBanner.Visibility = problems.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
-    }
+    private void ClearProblem(BridgeProblemKind kind) => healthState.Set(null, kind);
 
     private void ApplyHero(int pairedPhoneCount)
     {
         HeroPresentation hero = HeroPresentation.Create(pairedPhoneCount, pairingExpanded);
         pairingExpanded = hero.PairingExpanded;
-        HeroTitle.Text = hero.Title;
-        HeroDetail.Text = hero.Detail;
+        SetHeroText(hero);
+        // The signal rings exist only while a phone is connected: static rings behind the devices,
+        // and the outward pulse on top of them.
+        heroReady = hero.Mode == HeroMode.Ready;
+        ApplyRingPulsePolicy(ringPulseAllowedByPolicy && heroReady);
+        PhoneCheckMark.Visibility = !heroRasterActive && heroReady
+            ? Visibility.Visible : Visibility.Collapsed;
         PairingPanel.Visibility = hero.PairingExpanded ? Visibility.Visible : Visibility.Collapsed;
         PairAnotherButton.Visibility = hero.Mode == HeroMode.Ready
             && pairedPhoneCount < BridgeSecurity.MaxPairedDevices
             ? Visibility.Visible : Visibility.Collapsed;
         PairAnotherButton.IsChecked = hero.PairingExpanded;
-        PairAnotherButton.Content = hero.PairingExpanded
+        PairAnotherLabel.Text = hero.PairingExpanded
             ? UiStrings.Get("HidePairingCode", "Hide pairing code")
             : UiStrings.Get("PairAnotherPhone", "Pair another phone");
+        PairAnotherGlyph.Glyph = hero.PairingExpanded ? "\uE70E" : "\uE8FA";
         AutomationProperties.SetName(PairAnotherButton, hero.PairingExpanded
             ? UiStrings.Get("HidePairingCode", "Hide pairing code")
             : UiStrings.Get("ShowPairingCode", "Show pairing code"));
     }
+
+    private void SetHeroText(HeroPresentation hero)
+    {
+        HeroTitle.Inlines.Clear();
+        string[] lines = hero.Title.Split('\n');
+        HeroTitle.Inlines.Add(new Run { Text = lines[0] });
+        if (lines.Length > 1)
+        {
+            HeroTitle.Inlines.Add(new LineBreak());
+            HeroTitle.Inlines.Add(new Run
+            {
+                Text = lines[1],
+                Foreground = (Brush)Microsoft.UI.Xaml.Application.Current.Resources["HeroAccentBrush"]
+            });
+        }
+        HeroDetail.Text = hero.Detail;
+    }
+
+    private void SetStatusChip(FontIcon indicator, TextBlock text, bool healthy, string message)
+    {
+        indicator.Glyph = healthy ? "\uEC61" : "\uEA39";
+        indicator.Foreground = (Brush)Microsoft.UI.Xaml.Application.Current.Resources[
+            healthy ? "SuccessBrush" : "DangerBrush"];
+        text.Text = message;
+        text.Foreground = (Brush)Microsoft.UI.Xaml.Application.Current.Resources[
+            healthy ? "SecondaryTextBrush" : "DangerBrush"];
+        UpdateStatusChipOrientation(RootGrid.ActualWidth);
+    }
+
+    private void UpdateStatusChipOrientation(double rootWidth)
+    {
+        if (rootWidth <= 0) return;
+        double available = Math.Min(ContentStack.MaxWidth,
+            rootWidth - PageContent.Padding.Left - PageContent.Padding.Right);
+        double needed = HeaderStatusPanel.Spacing * Math.Max(0, HeaderStatusPanel.Children.Count - 1);
+        foreach (UIElement chip in HeaderStatusPanel.Children)
+        {
+            chip.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+            needed += chip.DesiredSize.Width;
+        }
+        HeaderStatusPanel.Orientation = needed <= available
+            ? Orientation.Horizontal : Orientation.Vertical;
+    }
+
 }

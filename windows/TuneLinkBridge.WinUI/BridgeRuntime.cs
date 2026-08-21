@@ -14,7 +14,8 @@ internal sealed record BridgeLaunchOptions(
     string? UiState,
     string? Viewport,
     double TextScale,
-    string? SnapshotPath)
+    string? SnapshotPath,
+    string? Theme)
 {
     public static BridgeLaunchOptions Parse(string[] args)
     {
@@ -27,6 +28,7 @@ internal sealed record BridgeLaunchOptions(
         double textScale = DoubleAfter(args, "--text-scale", 1.0);
         if (textScale is not (1.0 or 1.5 or 2.0))
             throw new ArgumentException("Text scale must be 1.0, 1.5, or 2.0.");
+        string? theme = ParseTheme(args);
         bool preview = args.Contains("--paired-preview", StringComparer.OrdinalIgnoreCase)
             || args.Contains("--verify-layout", StringComparer.OrdinalIgnoreCase)
             || snapshot is not null || uiState is not null;
@@ -48,7 +50,16 @@ internal sealed record BridgeLaunchOptions(
             uiState,
             ValueAfter(args, "--viewport"),
             textScale,
-            snapshot);
+            snapshot,
+            theme);
+    }
+
+    public static string? ParseTheme(string[] args)
+    {
+        string? theme = ValueAfter(args, "--theme")?.ToLowerInvariant();
+        if (theme is not (null or "light" or "dark"))
+            throw new ArgumentException("Theme must be light or dark.");
+        return theme;
     }
 
     private static int IntAfter(string[] args, string name, int fallback) =>

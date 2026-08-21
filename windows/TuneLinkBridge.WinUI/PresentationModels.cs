@@ -88,14 +88,17 @@ internal sealed record HeroPresentation(
     {
         if (pairedPhoneCount == 0)
             return new(HeroMode.PairFirstPhone,
-                UiStrings.Get("HeroPairTitle", "Pair your phone"),
-                UiStrings.Get("HeroPairDetail", "Open TunesLink on your phone and enter the pairing code."),
+                UiStrings.Get("HeroPairTitle", "Welcome to TunesLink.\nLet’s pair your phone."),
+                UiStrings.Get("HeroPairDetail",
+                    "Open TunesLink on your Android phone and enter the pairing code below."),
                 true);
         return new(HeroMode.Ready,
-            UiStrings.Get("HeroReadyTitle", "TunesLink is ready"),
             pairedPhoneCount == 1
-                ? UiStrings.Get("HeroReadyDetail", "Your phone can control iTunes on this PC.")
-                : UiStrings.Get("HeroReadyMultipleDetail", "Your phones can control iTunes on this PC."),
+                ? UiStrings.Get("HeroReadyTitle", "Your phone is connected.\nYou’re ready to go.")
+                : UiStrings.Get("HeroReadyTitleMultiple", "Your phones are connected.\nYou’re ready to go."),
+            pairedPhoneCount == 1
+                ? UiStrings.Get("HeroReadyDetail", "Control iTunes on this PC wirelessly from your phone.")
+                : UiStrings.Get("HeroReadyMultipleDetail", "Control iTunes on this PC wirelessly from your phones."),
             userExpandedPairing && pairedPhoneCount < BridgeSecurity.MaxPairedDevices);
     }
 }
@@ -268,15 +271,6 @@ internal sealed class PresentationGenerationCoordinator : IDisposable
         if (disposed) return;
         CancelCurrent();
         disposed = true;
-    }
-}
-
-internal readonly record struct ProblemPresentationTarget(bool Visible, double Opacity)
-{
-    public static ProblemPresentationTarget FromProblemCount(int problemCount)
-    {
-        ArgumentOutOfRangeException.ThrowIfNegative(problemCount);
-        return problemCount == 0 ? new(false, 0) : new(true, 1);
     }
 }
 

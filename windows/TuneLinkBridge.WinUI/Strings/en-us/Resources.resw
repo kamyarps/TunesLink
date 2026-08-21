@@ -5,30 +5,26 @@
   <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value></resheader>
   <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value></resheader>
   <data name="AppName.Text" xml:space="preserve"><value>TunesLink Bridge</value></data>
-  <data name="HeroTitle.Text" xml:space="preserve"><value>Pair your phone</value></data>
-  <data name="HeroDetail.Text" xml:space="preserve"><value>Open TunesLink on your phone and enter the pairing code.</value></data>
+  <data name="HeroDetail.Text" xml:space="preserve"><value>Open TunesLink on your Android phone and enter the pairing code below.</value></data>
   <data name="NetworkStatus.Text" xml:space="preserve"><value>Local network ready</value></data>
   <data name="ItunesStatus.Text" xml:space="preserve"><value>Checking iTunes…</value></data>
-    <data name="PairAnother.Content" xml:space="preserve"><value>Pair another phone</value></data>
     <data name="SettingsButton.AutomationProperties.Name" xml:space="preserve"><value>Settings</value></data>
     <data name="SettingsHeading.Text" xml:space="preserve"><value>Settings</value></data>
     <data name="SettingsIntro.Text" xml:space="preserve"><value>Choose how TunesLink Bridge behaves in the background.</value></data>
-  <data name="ProblemHeading.Text" xml:space="preserve"><value>TunesLink needs attention</value></data>
-  <data name="CodeHeading.Text" xml:space="preserve"><value>Enter pairing code</value></data>
-  <data name="CodeDetail.Text" xml:space="preserve"><value>Enter this six-digit code in TunesLink on your phone.</value></data>
+  <data name="CodeHeading.Text" xml:space="preserve"><value>Your pairing code</value></data>
+  <data name="CodeDetail.Text" xml:space="preserve"><value>Enter this code in TunesLink on your phone.</value></data>
   <data name="CopyLabel.Text" xml:space="preserve"><value>Copy</value></data>
   <data name="CopyCode.AutomationProperties.Name" xml:space="preserve"><value>Copy pairing code</value></data>
   <data name="PairCode.AutomationProperties.Name" xml:space="preserve"><value>Pairing code</value></data>
   <data name="PairExpiry.Text" xml:space="preserve"><value>Expires in 10:00</value></data>
   <data name="NewCode.Content" xml:space="preserve"><value>New code</value></data>
   <data name="NewCode.AutomationProperties.Name" xml:space="preserve"><value>Generate a new pairing code</value></data>
-    <data name="ConnectionHelp.Text" xml:space="preserve"><value>Connection</value></data>
-  <data name="AddressLabel.Text" xml:space="preserve"><value>ADDRESS</value></data>
+  <data name="AddressLabel.Text" xml:space="preserve"><value>Connection address</value></data>
   <data name="AddressValue.Text" xml:space="preserve"><value>Unavailable</value></data>
   <data name="CopyAddress.AutomationProperties.Name" xml:space="preserve"><value>Copy address</value></data>
   <data name="PairedPhones.Text" xml:space="preserve"><value>Paired phones</value></data>
   <data name="ForgetAll.Content" xml:space="preserve"><value>Forget all</value></data>
-  <data name="ForgetDevice.Content" xml:space="preserve"><value>Forget</value></data>
+  <data name="ForgetLabel.Text" xml:space="preserve"><value>Forget</value></data>
   <data name="PreferencesHeading.Text" xml:space="preserve"><value>Preferences</value></data>
   <data name="KeepRunning.Header" xml:space="preserve"><value>Keep TunesLink running when the window closes</value></data>
   <data name="KeepRunning.AutomationProperties.HelpText" xml:space="preserve"><value>The bridge stays available from the notification area.</value></data>
@@ -37,6 +33,7 @@
   <data name="AppDisplayName" xml:space="preserve"><value>TunesLink Bridge</value></data>
   <data name="Address" xml:space="preserve"><value>Address</value></data>
   <data name="AllDevicesForgottenAnnouncement" xml:space="preserve"><value>All paired devices forgotten</value></data>
+  <data name="BridgeNotRunning" xml:space="preserve"><value>Bridge not running</value></data>
   <data name="Cancel" xml:space="preserve"><value>Cancel</value></data>
   <data name="Close" xml:space="preserve"><value>Close</value></data>
   <data name="Copy" xml:space="preserve"><value>Copy</value></data>
@@ -57,11 +54,12 @@
   <data name="ForgetDeviceAccessibleName" xml:space="preserve"><value>Forget {0}</value></data>
   <data name="ForgetDeviceDetail" xml:space="preserve"><value>This phone will need the current six-digit pairing code to reconnect.</value></data>
   <data name="ForgetDeviceTitle" xml:space="preserve"><value>Forget {0}?</value></data>
-  <data name="HeroPairDetail" xml:space="preserve"><value>Open TunesLink on your phone and enter the pairing code.</value></data>
-  <data name="HeroPairTitle" xml:space="preserve"><value>Pair your phone</value></data>
-  <data name="HeroReadyDetail" xml:space="preserve"><value>Your phone can control iTunes on this PC.</value></data>
-  <data name="HeroReadyMultipleDetail" xml:space="preserve"><value>Your phones can control iTunes on this PC.</value></data>
-  <data name="HeroReadyTitle" xml:space="preserve"><value>TunesLink is ready</value></data>
+  <data name="HeroPairDetail" xml:space="preserve"><value>Open TunesLink on your Android phone and enter the pairing code below.</value></data>
+  <data name="HeroPairTitle" xml:space="preserve"><value>Welcome to TunesLink.&#10;Let’s pair your phone.</value></data>
+  <data name="HeroReadyDetail" xml:space="preserve"><value>Control iTunes on this PC wirelessly from your phone.</value></data>
+  <data name="HeroReadyMultipleDetail" xml:space="preserve"><value>Control iTunes on this PC wirelessly from your phones.</value></data>
+  <data name="HeroReadyTitle" xml:space="preserve"><value>Your phone is connected.&#10;You’re ready to go.</value></data>
+  <data name="HeroReadyTitleMultiple" xml:space="preserve"><value>Your phones are connected.&#10;You’re ready to go.</value></data>
   <data name="HidePairingCode" xml:space="preserve"><value>Hide pairing code</value></data>
   <data name="ItunesReady" xml:space="preserve"><value>iTunes ready</value></data>
   <data name="ItunesUnavailableDetail" xml:space="preserve"><value>Open iTunes on this PC to begin playback.</value></data>

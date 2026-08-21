@@ -8,14 +8,15 @@ echo  TunesLink - BUILD FOR WINDOWS AND ANDROID
 echo  ========================================
 echo.
 
-where pwsh.exe >nul 2>&1
-if %errorlevel% equ 0 (
-    set "TunesLink_POWERSHELL=pwsh.exe"
-) else (
-    set "TunesLink_POWERSHELL=powershell.exe"
+rem PATH-resolved pwsh can be the Microsoft Store build, whose MSIX sandbox
+rem virtualizes AppData and hides the Android SDK. Use the MSI install or
+rem Windows PowerShell, never the PATH lookup.
+set "TunesLink_POWERSHELL=powershell.exe"
+if exist "%ProgramFiles%\PowerShell\7\pwsh.exe" (
+    set "TunesLink_POWERSHELL=%ProgramFiles%\PowerShell\7\pwsh.exe"
 )
 
-%TunesLink_POWERSHELL% -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\one-click-build.ps1"
+"%TunesLink_POWERSHELL%" -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\one-click-build.ps1"
 set "TunesLink_EXIT=%errorlevel%"
 
 echo.

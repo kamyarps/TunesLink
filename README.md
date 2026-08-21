@@ -237,3 +237,8 @@ TunesLink is available under the [MIT License](LICENSE).
 
 iTunes is a trademark of Apple Inc. TunesLink is independent and is not affiliated with or
 endorsed by Apple.
+
+The device frames in the Windows bridge (Dell XPS 15 and Samsung Galaxy S24 Ultra) are from
+[MockUPhone](https://mockuphone.com/attribution), used under the
+[Creative Commons Attribution 3.0 Unported License](https://creativecommons.org/licenses/by/3.0/).
+Dell and Samsung Galaxy are trademarks of their respective owners.

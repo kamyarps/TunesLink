@@ -327,21 +327,23 @@ public sealed partial class MainWindow
             Content = detail,
             PrimaryButtonText = primary,
             CloseButtonText = close ?? "",
-            DefaultButton = destructive ? ContentDialogButton.Close : ContentDialogButton.Primary,
+            // A DefaultButton is restyled by the ContentDialog template with the system accent look,
+            // so the default is expressed through initial focus instead.
+            DefaultButton = ContentDialogButton.None,
             CornerRadius = new CornerRadius(22),
             Background = (Brush)Microsoft.UI.Xaml.Application.Current.Resources["SurfaceBrush"],
             BorderBrush = (Brush)Microsoft.UI.Xaml.Application.Current.Resources["SeparatorBrush"],
             BorderThickness = new Thickness(1)
         };
-        if (destructive)
-        {
-            dialog.PrimaryButtonStyle = (Style)Microsoft.UI.Xaml.Application.Current.Resources["DangerButtonStyle"];
-            dialog.CloseButtonStyle = (Style)Microsoft.UI.Xaml.Application.Current.Resources["TonalButtonStyle"];
-        }
+        dialog.PrimaryButtonStyle = (Style)Microsoft.UI.Xaml.Application.Current.Resources[
+            destructive ? "DangerButtonStyle" : "TonalButtonStyle"];
+        dialog.CloseButtonStyle = (Style)Microsoft.UI.Xaml.Application.Current.Resources["TonalButtonStyle"];
         dialog.Opened += (_, _) => DispatcherQueue.TryEnqueue(() =>
         {
             Button? initial = FindButton(dialog, close ?? primary);
-            initial?.Focus(FocusState.Programmatic);
+            // Pointer-state focus makes Enter/Space act on the default action without painting
+            // the keyboard focus rectangle; Tab navigation still shows it.
+            initial?.Focus(FocusState.Pointer);
         });
         ContentDialogResult result = await dialog.ShowAsync();
         if (result != ContentDialogResult.Primary || restoreFocusAfterPrimary)

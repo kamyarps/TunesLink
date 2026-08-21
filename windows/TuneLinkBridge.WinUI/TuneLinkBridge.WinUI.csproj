@@ -33,5 +33,10 @@
     <Content Include="Assets\tunelink-app-icon-256.png" />
     <Content Include="Assets\tunelink-symbol-gradient-256.png" />
     <Content Include="Assets\tunelink.ico" />
+    <Content Include="Assets\device-xps15.png" />
+    <Content Include="Assets\device-galaxy-s24-ultra.png" />
+    <Content Include="Assets\device-galaxy-s24-ultra-shadow.png" />
+    <Content Include="Assets\hero-dark.png" Condition="Exists('Assets\hero-dark.png')" />
+    <Content Include="Assets\hero-light.png" Condition="Exists('Assets\hero-light.png')" />
   </ItemGroup>
 </Project>

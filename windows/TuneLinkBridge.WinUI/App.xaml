@@ -6,28 +6,58 @@
         <ResourceDictionary>
             <ResourceDictionary.ThemeDictionaries>
                 <ResourceDictionary x:Key="Default">
-                    <Color x:Key="CanvasColor">#FF09090B</Color>
-                    <Color x:Key="SurfaceColor">#FF141416</Color>
-                    <Color x:Key="RaisedSurfaceColor">#FF222226</Color>
+                    <Color x:Key="CanvasColor">#FF0C0C12</Color>
+                    <Color x:Key="SurfaceColor">#FF16161E</Color>
+                    <Color x:Key="RaisedSurfaceColor">#FF23232E</Color>
                     <Color x:Key="PrimaryTextColor">#FFF7F7FA</Color>
-                    <Color x:Key="SecondaryTextColor">#FF98989F</Color>
-                    <Color x:Key="SeparatorColor">#FF34343A</Color>
+                    <Color x:Key="SecondaryTextColor">#FF9C9CA8</Color>
+                    <Color x:Key="SeparatorColor">#FF2E2E3A</Color>
                     <Color x:Key="AccentTextColor">#FFFF86A3</Color>
                     <Color x:Key="SuccessColor">#FF5AD978</Color>
                     <Color x:Key="DangerColor">#FFFF6B65</Color>
-                    <Color x:Key="OnBrandTextColor">#FF09090B</Color>
+                    <Color x:Key="OnBrandTextColor">#FFFFFFFF</Color>
+                    <Color x:Key="SuccessTintColor">#FF162B1D</Color>
+                    <Color x:Key="DangerTintColor">#FF321518</Color>
+                    <Color x:Key="AccentTintColor">#FF272138</Color>
+                    <Color x:Key="HeroAccentStartColor">#FFFF6B8F</Color>
+                    <Color x:Key="HeroAccentMidColor">#FF9D7BFF</Color>
+                    <Color x:Key="HeroAccentEndColor">#FF5EA0FF</Color>
+                    <Color x:Key="AmbientAColor">#4CB34DDE</Color>
+                    <Color x:Key="AmbientBColor">#3A3D6FF2</Color>
+                    <Color x:Key="AmbientEdgeColor">#26FF4D8F</Color>
+                    <Color x:Key="RingLineColor">#24FFFFFF</Color>
+                    <Color x:Key="WarmSpotColor">#59FFB27D</Color>
+                    <Color x:Key="DeviceShadowColor">#66000000</Color>
+                    <Color x:Key="ScreenStartColor">#FFF0836A</Color>
+                    <Color x:Key="ScreenMidColor">#FF9C57EE</Color>
+                    <Color x:Key="ScreenEndColor">#FF3E6FF0</Color>
                 </ResourceDictionary>
                 <ResourceDictionary x:Key="Light">
-                    <Color x:Key="CanvasColor">#FFFAFAFC</Color>
+                    <Color x:Key="CanvasColor">#FFF6F6F9</Color>
                     <Color x:Key="SurfaceColor">#FFFFFFFF</Color>
-                    <Color x:Key="RaisedSurfaceColor">#FFF1F1F5</Color>
-                    <Color x:Key="PrimaryTextColor">#FF151518</Color>
-                    <Color x:Key="SecondaryTextColor">#FF56565E</Color>
-                    <Color x:Key="SeparatorColor">#FFD7D7DD</Color>
+                    <Color x:Key="RaisedSurfaceColor">#FFEFEFF4</Color>
+                    <Color x:Key="PrimaryTextColor">#FF131316</Color>
+                    <Color x:Key="SecondaryTextColor">#FF55555E</Color>
+                    <Color x:Key="SeparatorColor">#FFE4E4EB</Color>
                     <Color x:Key="AccentTextColor">#FFB91C45</Color>
                     <Color x:Key="SuccessColor">#FF147A34</Color>
                     <Color x:Key="DangerColor">#FFB42318</Color>
-                    <Color x:Key="OnBrandTextColor">#FF09090B</Color>
+                    <Color x:Key="OnBrandTextColor">#FFFFFFFF</Color>
+                    <Color x:Key="SuccessTintColor">#FFE5F6EA</Color>
+                    <Color x:Key="DangerTintColor">#FFFBEDEC</Color>
+                    <Color x:Key="AccentTintColor">#FFEFEAFE</Color>
+                    <Color x:Key="HeroAccentStartColor">#FFD01A56</Color>
+                    <Color x:Key="HeroAccentMidColor">#FF7A4BE8</Color>
+                    <Color x:Key="HeroAccentEndColor">#FF2E63D9</Color>
+                    <Color x:Key="AmbientAColor">#3DFFD9E8</Color>
+                    <Color x:Key="AmbientBColor">#36D6E8FF</Color>
+                    <Color x:Key="AmbientEdgeColor">#24FFE2EC</Color>
+                    <Color x:Key="RingLineColor">#20897083</Color>
+                    <Color x:Key="WarmSpotColor">#59FFE3D2</Color>
+                    <Color x:Key="DeviceShadowColor">#26000000</Color>
+                    <Color x:Key="ScreenStartColor">#FFFFD2BF</Color>
+                    <Color x:Key="ScreenMidColor">#FFE0CDFF</Color>
+                    <Color x:Key="ScreenEndColor">#FFBCDFFF</Color>
                 </ResourceDictionary>
                 <ResourceDictionary x:Key="HighContrast">
                     <StaticResource x:Key="CanvasColor" ResourceKey="SystemColorWindowColor" />
@@ -39,7 +69,22 @@
                     <StaticResource x:Key="AccentTextColor" ResourceKey="SystemColorHighlightColor" />
                     <StaticResource x:Key="SuccessColor" ResourceKey="SystemColorWindowTextColor" />
                     <StaticResource x:Key="DangerColor" ResourceKey="SystemColorWindowTextColor" />
-                    <Color x:Key="OnBrandTextColor">#FF09090B</Color>
+                    <StaticResource x:Key="OnBrandTextColor" ResourceKey="SystemColorHighlightTextColor" />
+                    <StaticResource x:Key="SuccessTintColor" ResourceKey="SystemColorWindowColor" />
+                    <StaticResource x:Key="DangerTintColor" ResourceKey="SystemColorWindowColor" />
+                    <StaticResource x:Key="AccentTintColor" ResourceKey="SystemColorWindowColor" />
+                    <StaticResource x:Key="HeroAccentStartColor" ResourceKey="SystemColorHighlightColor" />
+                    <StaticResource x:Key="HeroAccentMidColor" ResourceKey="SystemColorHighlightColor" />
+                    <StaticResource x:Key="HeroAccentEndColor" ResourceKey="SystemColorHighlightColor" />
+                    <Color x:Key="AmbientAColor">#00000000</Color>
+                    <Color x:Key="AmbientBColor">#00000000</Color>
+                    <Color x:Key="AmbientEdgeColor">#00000000</Color>
+                    <Color x:Key="RingLineColor">#00000000</Color>
+                    <Color x:Key="WarmSpotColor">#00000000</Color>
+                    <Color x:Key="DeviceShadowColor">#00000000</Color>
+                    <StaticResource x:Key="ScreenStartColor" ResourceKey="SystemColorWindowColor" />
+                    <StaticResource x:Key="ScreenMidColor" ResourceKey="SystemColorWindowColor" />
+                    <StaticResource x:Key="ScreenEndColor" ResourceKey="SystemColorWindowColor" />
                 </ResourceDictionary>
             </ResourceDictionary.ThemeDictionaries>
 
@@ -53,45 +98,103 @@
             <SolidColorBrush x:Key="SuccessBrush" Color="{ThemeResource SuccessColor}" />
             <SolidColorBrush x:Key="DangerBrush" Color="{ThemeResource DangerColor}" />
             <SolidColorBrush x:Key="OnBrandTextBrush" Color="{ThemeResource OnBrandTextColor}" />
-            <LinearGradientBrush x:Key="BrandBrush" StartPoint="0,0" EndPoint="1,1">
-                <GradientStop Color="#FFFF5B84" Offset="0" />
-                <GradientStop Color="#FFB69CFF" Offset="1" />
+            <SolidColorBrush x:Key="SuccessTintBrush" Color="{ThemeResource SuccessTintColor}" />
+            <SolidColorBrush x:Key="DangerTintBrush" Color="{ThemeResource DangerTintColor}" />
+            <SolidColorBrush x:Key="AccentTintBrush" Color="{ThemeResource AccentTintColor}" />
+            <SolidColorBrush x:Key="DeviceShadowBrush" Color="{ThemeResource DeviceShadowColor}" />
+            <RadialGradientBrush x:Key="ScreenWarmBrush" Center="0.2,0.1"
+                                 RadiusX="0.75" RadiusY="0.75" GradientOrigin="0.2,0.1">
+                <GradientStop Color="{ThemeResource WarmSpotColor}" Offset="0" />
+                <GradientStop Color="#00000000" Offset="1" />
+            </RadialGradientBrush>
+            <LinearGradientBrush x:Key="GlassSheenBrush" StartPoint="0,0" EndPoint="0.85,1">
+                <GradientStop Color="#42FFFFFF" Offset="0" />
+                <GradientStop Color="#12FFFFFF" Offset="0.34" />
+                <GradientStop Color="#00FFFFFF" Offset="0.58" />
+            </LinearGradientBrush>
+            <LinearGradientBrush x:Key="BrandBrush" StartPoint="0,0.5" EndPoint="1,0.5">
+                <GradientStop Color="#FFD91E5B" Offset="0" />
+                <GradientStop Color="#FF7A4BE8" Offset="0.55" />
+                <GradientStop Color="#FF2E63D9" Offset="1" />
+            </LinearGradientBrush>
+            <LinearGradientBrush x:Key="HeroAccentBrush" StartPoint="0,0.5" EndPoint="1,0.5">
+                <GradientStop Color="{ThemeResource HeroAccentStartColor}" Offset="0" />
+                <GradientStop Color="{ThemeResource HeroAccentMidColor}" Offset="0.5" />
+                <GradientStop Color="{ThemeResource HeroAccentEndColor}" Offset="1" />
+            </LinearGradientBrush>
+            <LinearGradientBrush x:Key="ScreenGradientBrush" StartPoint="0,0" EndPoint="1,1">
+                <GradientStop Color="{ThemeResource ScreenStartColor}" Offset="0" />
+                <GradientStop Color="{ThemeResource ScreenMidColor}" Offset="0.5" />
+                <GradientStop Color="{ThemeResource ScreenEndColor}" Offset="1" />
             </LinearGradientBrush>
 
             <Style x:Key="PageTitleStyle" TargetType="TextBlock">
                 <Setter Property="FontFamily" Value="Segoe UI Variable Display" />
-                <Setter Property="FontSize" Value="28" />
+                <Setter Property="FontSize" Value="30" />
                 <Setter Property="FontWeight" Value="SemiBold" />
-                <Setter Property="LineHeight" Value="34" />
+                <Setter Property="CharacterSpacing" Value="-15" />
                 <Setter Property="TextWrapping" Value="Wrap" />
                 <Setter Property="Foreground" Value="{ThemeResource PrimaryTextBrush}" />
             </Style>
             <Style x:Key="SectionTitleStyle" TargetType="TextBlock">
                 <Setter Property="FontFamily" Value="Segoe UI Variable Display" />
-                <Setter Property="FontSize" Value="20" />
+                <Setter Property="FontSize" Value="17" />
                 <Setter Property="FontWeight" Value="SemiBold" />
-                <Setter Property="LineHeight" Value="25" />
+                <Setter Property="CharacterSpacing" Value="-5" />
                 <Setter Property="TextWrapping" Value="Wrap" />
                 <Setter Property="Foreground" Value="{ThemeResource PrimaryTextBrush}" />
             </Style>
             <Style x:Key="BodyStyle" TargetType="TextBlock">
                 <Setter Property="FontFamily" Value="Segoe UI Variable Text" />
-                <Setter Property="FontSize" Value="16" />
-                <Setter Property="LineHeight" Value="22" />
+                <Setter Property="FontSize" Value="15" />
+                <Setter Property="TextWrapping" Value="Wrap" />
+                <Setter Property="Foreground" Value="{ThemeResource PrimaryTextBrush}" />
+            </Style>
+            <Style x:Key="ValueStyle" TargetType="TextBlock">
+                <Setter Property="FontFamily" Value="Segoe UI Variable Text" />
+                <Setter Property="FontSize" Value="17" />
+                <Setter Property="FontWeight" Value="SemiBold" />
                 <Setter Property="TextWrapping" Value="Wrap" />
                 <Setter Property="Foreground" Value="{ThemeResource PrimaryTextBrush}" />
             </Style>
             <Style x:Key="SecondaryStyle" TargetType="TextBlock">
                 <Setter Property="FontFamily" Value="Segoe UI Variable Text" />
-                <Setter Property="FontSize" Value="14" />
-                <Setter Property="LineHeight" Value="20" />
+                <Setter Property="FontSize" Value="13" />
                 <Setter Property="TextWrapping" Value="Wrap" />
                 <Setter Property="Foreground" Value="{ThemeResource SecondaryTextBrush}" />
             </Style>
+            <Style x:Key="HeroDetailStyle" TargetType="TextBlock">
+                <Setter Property="FontFamily" Value="Segoe UI Variable Text" />
+                <Setter Property="FontSize" Value="15" />
+                <Setter Property="TextWrapping" Value="Wrap" />
+                <Setter Property="TextAlignment" Value="Center" />
+                <Setter Property="Foreground" Value="{ThemeResource SecondaryTextBrush}" />
+            </Style>
+            <Style x:Key="CardLabelStyle" TargetType="TextBlock">
+                <Setter Property="FontFamily" Value="Segoe UI Variable Text" />
+                <Setter Property="FontSize" Value="13" />
+                <Setter Property="FontWeight" Value="Medium" />
+                <Setter Property="TextWrapping" Value="Wrap" />
+                <Setter Property="Foreground" Value="{ThemeResource SecondaryTextBrush}" />
+            </Style>
+            <Style x:Key="CardStyle" TargetType="Border">
+                <Setter Property="Background" Value="{ThemeResource SurfaceBrush}" />
+                <Setter Property="BorderBrush" Value="{ThemeResource SeparatorBrush}" />
+                <Setter Property="BorderThickness" Value="1" />
+                <Setter Property="CornerRadius" Value="22" />
+            </Style>
+            <Style x:Key="ChipStyle" TargetType="Border">
+                <Setter Property="Background" Value="{ThemeResource SurfaceBrush}" />
+                <Setter Property="BorderBrush" Value="{ThemeResource SeparatorBrush}" />
+                <Setter Property="BorderThickness" Value="1" />
+                <Setter Property="CornerRadius" Value="12" />
+                <Setter Property="Padding" Value="14,9" />
+                <Setter Property="VerticalAlignment" Value="Center" />
+            </Style>
             <Style x:Key="TonalButtonStyle" TargetType="Button">
                 <Setter Property="MinHeight" Value="44" />
-                <Setter Property="CornerRadius" Value="16" />
-                <Setter Property="Padding" Value="12,8" />
+                <Setter Property="CornerRadius" Value="12" />
+                <Setter Property="Padding" Value="14,8" />
                 <Setter Property="Background" Value="{ThemeResource RaisedSurfaceBrush}" />
                 <Setter Property="BorderBrush" Value="{ThemeResource SeparatorBrush}" />
                 <Setter Property="BorderThickness" Value="1" />
@@ -99,7 +202,7 @@
             </Style>
             <Style x:Key="TonalToggleButtonStyle" TargetType="ToggleButton">
                 <Setter Property="MinHeight" Value="44" />
-                <Setter Property="CornerRadius" Value="16" />
+                <Setter Property="CornerRadius" Value="12" />
                 <Setter Property="Padding" Value="14,8" />
                 <Setter Property="Background" Value="{ThemeResource RaisedSurfaceBrush}" />
                 <Setter Property="BorderBrush" Value="{ThemeResource SeparatorBrush}" />
@@ -112,21 +215,27 @@
                 <Setter Property="BorderThickness" Value="0" />
                 <Setter Property="Foreground" Value="{ThemeResource OnBrandTextBrush}" />
                 <Setter Property="FontWeight" Value="SemiBold" />
+                <Setter Property="MinHeight" Value="52" />
+                <Setter Property="CornerRadius" Value="16" />
+                <Setter Property="Padding" Value="20,10" />
             </Style>
             <Style x:Key="IconButtonStyle" TargetType="Button"
                    BasedOn="{StaticResource TonalButtonStyle}">
                 <Setter Property="MinWidth" Value="44" />
-                <Setter Property="Width" Value="44" />
-                <Setter Property="Padding" Value="10" />
+                <Setter Property="MinHeight" Value="44" />
+                <Setter Property="Padding" Value="12" />
+                <Setter Property="Background" Value="{ThemeResource SurfaceBrush}" />
             </Style>
             <Style x:Key="SettingsFlyoutPresenterStyle" TargetType="FlyoutPresenter">
-                <Setter Property="CornerRadius" Value="16" />
+                <Setter Property="CornerRadius" Value="22" />
                 <Setter Property="Padding" Value="20" />
                 <Setter Property="Background" Value="{ThemeResource SurfaceBrush}" />
                 <Setter Property="BorderBrush" Value="{ThemeResource SeparatorBrush}" />
                 <Setter Property="BorderThickness" Value="1" />
             </Style>
             <Style x:Key="DangerButtonStyle" TargetType="Button" BasedOn="{StaticResource TonalButtonStyle}">
+                <Setter Property="Background" Value="{ThemeResource DangerTintBrush}" />
+                <Setter Property="BorderThickness" Value="0" />
                 <Setter Property="Foreground" Value="{ThemeResource DangerBrush}" />
             </Style>
         </ResourceDictionary>

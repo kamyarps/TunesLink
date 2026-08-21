@@ -12,6 +12,10 @@ public partial class App : Microsoft.UI.Xaml.Application, IDisposable
 
     public App()
     {
+        // The preview harness can pin the theme; RequestedTheme is only settable this early.
+        string? theme = BridgeLaunchOptions.ParseTheme(Environment.GetCommandLineArgs().Skip(1).ToArray());
+        if (theme == "light") RequestedTheme = ApplicationTheme.Light;
+        else if (theme == "dark") RequestedTheme = ApplicationTheme.Dark;
         InitializeComponent();
         UnhandledException += (_, eventArgs) =>
         {

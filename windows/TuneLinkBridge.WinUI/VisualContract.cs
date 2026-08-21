@@ -9,17 +9,25 @@ internal static class VisualContract
         uint Secondary,
         uint Accent,
         uint BrandStart,
+        uint BrandMid,
         uint BrandEnd,
         uint OnBrand,
         uint Success,
-        uint Danger);
+        uint Danger,
+        uint SuccessTint,
+        uint DangerTint,
+        uint HeroAccentStart,
+        uint HeroAccentMid,
+        uint HeroAccentEnd);
 
     private static readonly Palette Dark = new(
-        0xFF09090B, 0xFF141416, 0xFFF7F7FA, 0xFF98989F, 0xFFFF86A3,
-        0xFFFF5B84, 0xFFB69CFF, 0xFF09090B, 0xFF5AD978, 0xFFFF6B65);
+        0xFF0C0C12, 0xFF16161E, 0xFFF7F7FA, 0xFF9C9CA8, 0xFFFF86A3,
+        0xFFD91E5B, 0xFF7A4BE8, 0xFF2E63D9, 0xFFFFFFFF, 0xFF5AD978, 0xFFFF6B65,
+        0xFF162B1D, 0xFF321518, 0xFFFF6B8F, 0xFF9D7BFF, 0xFF5EA0FF);
     private static readonly Palette Light = new(
-        0xFFFAFAFC, 0xFFFFFFFF, 0xFF151518, 0xFF56565E, 0xFFB91C45,
-        0xFFFF5B84, 0xFFB69CFF, 0xFF09090B, 0xFF147A34, 0xFFB42318);
+        0xFFF6F6F9, 0xFFFFFFFF, 0xFF131316, 0xFF55555E, 0xFFB91C45,
+        0xFFD91E5B, 0xFF7A4BE8, 0xFF2E63D9, 0xFFFFFFFF, 0xFF147A34, 0xFFB42318,
+        0xFFE5F6EA, 0xFFFBEDEC, 0xFFD01A56, 0xFF7A4BE8, 0xFF2E63D9);
 
     public static void VerifyContrast()
     {
@@ -31,9 +39,17 @@ internal static class VisualContract
             Require(palette.Secondary, palette.Surface, 4.5, "secondary on surface");
             Require(palette.Accent, palette.Canvas, 4.5, "accent on canvas");
             Require(palette.OnBrand, palette.BrandStart, 4.5, "on-brand on gradient start");
+            Require(palette.OnBrand, palette.BrandMid, 4.5, "on-brand on gradient middle");
             Require(palette.OnBrand, palette.BrandEnd, 4.5, "on-brand on gradient end");
             Require(palette.Success, palette.Canvas, 4.5, "success on canvas");
             Require(palette.Danger, palette.Canvas, 4.5, "danger on canvas");
+            Require(palette.Success, palette.SuccessTint, 4.5, "success on success tint");
+            Require(palette.Danger, palette.DangerTint, 4.5, "danger on danger tint");
+            Require(palette.Primary, palette.DangerTint, 4.5, "primary on danger tint");
+            Require(palette.Secondary, palette.DangerTint, 4.5, "secondary on danger tint");
+            Require(palette.HeroAccentStart, palette.Canvas, 4.5, "hero accent start on canvas");
+            Require(palette.HeroAccentMid, palette.Canvas, 4.5, "hero accent middle on canvas");
+            Require(palette.HeroAccentEnd, palette.Canvas, 4.5, "hero accent end on canvas");
         }
         VerifyPresentationModels();
     }
@@ -147,11 +163,6 @@ internal static class VisualContract
             Ensure(!presentations.IsCurrent(second),
                 "the current generation is invalid after completion");
         }
-        Ensure(ProblemPresentationTarget.FromProblemCount(0)
-                == new ProblemPresentationTarget(false, 0)
-            && ProblemPresentationTarget.FromProblemCount(2)
-                == new ProblemPresentationTarget(true, 1),
-            "problem presentation final states are always fully hidden or fully visible");
     }
 
     private static void Require(uint foreground, uint background, double minimum, string label)

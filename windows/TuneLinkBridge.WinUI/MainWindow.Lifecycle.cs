@@ -202,9 +202,9 @@ public sealed partial class MainWindow
             accessibilitySettings.HighContrastChanged -= AccessibilitySettingsChanged;
         if (systemEventsSubscribed)
             SystemEvents.UserPreferenceChanged -= SystemPreferenceChanged;
-        problemPresentationCancellation?.Cancel();
-        problemPresentationCancellation?.Dispose();
-        problemPresentationCancellation = null;
+        ringPulseRunning = false;
+        backdropWave?.Dispose();
+        backdropWave = null;
         copyFeedback.Dispose();
         Dispose();
     }

@@ -8,6 +8,82 @@ param(
 
 Set-StrictMode -Version 2
 $ErrorActionPreference = "Stop"
+
+# A packaged (MSIX) host gets a virtualized view of AppData, which hides the
+# Android SDK under %LOCALAPPDATA%. Package identity catches a host that was
+# launched packaged, such as the Microsoft Store build of PowerShell; the
+# executable-path test is a fallback for hosts where the identity API is
+# unavailable. Neither can see a container inherited from a parent process -
+# such a child reports no package identity and its own real image path - so
+# that case is named in the Android SDK failure message instead.
+function Get-TunesLinkPackageIdentity {
+    $noPackage = 15700   # APPMODEL_ERROR_NO_PACKAGE
+    try {
+        if (-not ("TunesLink.AppModel" -as [type])) {
+            Add-Type -Namespace TunesLink -Name AppModel -MemberDefinition @'
+[System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+public static extern int GetCurrentPackageFullName(ref uint packageFullNameLength, System.Text.StringBuilder packageFullName);
+'@
+        }
+    }
+    catch {
+        return $null   # No compiler available; fall through to the SDK checks.
+    }
+
+    $length = [uint32]0
+    $probe = [TunesLink.AppModel]::GetCurrentPackageFullName([ref]$length, $null)
+    if ($probe -eq $noPackage) { return $null }
+
+    $buffer = New-Object System.Text.StringBuilder ([int]$length)
+    if ([TunesLink.AppModel]::GetCurrentPackageFullName([ref]$length, $buffer) -eq 0) {
+        return $buffer.ToString()
+    }
+    return "an unnamed app package"
+}
+
+# The launching application decides whether this build is sandboxed, so name the
+# whole chain when something goes wrong. Parent ids can be stale after a parent
+# exits; that is acceptable for a diagnostic.
+function Get-TunesLinkHostChain {
+    $chain = New-Object System.Collections.Generic.List[string]
+    $id = $PID
+    for ($depth = 0; $depth -lt 8 -and $id -gt 0; $depth++) {
+        $process = Get-CimInstance Win32_Process -Filter "ProcessId = $id" -ErrorAction SilentlyContinue
+        if ($null -eq $process) { break }
+        $image = $process.ExecutablePath
+        if ([string]::IsNullOrWhiteSpace($image)) { $image = $process.Name }
+        $chain.Add(("  " + ("  " * $depth) + $image))
+        $id = [int]$process.ParentProcessId
+    }
+    if ($chain.Count -eq 0) { $chain.Add("  (process chain unavailable)") }
+    return ($chain -join "`n")
+}
+
+$hostProcessPath = (Get-Process -Id $PID).Path
+$hostPackage = Get-TunesLinkPackageIdentity
+if ($null -eq $hostPackage -and
+    $hostProcessPath -like (Join-Path $env:ProgramFiles ("WindowsApps\*"))) {
+    $hostPackage = "an app package under Program Files\WindowsApps"
+}
+if ($null -ne $hostPackage) {
+    throw @"
+This build is running inside a Windows app package (MSIX) container.
+  Package: $hostPackage
+Launched from:
+$(Get-TunesLinkHostChain)
+Packaged apps see a virtualized copy of AppData, so the Android SDK at
+%LOCALAPPDATA%\Android\Sdk is invisible to the build. The container is
+inherited by every child process, so launching another pwsh.exe from here does
+not escape it.
+Start the build from an unpackaged shell instead: double-click BUILD.bat in File
+Explorer, or open Command Prompt or Windows PowerShell from the Start menu and
+run BUILD.bat there.
+The usual cause is the Microsoft Store build of PowerShell. Remove it with
+  winget uninstall --id Microsoft.PowerShell --source msstore
+and use the MSI build from https://aka.ms/powershell.
+"@
+}
+
 $root = Split-Path -Parent $PSScriptRoot
 $localTools = Join-Path $root ".tools"
 Import-Module (Join-Path $PSScriptRoot "BuildRequirements.psm1") -Force
@@ -145,6 +221,20 @@ android.jar, aapt2, d8, and apksigner. Install the exact packages through Androi
 or place a complete SDK at .tools\android-sdk.
 Candidates checked:
 $($diagnostics -join "`n")
+
+If that SDK does exist in File Explorer, this shell has a virtualized view of
+AppData and cannot see it. That happens inside a Windows app package (MSIX)
+container - most often the Microsoft Store build of PowerShell - and the
+container is inherited by every child process, so the pinned pwsh.exe this
+script runs under cannot detect or escape it. Close this window and start the
+build from an unpackaged shell instead: double-click BUILD.bat in File
+Explorer, or open Command Prompt or Windows PowerShell from the Start menu and
+run BUILD.bat there.
+
+This build was launched from:
+$(Get-TunesLinkHostChain)
+The outermost entry is the application that decides whether the build is
+sandboxed.
 "@
 }
 
