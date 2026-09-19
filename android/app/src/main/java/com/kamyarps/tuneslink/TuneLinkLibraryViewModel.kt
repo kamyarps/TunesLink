@@ -30,7 +30,7 @@ internal fun TunesLinkViewModel.loadMore() {
     libraryRequest.cancel()
     val offset = library.windowStart + library.items.size
     libraryRequest = repository.getLibrary(query, offset, TunesLinkViewModel.PAGE_SIZE,
-        libraryResult(query, generation, replace = false))
+        libraryResult(query, generation, replace = false, requestedOffset = offset))
 }
 
 internal fun TunesLinkViewModel.loadPrevious() {
@@ -44,7 +44,7 @@ internal fun TunesLinkViewModel.loadPrevious() {
     mutableState.update { it.copy(library = it.library.copy(isLoadingPrevious = true, error = null)) }
     libraryRequest.cancel()
     libraryRequest = repository.getLibrary(query, offset, limit,
-        libraryResult(query, generation, replace = false))
+        libraryResult(query, generation, replace = false, requestedOffset = offset))
 }
 
 internal fun TunesLinkViewModel.openLibraryKind(kind: LibraryBrowseKind) {
@@ -154,6 +154,15 @@ internal fun TunesLinkViewModel.loadPreviousBrowse(target: LibraryBrowseTarget) 
         cursor.copy(isLoadingPrevious = true, error = null))
 }
 
+internal fun TunesLinkViewModel.retryBrowse(target: LibraryBrowseTarget) {
+    val browse = mutableState.value.browse
+    val kind = browse.kind ?: return
+    val cursor = browse.cursor(target)
+    if (cursor.isBusy) return
+    requestBrowsePage(target, kind, browse.selectedCollection, cursor.windowStart,
+        TunesLinkViewModel.PAGE_SIZE, cursor.copy(isLoading = true, error = null))
+}
+
 private fun TunesLinkViewModel.requestBrowsePage(
     target: LibraryBrowseTarget,
     kind: LibraryBrowseKind,
@@ -167,7 +176,7 @@ private fun TunesLinkViewModel.requestBrowsePage(
         browseCollectionsRequest.cancel()
         browseCollectionsRequest = repository.getCollections(
             kind.wireValue, "", offset, limit,
-            browseCollectionsResult(browseCollectionsGeneration, replace = false),
+            browseCollectionsResult(browseCollectionsGeneration, replace = false, requestedOffset = offset),
         )
         return
     }
@@ -175,11 +184,11 @@ private fun TunesLinkViewModel.requestBrowsePage(
     browseTracksRequest = if (selected != null) {
         repository.getCollectionTracks(
             kind.wireValue, selected.id, "", offset, limit,
-            browseTracksResult(browseTracksGeneration, replace = false),
+            browseTracksResult(browseTracksGeneration, replace = false, requestedOffset = offset),
         )
     } else {
         repository.getLibrary("", offset, limit,
-            browseTracksResult(browseTracksGeneration, replace = false))
+            browseTracksResult(browseTracksGeneration, replace = false, requestedOffset = offset))
     }
 }
 
@@ -292,11 +301,15 @@ internal fun TunesLinkViewModel.loadLibrary(refresh: Boolean) {
     commitSearch(library.editingQuery)
 }
 
-internal fun TunesLinkViewModel.libraryResult(query: String, generation: Int, replace: Boolean) =
+internal fun TunesLinkViewModel.libraryResult(query: String, generation: Int, replace: Boolean, requestedOffset: Int = 0) =
     object : BridgeRepository.PageResult<BridgeClient.LibraryPage> {
         override fun page(value: BridgeClient.LibraryPage, authoritative: Boolean) {
             val current = mutableState.value.library
             if (generation != libraryGeneration || current.loadedQuery != query) return
+            if (!pageAdvances(requestedOffset, value.offset, value.items.size, value.hasMore)) {
+                if (authoritative) failure("", false)
+                return
+            }
             val alreadyAnnounced = announcedResultQuery == query && current.total == value.total
             val converted = value.items.map {
                 it.toUiState()
@@ -334,7 +347,7 @@ internal fun TunesLinkViewModel.libraryResult(query: String, generation: Int, re
                     library.windowStart,
                     converted,
                     value.offset,
-                    replace || revisionReplaced,
+                    replace || revisionReplaced || value.total < library.windowStart + library.items.size,
                     TunesLinkViewModel.MAX_LIBRARY_WINDOW_ITEMS,
                 )
                 state.copy(
@@ -374,10 +387,14 @@ internal fun TunesLinkViewModel.libraryResult(query: String, generation: Int, re
         }
     }
 
-internal fun TunesLinkViewModel.browseCollectionsResult(generation: Int, replace: Boolean) =
+internal fun TunesLinkViewModel.browseCollectionsResult(generation: Int, replace: Boolean, requestedOffset: Int = 0) =
     object : BridgeRepository.PageResult<BridgeClient.LibraryCollectionPage> {
         override fun page(value: BridgeClient.LibraryCollectionPage, authoritative: Boolean) {
             if (generation != browseCollectionsGeneration) return
+            if (!pageAdvances(requestedOffset, value.offset, value.items.size, value.hasMore)) {
+                if (authoritative) failure("", false)
+                return
+            }
             val converted = value.items.map {
                 LibraryCollectionUiState(
                     it.id,
@@ -413,7 +430,8 @@ internal fun TunesLinkViewModel.browseCollectionsResult(generation: Int, replace
                         ),
                     )
                 }
-                val replaced = replace || revisionChanged(cursor.revision, value.revision)
+                val replaced = replace || revisionChanged(cursor.revision, value.revision) ||
+                    value.total < cursor.windowStart
                 val window = mergePageWindow(
                     state.browse.collections,
                     cursor.windowStart,
@@ -439,10 +457,14 @@ internal fun TunesLinkViewModel.browseCollectionsResult(generation: Int, replace
         }
     }
 
-internal fun TunesLinkViewModel.browseTracksResult(generation: Int, replace: Boolean) =
+internal fun TunesLinkViewModel.browseTracksResult(generation: Int, replace: Boolean, requestedOffset: Int = 0) =
     object : BridgeRepository.PageResult<BridgeClient.LibraryPage> {
         override fun page(value: BridgeClient.LibraryPage, authoritative: Boolean) {
             if (generation != browseTracksGeneration) return
+            if (!pageAdvances(requestedOffset, value.offset, value.items.size, value.hasMore)) {
+                if (authoritative) failure("", false)
+                return
+            }
             val converted = value.items.map { it.toUiState() }
             mutableState.update { state ->
                 val cursor = state.browse.tracksCursor
@@ -470,7 +492,8 @@ internal fun TunesLinkViewModel.browseTracksResult(generation: Int, replace: Boo
                         ),
                     )
                 }
-                val replaced = replace || revisionChanged(cursor.revision, value.revision)
+                val replaced = replace || revisionChanged(cursor.revision, value.revision) ||
+                    value.total < cursor.windowStart
                 val window = mergePageWindow(
                     state.browse.tracks,
                     cursor.windowStart,
@@ -512,6 +535,9 @@ private fun TunesLinkViewModel.failBrowseCursor(target: LibraryBrowseTarget, mes
         )
     }
 }
+
+internal fun pageAdvances(requestedOffset: Int, returnedOffset: Int, count: Int, hasMore: Boolean): Boolean =
+    !hasMore || (count > 0 && returnedOffset.toLong() + count > requestedOffset)
 
 internal fun revisionChanged(current: String, incoming: String): Boolean =
     current.isNotBlank() && incoming.isNotBlank() && current != incoming
@@ -579,6 +605,9 @@ internal fun <T> mergePageWindow(
 
     val safeExistingStart = existingStart.coerceAtLeast(0)
     val safeIncomingStart = incomingStart.coerceAtLeast(0)
+    if (safeIncomingStart.toLong() > safeExistingStart.toLong() + existing.size ||
+        safeExistingStart.toLong() > safeIncomingStart.toLong() + incoming.size
+    ) return PageWindow(incoming.take(maximumItems), safeIncomingStart)
     val unionStart = minOf(safeExistingStart, safeIncomingStart)
     val unionEnd = maxOf(safeExistingStart + existing.size, safeIncomingStart + incoming.size)
     val slots = MutableList<T?>(unionEnd - unionStart) { null }

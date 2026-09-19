@@ -141,7 +141,19 @@ internal sealed class PlaybackStateHub : IDisposable
 
             using CancellationTokenSource operation = CancellationTokenSource.CreateLinkedTokenSource(token);
             operation.CancelAfter(BridgeProtocol.StateTimeout);
-            PlaybackState sampled = await media.GetStateAsync(operation.Token).ConfigureAwait(false);
+            PlaybackState sampled;
+            try
+            {
+                sampled = await media.GetStateAsync(operation.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
+            catch
+            {
+                // Keep useful metadata, but publish the loss of the media backend to every client.
+                PlaybackState previous = Current ?? new PlaybackState(
+                    false, false, "", "", "", 0, 0, 0, "", "", false, "off");
+                sampled = previous with { ITunesAvailable = false, Playing = false };
+            }
             List<Channel<PlaybackStateUpdate>> targets = [];
             PlaybackStateUpdate? update = null;
             lock (gate)

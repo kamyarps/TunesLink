@@ -87,11 +87,13 @@ final class BridgeRepository implements AutoCloseable {
     private final LibraryCacheStore libraryCache;
     private final ArtworkDiskCache artworkDiskCache;
     private final BridgeSession session = new BridgeSession();
-    private final LruCache<String, Bitmap> artworkCache =
+    private record CachedArtwork(Bitmap bitmap, long fetchedAt) { }
+
+    private final LruCache<String, CachedArtwork> artworkCache =
             new LruCache<>(ARTWORK_CACHE_KIB) {
                 @Override
-                protected int sizeOf(String key, Bitmap value) {
-                    return Math.max(1, value.getAllocationByteCount() / 1024);
+                protected int sizeOf(String key, CachedArtwork value) {
+                    return Math.max(1, value.bitmap().getAllocationByteCount() / 1024);
                 }
             };
     private final LruCache<String, Long> missingArtwork =
@@ -271,6 +273,59 @@ final class BridgeRepository implements AutoCloseable {
     private void finishPairingFailure(long generation, String message, boolean unauthorized) {
         BridgeClient.Result<SecureStore.SavedBridge> observer = pendingPairing.finish(generation);
         if (observer != null) observer.failure(message, unauthorized);
+    }
+
+    /** Resolves code entry without sending or reusing the saved (possibly revoked) token. */
+    RequestHandle resolvePairingEndpoint(BridgeClient.Result<BridgeClient.BridgeInfo> result) {
+        SecureStore.SavedBridge trusted = current;
+        if (trusted == null) {
+            result.failure("No saved computer is available", false);
+            return RequestHandle.NONE;
+        }
+        long generation = ++relocationGeneration;
+        relocationRequest.cancel();
+        BridgeClient.Result<BridgeClient.BridgeInfo> resolved = new BridgeClient.Result<>() {
+            @Override public void success(BridgeClient.BridgeInfo bridge) {
+                if (generation == relocationGeneration && current == trusted)
+                    result.success(bridge);
+            }
+
+            @Override public void failure(String message, boolean unauthorized) {
+                if (generation == relocationGeneration && current == trusted)
+                    result.failure(message, unauthorized);
+            }
+        };
+        relocationRequest = client.resolveManual(trusted.host + ":" + trusted.port,
+                new BridgeClient.Result<>() {
+            @Override public void success(BridgeClient.BridgeInfo bridge) {
+                resolved.success(bridge);
+            }
+
+            @Override public void failure(String message, boolean unauthorized) {
+                if (generation != relocationGeneration || current != trusted) return;
+                relocationRequest = client.discover(new BridgeClient.Result<>() {
+                    @Override public void success(List<BridgeClient.BridgeInfo> bridges) {
+                        if (generation != relocationGeneration || current != trusted) return;
+                        BridgeClient.BridgeInfo candidate = bridges.stream()
+                                .filter(bridge -> trusted.id.equals(bridge.id))
+                                .sorted(java.util.Comparator.comparing(bridge ->
+                                        !trusted.tlsFingerprint.equals(bridge.tlsFingerprint)))
+                                .findFirst().orElse(null);
+                        if (candidate == null) {
+                            resolved.failure("Could not find the paired computer on this network", false);
+                            return;
+                        }
+                        relocationRequest = client.verifyIdentity(candidate, candidate.id,
+                                candidate.tlsFingerprint, resolved);
+                    }
+
+                    @Override public void failure(String failure, boolean denied) {
+                        resolved.failure(failure, denied);
+                    }
+                });
+            }
+        });
+        return () -> cancelRelocation(generation);
     }
 
     RequestHandle relocateCurrent(BridgeClient.Result<Relocation> result) {
@@ -599,8 +654,17 @@ final class BridgeRepository implements AutoCloseable {
 
     Bitmap cachedArtwork(String artworkId, int size) {
         SecureStore.SavedBridge bridge = current;
-        return bridge == null ? null : artworkCache.get(
+        return bridge == null ? null : freshArtwork(
                 BridgeSession.artworkCacheKey(bridge, artworkId, size));
+    }
+
+    private Bitmap freshArtwork(String key) {
+        CachedArtwork cached = artworkCache.get(key);
+        if (cached == null) return null;
+        if (ArtworkDiskCache.isFresh(cached.fetchedAt(), System.currentTimeMillis()))
+            return cached.bitmap();
+        artworkCache.remove(key);
+        return null;
     }
 
     RequestHandle getArtwork(String artworkId, int size, BridgeClient.Result<Bitmap> result) {
@@ -614,7 +678,7 @@ final class BridgeRepository implements AutoCloseable {
             return RequestHandle.NONE;
         }
         if (missingAt != null) missingArtwork.remove(cacheKey);
-        Bitmap cached = artworkCache.get(cacheKey);
+        Bitmap cached = freshArtwork(cacheKey);
         if (cached != null) {
             result.success(cached);
             return RequestHandle.NONE;
@@ -632,7 +696,7 @@ final class BridgeRepository implements AutoCloseable {
         PendingArtwork started = pending;
         if (artworkDiskCache != null) {
             started.diskRequest = artworkDiskCache.load(
-                    BridgeSession.cacheScope(request.bridge), cacheKey, bitmap -> {
+                    BridgeSession.cacheScope(request.bridge), cacheKey, (bitmap, fetchedAt) -> {
                         if (pendingArtwork.get(cacheKey) != started
                                 || !session.isCurrent(started.request)) return;
                         if (bitmap == null) {
@@ -640,7 +704,7 @@ final class BridgeRepository implements AutoCloseable {
                             return;
                         }
                         if (!pendingArtwork.remove(cacheKey, started)) return;
-                        artworkCache.put(cacheKey, bitmap);
+                        artworkCache.put(cacheKey, new CachedArtwork(bitmap, fetchedAt));
                         for (ArtworkObserver target : started.observers) {
                             if (!target.cancelled) target.result.success(bitmap);
                         }
@@ -661,7 +725,7 @@ final class BridgeRepository implements AutoCloseable {
                         || !session.isCurrent(started.request)) return;
                 if (bitmap != null) {
                     missingArtwork.remove(cacheKey);
-                    artworkCache.put(cacheKey, bitmap);
+                    artworkCache.put(cacheKey, new CachedArtwork(bitmap, System.currentTimeMillis()));
                     if (artworkDiskCache != null) artworkDiskCache.save(
                             BridgeSession.cacheScope(started.request.bridge), cacheKey, bitmap);
                 } else {

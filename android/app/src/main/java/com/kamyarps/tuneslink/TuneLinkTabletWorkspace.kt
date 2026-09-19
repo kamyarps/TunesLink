@@ -1,6 +1,5 @@
 package com.kamyarps.tuneslink
 
-import android.graphics.Bitmap
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
@@ -77,14 +76,13 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.key
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -107,7 +105,6 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlin.math.max
 import kotlin.math.min
 
@@ -162,7 +159,7 @@ private fun TabletWorkspaceHeader(
     destination: TunesLinkDestination,
     viewModel: TunesLinkViewModel,
 ) {
-    val controlsEnabled = ConnectionAvailability.from(state.connection).controlsEnabled
+    val controlsEnabled = state.playbackControlsEnabled
     val density = LocalDensity.current
     val compactHeight = with(density) {
         LocalWindowInfo.current.containerSize.height.toDp() < 500.dp
@@ -661,9 +658,8 @@ private fun TabletLibraryPane(state: TunesLinkUiState, viewModel: TunesLinkViewM
         LibraryBrowseKind.Songs -> TabletSongsPane(
             title = stringResource(R.string.songs),
             tracks = state.browse.tracks,
-            total = state.browse.tracksCursor.total,
-            loading = state.browse.tracksCursor.isLoading,
-            error = state.browse.tracksCursor.error,
+            cursor = state.browse.tracksCursor,
+            onLoadPrevious = { viewModel.loadPreviousBrowse(LibraryBrowseTarget.Tracks) },
             onLoadMore = { viewModel.loadMoreBrowse(LibraryBrowseTarget.Tracks) },
             state = state,
             viewModel = viewModel,
@@ -685,13 +681,9 @@ private fun TabletLibraryPane(state: TunesLinkUiState, viewModel: TunesLinkViewM
 private fun TabletAlbumsPane(state: TunesLinkUiState, viewModel: TunesLinkViewModel) {
     val browse = state.browse
     val gridState = rememberLazyGridState()
-    LaunchedEffect(gridState) {
-        snapshotFlow { gridState.canScrollForward to gridState.layoutInfo.totalItemsCount }
-            .distinctUntilChanged()
-            .collect { (canScrollForward, _) ->
-                if (!canScrollForward) viewModel.loadMoreBrowse(LibraryBrowseTarget.Collections)
-            }
-    }
+    LibraryPagination(gridState, browse.collectionsCursor,
+        onPrevious = { viewModel.loadPreviousBrowse(LibraryBrowseTarget.Collections) },
+        onNext = { viewModel.loadMoreBrowse(LibraryBrowseTarget.Collections) })
     when {
         browse.collectionsCursor.isLoading && browse.collections.isEmpty() -> ContentState(
             stringResource(R.string.loading_library),
@@ -731,11 +723,21 @@ private fun TabletAlbumsPane(state: TunesLinkUiState, viewModel: TunesLinkViewMo
                 horizontalArrangement = Arrangement.spacedBy(if (compactHeight) 12.dp else 18.dp),
                 verticalArrangement = Arrangement.spacedBy(if (compactHeight) 12.dp else 20.dp),
             ) {
-                item(key = "albums-heading", span = { GridItemSpan(maxLineSpan) }) {
+                if (browse.collectionsCursor.windowStart == 0) item(key = "albums-heading", span = { GridItemSpan(maxLineSpan) }) {
                     TabletPaneHeading(
                         stringResource(R.string.albums),
                         browse.collectionsCursor.total,
                     )
+                }
+                if (browse.collectionsCursor.isLoadingPrevious) {
+                    item(key = "albums-previous-progress", span = { GridItemSpan(maxLineSpan) }) { TabletProgress() }
+                }
+                if (browse.collectionsCursor.hasPrevious && browse.collectionsCursor.error != null) {
+                    item(key = "albums-previous-error", span = { GridItemSpan(maxLineSpan) }) {
+                        LibraryPageError(browse.collectionsCursor.error) {
+                            viewModel.retryBrowse(LibraryBrowseTarget.Collections)
+                        }
+                    }
                 }
                 browse.collections.forEachIndexed { index, collection ->
                     item(key = collection.id) {
@@ -764,7 +766,6 @@ private fun TabletAlbumsPane(state: TunesLinkUiState, viewModel: TunesLinkViewMo
                                     artworkId = browse.collections
                                         .firstOrNull { it.id == selected.id }?.artworkId.orEmpty(),
                                     tracks = browse.tracks,
-                                    loading = browse.tracksCursor.isLoading,
                                     state = state,
                                     viewModel = viewModel,
                                     onCollapse = { viewModel.navigateUpLibrary() },
@@ -793,6 +794,11 @@ private fun TabletAlbumsPane(state: TunesLinkUiState, viewModel: TunesLinkViewMo
                                 )
                             }
                         }
+                    }
+                }
+                item(key = "albums-page-error", span = { GridItemSpan(maxLineSpan) }) {
+                    LibraryPageError(browse.collectionsCursor.error) {
+                        viewModel.retryBrowse(LibraryBrowseTarget.Collections)
                     }
                 }
                 if (browse.collectionsCursor.isLoadingMore) {
@@ -914,7 +920,6 @@ private fun TabletExpandedAlbum(
     selected: SelectedLibraryCollection,
     artworkId: String,
     tracks: List<TrackUiState>,
-    loading: Boolean,
     state: TunesLinkUiState,
     viewModel: TunesLinkViewModel,
     onCollapse: () -> Unit,
@@ -982,21 +987,19 @@ private fun TabletExpandedAlbum(
                         modifier = Modifier.padding(top = 8.dp),
                     )
                 }
-                    Column(Modifier.weight(0.66f)) {
-                        if (loading) {
-                            TabletProgress()
-                        } else {
-                            tracks.forEachIndexed { index, track ->
-                                TabletTrackRow(
-                                    track = track,
-                                    position = track.trackNumber.takeIf { it > 0 } ?: index + 1,
-                                    state = state,
-                                    viewModel = viewModel,
-                                    showColumns = false,
-                                    collection = selected,
-                                )
-                            }
-                        }
+                    Box(Modifier.weight(0.66f).height(420.dp)) {
+                        TabletSongsPane(
+                            title = selected.title,
+                            tracks = tracks,
+                            cursor = state.browse.tracksCursor,
+                            onLoadPrevious = { viewModel.loadPreviousBrowse(LibraryBrowseTarget.Tracks) },
+                            onLoadMore = { viewModel.loadMoreBrowse(LibraryBrowseTarget.Tracks) },
+                            onRetry = { viewModel.retryBrowse(LibraryBrowseTarget.Tracks) },
+                            state = state,
+                            viewModel = viewModel,
+                            collection = selected,
+                            showHeading = false,
+                        )
                     }
                 }
             }
@@ -1009,13 +1012,9 @@ private fun TabletCollectionMasterDetail(state: TunesLinkUiState, viewModel: Tun
     val browse = state.browse
     val kind = browse.kind ?: return
     val listState = rememberLazyListState()
-    LaunchedEffect(listState) {
-        snapshotFlow { listState.canScrollForward to listState.layoutInfo.totalItemsCount }
-            .distinctUntilChanged()
-            .collect { (canScrollForward, _) ->
-                if (!canScrollForward) viewModel.loadMoreBrowse(LibraryBrowseTarget.Collections)
-            }
-    }
+    LibraryPagination(listState, browse.collectionsCursor,
+        onPrevious = { viewModel.loadPreviousBrowse(LibraryBrowseTarget.Collections) },
+        onNext = { viewModel.loadMoreBrowse(LibraryBrowseTarget.Collections) })
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val masterWidth = if (maxWidth < 700.dp) 196.dp else 280.dp
         Row(Modifier.fillMaxSize()) {
@@ -1041,6 +1040,14 @@ private fun TabletCollectionMasterDetail(state: TunesLinkUiState, viewModel: Tun
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(vertical = 8.dp),
                 ) {
+                    if (browse.collectionsCursor.isLoadingPrevious) item { TabletProgress() }
+                    if (browse.collectionsCursor.hasPrevious && browse.collectionsCursor.error != null) {
+                        item(key = "collections-previous-error") {
+                            LibraryPageError(browse.collectionsCursor.error) {
+                                viewModel.retryBrowse(LibraryBrowseTarget.Collections)
+                            }
+                        }
+                    }
                     items(browse.collections, key = { it.id }) { collection ->
                         TabletCollectionListRow(
                             collection = collection,
@@ -1048,6 +1055,11 @@ private fun TabletCollectionMasterDetail(state: TunesLinkUiState, viewModel: Tun
                             viewModel = viewModel,
                             onClick = { viewModel.openLibraryCollection(collection) },
                         )
+                    }
+                    item(key = "collections-page-error") {
+                        LibraryPageError(browse.collectionsCursor.error) {
+                            viewModel.retryBrowse(LibraryBrowseTarget.Collections)
+                        }
                     }
                     if (browse.collectionsCursor.isLoadingMore) item { TabletProgress() }
                 }
@@ -1073,9 +1085,9 @@ private fun TabletCollectionMasterDetail(state: TunesLinkUiState, viewModel: Tun
                 !browse.groupsTracksByAlbum() -> TabletSongsPane(
                     title = selected.title,
                     tracks = browse.tracks,
-                    total = browse.tracksCursor.total,
-                    loading = browse.tracksCursor.isLoadingMore,
-                    error = browse.tracksCursor.error,
+                    cursor = browse.tracksCursor,
+                    onLoadPrevious = { viewModel.loadPreviousBrowse(LibraryBrowseTarget.Tracks) },
+                    onRetry = { viewModel.retryBrowse(LibraryBrowseTarget.Tracks) },
                     onLoadMore = { viewModel.loadMoreBrowse(LibraryBrowseTarget.Tracks) },
                     state = state,
                     viewModel = viewModel,
@@ -1144,26 +1156,29 @@ private fun TabletGroupedCollectionDetail(
 ) {
     val albumLabel = stringResource(R.string.album)
     val albums = remember(state.browse.tracks) { libraryBrowseAlbums(state.browse.tracks) }
-    val listState = rememberLazyListState()
-    LaunchedEffect(listState) {
-        snapshotFlow { listState.canScrollForward to listState.layoutInfo.totalItemsCount }
-            .distinctUntilChanged()
-            .collect { (canScrollForward, _) ->
-                if (!canScrollForward) viewModel.loadMoreBrowse(LibraryBrowseTarget.Tracks)
-            }
-    }
+    val listState = key(selected.id) { rememberLazyListState() }
+    LibraryPagination(listState, state.browse.tracksCursor,
+        onPrevious = { viewModel.loadPreviousBrowse(LibraryBrowseTarget.Tracks) },
+        onNext = { viewModel.loadMoreBrowse(LibraryBrowseTarget.Tracks) })
     LazyColumn(
         state = listState,
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(24.dp),
         verticalArrangement = Arrangement.spacedBy(18.dp),
     ) {
-        item {
+        if (state.browse.tracksCursor.windowStart == 0) item {
             TabletPaneHeading(
                 title = selected.title,
                 total = state.browse.tracksCursor.total,
                 detail = selected.subtitle,
             )
+        }
+        if (state.browse.tracksCursor.isLoadingPrevious) item { TabletProgress() }
+        if (state.browse.tracksCursor.error != null) item(key = "grouped-page-error") {
+            LibraryPageError(state.browse.tracksCursor.error) { viewModel.retryBrowse(LibraryBrowseTarget.Tracks) }
+        }
+        if (state.browse.tracks.isEmpty() && state.browse.tracksCursor.error == null) item {
+            Text(stringResource(R.string.no_songs), color = TunesLinkTheme.colors.secondaryText)
         }
         items(albums, key = { it.heading.key }) { album ->
             Row(horizontalArrangement = Arrangement.spacedBy(18.dp)) {
@@ -1196,6 +1211,11 @@ private fun TabletGroupedCollectionDetail(
                 }
             }
         }
+        if (state.browse.tracksCursor.error != null &&
+            (state.browse.tracksCursor.hasMore || state.browse.tracksCursor.hasPrevious)
+        ) item(key = "grouped-next-error") {
+            LibraryPageError(state.browse.tracksCursor.error) { viewModel.retryBrowse(LibraryBrowseTarget.Tracks) }
+        }
         if (state.browse.tracksCursor.isLoadingMore) item { TabletProgress() }
     }
 }
@@ -1204,23 +1224,21 @@ private fun TabletGroupedCollectionDetail(
 private fun TabletSongsPane(
     title: String,
     tracks: List<TrackUiState>,
-    total: Int,
-    loading: Boolean,
-    error: String?,
+    cursor: LibraryPageCursor,
+    onLoadPrevious: () -> Unit,
     onLoadMore: () -> Unit,
     state: TunesLinkUiState,
     viewModel: TunesLinkViewModel,
-    onRetry: (() -> Unit)? = null,
+    onRetry: () -> Unit,
     collection: SelectedLibraryCollection? = null,
+    listIdentity: String = collection?.id.orEmpty(),
+    showHeading: Boolean = true,
 ) {
-    val listState = rememberLazyListState()
-    LaunchedEffect(listState) {
-        snapshotFlow { listState.canScrollForward to listState.layoutInfo.totalItemsCount }
-            .distinctUntilChanged()
-            .collect { (canScrollForward, _) -> if (!canScrollForward) onLoadMore() }
-    }
+    val listState = key(listIdentity) { rememberLazyListState() }
+    LibraryPagination(listState, cursor, onLoadPrevious, onLoadMore)
+    val error = cursor.error
     when {
-        loading && tracks.isEmpty() -> ContentState(
+        cursor.isLoading && tracks.isEmpty() -> ContentState(
             stringResource(R.string.loading_library),
             stringResource(R.string.loading_library_detail),
             loading = true,
@@ -1238,30 +1256,43 @@ private fun TabletSongsPane(
             modifier = Modifier.fillMaxSize(),
         )
         else -> BoxWithConstraints(Modifier.fillMaxSize()) {
-            val showFullColumns = maxWidth >= 620.dp
-            LazyColumn(
-                state = listState,
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(
-                    horizontal = if (showFullColumns) 20.dp else 12.dp,
-                    vertical = 16.dp,
-                ),
-            ) {
-                item { TabletPaneHeading(title, total) }
-                stickyHeader { TabletSongTableHeader(showFullColumns) }
-                itemsIndexed(tracks, key = { _, track -> track.id }) { index, track ->
-                    TabletTrackRow(
-                        track = track,
-                        position = track.trackNumber.takeIf { it > 0 } ?: index + 1,
-                        state = state,
-                        viewModel = viewModel,
-                        showColumns = showFullColumns,
-                        collection = collection,
-                        showMetadataUnderTitle = !showFullColumns,
-                        striped = index % 2 == 1,
-                    )
+            val showFullColumns = showHeading && maxWidth >= 620.dp
+            Column(Modifier.fillMaxSize()) {
+                if (showHeading) {
+                    Column(Modifier.padding(horizontal = 20.dp, vertical = 16.dp)) {
+                        TabletPaneHeading(title, cursor.total)
+                    }
+                    Box(Modifier.padding(horizontal = if (showFullColumns) 20.dp else 12.dp)) {
+                        TabletSongTableHeader(showFullColumns)
+                    }
                 }
-                if (loading) item { TabletProgress() }
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier.fillMaxWidth().weight(1f),
+                    contentPadding = PaddingValues(
+                        horizontal = if (showFullColumns) 20.dp else 12.dp,
+                        vertical = 16.dp,
+                    ),
+                ) {
+                    if (cursor.isLoadingPrevious) item { TabletProgress() }
+                    if (cursor.hasPrevious && error != null) item(key = "songs-previous-error") {
+                        LibraryPageError(error, onRetry)
+                    }
+                    itemsIndexed(tracks, key = { _, track -> track.id }) { index, track ->
+                        TabletTrackRow(
+                            track = track,
+                            position = track.trackNumber.takeIf { it > 0 } ?: cursor.windowStart + index + 1,
+                            state = state,
+                            viewModel = viewModel,
+                            showColumns = showFullColumns,
+                            collection = collection,
+                            showMetadataUnderTitle = showHeading && !showFullColumns,
+                            striped = index % 2 == 1,
+                        )
+                    }
+                    item(key = "songs-page-error") { LibraryPageError(error, onRetry) }
+                    if (cursor.isLoadingMore || cursor.isLoading) item { TabletProgress() }
+                }
             }
         }
     }
@@ -1303,7 +1334,7 @@ private fun TabletTrackRow(
     striped: Boolean = false,
 ) {
     val current = state.player.trackId == track.id
-    val enabled = ConnectionAvailability.from(state.connection).controlsEnabled
+    val enabled = state.playbackControlsEnabled
     Row(
         Modifier
             .fillMaxWidth()
@@ -1399,9 +1430,9 @@ private fun TabletSearchPane(state: TunesLinkUiState, viewModel: TunesLinkViewMo
         else -> TabletSongsPane(
             title = stringResource(R.string.search_results),
             tracks = library.items,
-            total = library.total,
-            loading = library.isRefreshing || library.isLoadingMore,
-            error = library.error,
+            cursor = library.pageCursor(),
+            listIdentity = library.loadedQuery.orEmpty(),
+            onLoadPrevious = viewModel::loadPrevious,
             onLoadMore = viewModel::loadMore,
             state = state,
             viewModel = viewModel,
@@ -1418,14 +1449,7 @@ private fun TabletArtwork(
     maxSize: Int,
     modifier: Modifier = Modifier,
 ) {
-    var artwork by remember(artworkId) { mutableStateOf<Bitmap?>(null) }
-    DisposableEffect(artworkId, maxSize) {
-        val request = viewModel.requestArtwork(artworkId, maxSize, object : BridgeClient.Result<Bitmap> {
-            override fun success(value: Bitmap?) { artwork = value }
-            override fun failure(message: String, unauthorized: Boolean) = Unit
-        })
-        onDispose(request::cancel)
-    }
+    val artwork = rememberLibraryArtwork(artworkId, maxSize, viewModel)
     ArtworkSurface(
         bitmap = artwork,
         description = if (artwork != null) stringResource(R.string.artwork_for, title) else null,

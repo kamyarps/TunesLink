@@ -161,6 +161,7 @@ internal data class LibraryBrowseUiState(
             copy(collectionsCursor = cursor)
         }
 
+    val visibleItemsEmpty: Boolean get() = if (showingTracks) tracks.isEmpty() else collections.isEmpty()
     val visibleCursor: LibraryPageCursor get() = cursor(visibleTarget)
     val total: Int get() = visibleCursor.total
     val hasMore: Boolean get() = visibleCursor.hasMore

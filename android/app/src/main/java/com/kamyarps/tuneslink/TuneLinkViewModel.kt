@@ -55,6 +55,7 @@ internal class TunesLinkViewModel(
     internal var browseTracksGeneration = 0
     private var connectedOnce = false
     private var stateUpdatesActive = false
+    internal var artworkRefreshAt: Long = 0
     internal var artworkRequest: BridgeRepository.RequestHandle = BridgeRepository.RequestHandle.NONE
     internal var libraryRequest: BridgeRepository.RequestHandle = BridgeRepository.RequestHandle.NONE
     internal var browseCollectionsRequest: BridgeRepository.RequestHandle =
@@ -82,6 +83,7 @@ internal class TunesLinkViewModel(
     private var resetAnnouncement: UiAnnouncement? = null
     private var lastAvailabilityKind: ConnectionAvailabilityKind? = null
     private var backgroundStopJob: Job? = null
+    private var artworkRefreshJob: Job? = null
 
     init {
         viewModelScope.launch {
@@ -96,6 +98,24 @@ internal class TunesLinkViewModel(
     fun onForeground() {
         backgroundStopJob?.cancel()
         backgroundStopJob = null
+        artworkRefreshJob?.cancel()
+        artworkRefreshJob = viewModelScope.launch {
+            // Unchanged/paused playback produces no SSE frames, so refresh artwork independently.
+            while (true) {
+                val current = mutableState.value
+                val now = System.currentTimeMillis()
+                val canRefresh = current.connection is ConnectionState.Connected &&
+                    current.player.artworkId.isNotBlank()
+                if (canRefresh && !ArtworkDiskCache.isFresh(artworkRefreshAt, now)) {
+                    loadArtwork(current.player.artworkId)
+                }
+                val wait = if (canRefresh) {
+                    (ArtworkDiskCache.MAX_AGE_MS - (now - artworkRefreshAt))
+                        .coerceIn(1_000L, ArtworkDiskCache.MAX_AGE_MS)
+                } else ArtworkDiskCache.MAX_AGE_MS
+                delay(wait)
+            }
+        }
         mutableState.update { it.copy(pendingRevocationCount = repository.pendingRevocationCount()) }
         if (repository.pendingRevocationCount() > 0) repository.retryPendingRevocations(null)
         if (!mutableState.value.navigation.switchingComputer && repository.current() != null) {
@@ -126,6 +146,8 @@ internal class TunesLinkViewModel(
     }
 
     fun onBackground() {
+        artworkRefreshJob?.cancel()
+        artworkRefreshJob = null
         cancelTransientOperations()
         backgroundStopJob?.cancel()
         backgroundStopJob = viewModelScope.launch {
@@ -486,24 +508,10 @@ internal class TunesLinkViewModel(
         repository.cancelRelocation()
         val generation = ++relocationGeneration
         mutableState.update { it.copy(connection = ConnectionState.Connecting) }
-        relocationRequest = repository.relocateCurrent(object : BridgeClient.Result<BridgeRepository.Relocation> {
-            override fun success(value: BridgeRepository.Relocation) {
+        relocationRequest = repository.resolvePairingEndpoint(object : BridgeClient.Result<BridgeClient.BridgeInfo> {
+            override fun success(value: BridgeClient.BridgeInfo) {
                 if (generation != relocationGeneration) return
-                when (value.status) {
-                    BridgeRepository.Relocation.Status.RELOCATED -> {
-                        val relocated = value.relocated ?: return
-                        updateBridge(
-                            relocated.name,
-                            relocated.host,
-                            relocated.port,
-                        )
-                        connect(initial = false)
-                    }
-                    BridgeRepository.Relocation.Status.IDENTITY_CHANGED -> {
-                        val observed = value.observed ?: return
-                        openPairing(observed)
-                    }
-                }
+                openPairing(value)
             }
 
             override fun failure(message: String, unauthorized: Boolean) {
@@ -599,7 +607,9 @@ internal class TunesLinkViewModel(
             mutationTimeoutJobs.remove(mutation.operationId)?.cancel()
             announceMutationSuccess(mutation.action, merged)
         }
-        if (before.artworkId != merged.artworkId) loadArtwork(merged.artworkId)
+        if (before.artworkId != merged.artworkId ||
+            !ArtworkDiskCache.isFresh(artworkRefreshAt, System.currentTimeMillis())
+        ) loadArtwork(merged.artworkId)
     }
 
     private fun connect(initial: Boolean) {
@@ -761,7 +771,7 @@ internal class TunesLinkViewModel(
         repository.cancelManualResolution()
         repository.cancelPairing()
         repository.cancelRelocation()
-        mutableState.update { it.copy(manualResolutionBusy = false) }
+        mutableState.update(TunesLinkUiState::afterTransientCancellation)
     }
 
     internal fun requestArtwork(

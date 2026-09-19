@@ -107,7 +107,7 @@ internal fun NowPlayingScreen(
 ) {
     val player = state.player
     val haptic = LocalHapticFeedback.current
-    val controlsEnabled = ConnectionAvailability.from(state.connection).controlsEnabled && player.iTunesAvailable
+    val controlsEnabled = state.playbackControlsEnabled
     val ambient = remember(player.artwork) { player.artwork?.let(::averageArtworkColor) }
     val animatedAmbient by animateColorAsState(
         targetValue = ambient ?: TunesLinkTheme.colors.canvas,

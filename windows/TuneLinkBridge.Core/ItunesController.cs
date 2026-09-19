@@ -14,7 +14,7 @@ internal sealed class ItunesController : IMediaController
     internal const int MaxArtworkSourceBytes = 8 * 1024 * 1024;
     internal const int MaxArtworkCacheBytes = 24 * 1024 * 1024;
     internal static readonly TimeSpan LibrarySnapshotLifetime = TimeSpan.FromMinutes(5);
-    internal static readonly TimeSpan PersistedLibrarySnapshotLifetime = TimeSpan.FromHours(24);
+    internal static readonly TimeSpan ArtworkLifetime = TimeSpan.FromMinutes(5);
     private const int MaxArtworkDimension = 4096;
     private const long MaxArtworkPixels = 16_000_000;
     private const string ManagedQueuePrefix =
@@ -64,6 +64,7 @@ internal sealed class ItunesController : IMediaController
     private readonly BlockingCollection<WorkItem> queue = new();
     private readonly Thread staThread;
     private readonly Dictionary<string, ArtworkData> artworkCache = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, DateTimeOffset> artworkFetchedAt = new(StringComparer.Ordinal);
     private readonly Queue<string> artworkCacheOrder = new();
     private readonly Dictionary<string, DateTimeOffset> missingArtwork =
         new(StringComparer.Ordinal);
@@ -71,12 +72,14 @@ internal sealed class ItunesController : IMediaController
     private LibrarySnapshot? librarySnapshot;
     private ManagedQueue? managedQueue;
     private readonly LibraryIndexStore libraryIndexStore;
+    private readonly TimeProvider timeProvider;
     private dynamic? itunes;
     private bool disposed;
 
     public ItunesController(string? configDirectory = null,
-                            IAtomicFilePersistence? persistence = null)
+                            IAtomicFilePersistence? persistence = null, TimeProvider? timeProvider = null)
     {
+        this.timeProvider = timeProvider ?? TimeProvider.System;
         string directory = configDirectory ?? BrandPaths.UserConfigDirectory();
         libraryIndexStore = new LibraryIndexStore(directory, persistence);
         librarySnapshot = LoadPersistedLibrarySnapshot(libraryIndexStore);
@@ -598,10 +601,10 @@ internal sealed class ItunesController : IMediaController
         if (string.IsNullOrWhiteSpace(id)) return null;
         int safeSize = Math.Clamp(maxSize, 64, 1000);
         string cacheKey = id + ":" + safeSize;
-        if (artworkCache.TryGetValue(cacheKey, out ArtworkData? cached)) return cached;
+        if (FreshArtwork(cacheKey) is { } cached) return cached;
         if (missingArtwork.TryGetValue(id, out DateTimeOffset missedAt))
         {
-            if (DateTimeOffset.UtcNow - missedAt < MissingArtworkLifetime) return null;
+            if (timeProvider.GetUtcNow() - missedAt < MissingArtworkLifetime) return null;
             missingArtwork.Remove(id);
         }
         dynamic app = GetITunes();
@@ -640,14 +643,14 @@ internal sealed class ItunesController : IMediaController
     {
         if (missingArtwork.Count >= MaxMissingArtworkEntries)
         {
-            DateTimeOffset now = DateTimeOffset.UtcNow;
+            DateTimeOffset now = timeProvider.GetUtcNow();
             foreach (string expired in missingArtwork
                          .Where(entry => now - entry.Value >= MissingArtworkLifetime)
                          .Select(entry => entry.Key).ToList())
                 missingArtwork.Remove(expired);
             if (missingArtwork.Count >= MaxMissingArtworkEntries) missingArtwork.Clear();
         }
-        missingArtwork[id] = DateTimeOffset.UtcNow;
+        missingArtwork[id] = timeProvider.GetUtcNow();
         return null;
     }
 
@@ -684,6 +687,7 @@ internal sealed class ItunesController : IMediaController
         try { Marshal.FinalReleaseComObject(itunes); } catch { }
         itunes = null;
         artworkCache.Clear();
+        artworkFetchedAt.Clear();
         artworkCacheOrder.Clear();
         artworkCacheBytes = 0;
         missingArtwork.Clear();
@@ -982,8 +986,8 @@ internal sealed class ItunesController : IMediaController
                 MaterializeCollections("genres", genres),
                 ComputeLibraryRevision(materializedTracks, materializedGenres),
                 sourceSignature,
-                DateTimeOffset.UtcNow,
-                DateTimeOffset.UtcNow);
+                timeProvider.GetUtcNow(),
+                timeProvider.GetUtcNow());
         }
         finally
         {
@@ -1090,9 +1094,12 @@ internal sealed class ItunesController : IMediaController
     }
 
     private LibrarySnapshot? CurrentLibrarySnapshot() => librarySnapshot is { ValidatedAt: { } } snapshot
-        && DateTimeOffset.UtcNow - snapshot.ValidatedAt.Value < LibrarySnapshotLifetime
+        && IsFresh(snapshot.CreatedAt, timeProvider.GetUtcNow(), LibrarySnapshotLifetime)
             ? snapshot
             : null;
+
+    internal static bool IsFresh(DateTimeOffset fetchedAt, DateTimeOffset now, TimeSpan lifetime) =>
+        now >= fetchedAt && now - fetchedAt < lifetime;
 
     private LibrarySnapshot BuildAndPersistLibrarySnapshot(object appObject,
         CancellationToken cancellationToken)
@@ -1125,9 +1132,9 @@ internal sealed class ItunesController : IMediaController
         cancellationToken.ThrowIfCancellationRequested();
         LibrarySnapshot? snapshot = librarySnapshot;
         if (snapshot is null) return null;
-        DateTimeOffset now = DateTimeOffset.UtcNow;
-        if (now - snapshot.CreatedAt > PersistedLibrarySnapshotLifetime
-            || snapshot.CreatedAt > now.AddMinutes(5))
+        DateTimeOffset now = timeProvider.GetUtcNow();
+        // Aggregate counts cannot detect tag-only edits. Never renew the original fetch time.
+        if (!IsFresh(snapshot.CreatedAt, now, LibrarySnapshotLifetime))
         {
             librarySnapshot = null;
             return null;
@@ -1524,6 +1531,11 @@ internal sealed class ItunesController : IMediaController
         catch { return null; }
     }
 
+    private ArtworkData? FreshArtwork(string key) =>
+        artworkCache.TryGetValue(key, out ArtworkData? cached)
+        && artworkFetchedAt.TryGetValue(key, out DateTimeOffset fetchedAt)
+        && IsFresh(fetchedAt, timeProvider.GetUtcNow(), ArtworkLifetime) ? cached : null;
+
     private void CacheArtwork(string key, ArtworkData artwork)
     {
         if (artworkCache.TryGetValue(key, out ArtworkData? replaced))
@@ -1531,10 +1543,12 @@ internal sealed class ItunesController : IMediaController
         else
             artworkCacheOrder.Enqueue(key);
         artworkCache[key] = artwork;
+        artworkFetchedAt[key] = timeProvider.GetUtcNow();
         artworkCacheBytes += artwork.Bytes.Length;
         while (artworkCacheOrder.Count > 48 || artworkCacheBytes > MaxArtworkCacheBytes)
         {
             string oldest = artworkCacheOrder.Dequeue();
+            artworkFetchedAt.Remove(oldest);
             if (artworkCache.Remove(oldest, out ArtworkData? removed))
                 artworkCacheBytes -= removed.Bytes.Length;
         }

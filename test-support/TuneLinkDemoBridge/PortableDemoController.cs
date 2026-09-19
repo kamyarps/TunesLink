@@ -9,8 +9,9 @@ internal sealed class PortableDemoController : IMediaController
     private static readonly byte[] Artwork = CreateArtworkPng();
 
     private readonly object gate = new();
-    private readonly DemoTrack[] tracks = DemoLibrary.CreateTracks(includeArchive: true);
+    private readonly DemoTrack[] tracks;
     private readonly int libraryDelayMilliseconds;
+    private readonly string? libraryFaultFile;
     private int delayedContinuation;
     private int index;
     private bool playing = true;
@@ -19,9 +20,17 @@ internal sealed class PortableDemoController : IMediaController
     private bool shuffleEnabled;
     private string repeatMode = "off";
 
-    internal PortableDemoController(int libraryDelayMilliseconds = 0)
+    internal PortableDemoController(int libraryDelayMilliseconds = 0, bool largeLibrary = false,
+        string? libraryFaultFile = null)
     {
         this.libraryDelayMilliseconds = Math.Max(0, libraryDelayMilliseconds);
+        this.libraryFaultFile = libraryFaultFile;
+        tracks = largeLibrary
+            ? Enumerable.Range(1, 120).Select(number => new DemoTrack($"Long Track {number:D3}",
+                "Album Artist", "A Long Album", 180, "Long Collection"))
+                .Concat(Enumerable.Range(1, 600).Select(number => new DemoTrack($"Archive Track {number:D3}",
+                    $"Artist {number:D3}", $"Album {number:D3}", 180, $"Genre {number:D3}"))).ToArray()
+            : DemoLibrary.CreateTracks(includeArchive: true);
     }
 
     public Task<PlaybackState> GetStateAsync(CancellationToken cancellationToken = default)
@@ -41,6 +50,7 @@ internal sealed class PortableDemoController : IMediaController
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        ThrowIfLibraryFaultRequested();
         if (offset > 0 && libraryDelayMilliseconds > 0
             && Interlocked.Exchange(ref delayedContinuation, 1) == 0)
         {
@@ -62,9 +72,12 @@ internal sealed class PortableDemoController : IMediaController
         int limit, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        ThrowIfLibraryFaultRequested();
         lock (gate)
         {
-            return Task.FromResult(DemoLibrary.GetCollections(tracks, kind, query, offset, limit));
+            LibraryCollectionPage page = DemoLibrary.GetCollections(tracks, kind, query, offset, limit);
+            Console.WriteLine($"collections-page:{kind}:{page.Offset}:{page.Items.Count}:{page.Total}");
+            return Task.FromResult(page);
         }
     }
 
@@ -72,6 +85,7 @@ internal sealed class PortableDemoController : IMediaController
         int offset, int limit, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        ThrowIfLibraryFaultRequested();
         lock (gate)
         {
             if (!DemoLibrary.TryGetCollectionTracks(tracks, kind, id, query, offset, limit,
@@ -79,8 +93,15 @@ internal sealed class PortableDemoController : IMediaController
             {
                 throw new ArgumentException("That collection is no longer available");
             }
+            Console.WriteLine($"collection-tracks-page:{kind}:{page.Offset}:{page.Items.Count}:{page.Total}");
             return Task.FromResult(page);
         }
+    }
+
+    private void ThrowIfLibraryFaultRequested()
+    {
+        if (libraryFaultFile is not null && File.Exists(libraryFaultFile))
+            throw new IOException("Injected library failure for UI verification");
     }
 
     public Task PlayTrackAsync(PlaybackSelection selection,

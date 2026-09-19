@@ -302,7 +302,7 @@ private fun TunesLinkApp(
                         onSearch = { viewModel.navigate(TunesLinkDestination.Search) },
                         onPlayPause = viewModel::togglePlayback,
                         showMiniPlayer = route.destination != TunesLinkDestination.NowPlaying,
-                        controlsEnabled = ConnectionAvailability.from(state.connection).controlsEnabled,
+                        controlsEnabled = state.playbackControlsEnabled,
                         showNavigation = !useNavigationRail,
                         modifier = Modifier.weight(1f),
                     )

@@ -52,7 +52,7 @@ internal data class PendingMutation(
     val timeoutMillis: Long = 2_000,
     val deadlineMillis: Long = 4_000,
 ) {
-    fun matches(state: BridgeClient.PlayerState): Boolean = when (action) {
+    fun matches(state: BridgeClient.PlayerState): Boolean = state.iTunesAvailable && when (action) {
         PlaybackAction.PlayPause -> state.playing == expectedBoolean
         PlaybackAction.Position -> kotlin.math.abs(state.position - (expectedNumber ?: state.position)) <= 3.0
         PlaybackAction.Volume -> kotlin.math.abs(
@@ -75,6 +75,17 @@ internal data class PairingUiState(
     val canSubmit: Boolean
         get() = code.length == 6 && phase == PairingPhase.Editing
 }
+
+internal fun TunesLinkUiState.afterTransientCancellation(): TunesLinkUiState = copy(
+    connection = when (connection) {
+        ConnectionState.Discovering, ConnectionState.Pairing -> ConnectionState.Unpaired
+        else -> connection
+    },
+    pairing = if (pairing.phase == PairingPhase.Submitting) {
+        pairing.copy(phase = PairingPhase.Editing, codeError = null)
+    } else pairing,
+    manualResolutionBusy = false,
+)
 
 internal sealed interface ArtworkLoadState {
     val visibleBitmap: Bitmap?
@@ -270,7 +281,11 @@ internal fun shouldPresentConnectionRecoveryDialog(
 internal fun playerHasTrack(player: PlayerUiState): Boolean =
     player.title.isNotBlank() || player.trackId.isNotBlank()
 
+internal val TunesLinkUiState.playbackControlsEnabled: Boolean
+    get() = ConnectionAvailability.from(connection).controlsEnabled && player.iTunesAvailable
+
 internal fun playerIdleSubtitle(player: PlayerUiState, unavailableHint: Boolean): Int? = when {
+    !player.iTunesAvailable && unavailableHint -> R.string.open_itunes
     playerHasTrack(player) -> null
     player.iTunesAvailable -> R.string.choose_a_song
     unavailableHint -> R.string.open_itunes

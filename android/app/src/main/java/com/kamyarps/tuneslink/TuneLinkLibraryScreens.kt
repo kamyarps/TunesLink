@@ -1,6 +1,5 @@
 package com.kamyarps.tuneslink
 
-import android.graphics.Bitmap
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -40,14 +39,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.runtime.key
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -68,7 +61,6 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.core.graphics.get
-import kotlinx.coroutines.flow.distinctUntilChanged
 
 
 @Composable
@@ -91,23 +83,9 @@ internal fun LibraryBrowseScreen(
         if (groupTracksByAlbum) libraryBrowseRows(browse.tracks) else emptyList()
     }
 
-    LaunchedEffect(listState, browse.collections.size, trackRows.size, browse.tracks.size, showingTracks) {
-        val target = browse.visibleTarget
-        val lastDataIndex = when {
-            !showingTracks -> browse.collections.lastIndex
-            groupTracksByAlbum -> trackRows.lastIndex
-            else -> browse.tracks.lastIndex
-        }
-        snapshotFlow {
-            val visible = listState.layoutInfo.visibleItemsInfo
-            (visible.firstOrNull()?.index ?: 0) to (visible.lastOrNull()?.index ?: 0)
-        }
-            .distinctUntilChanged()
-            .collect { (firstVisibleIndex, lastVisibleIndex) ->
-                if (firstVisibleIndex <= 6) viewModel.loadPreviousBrowse(target)
-                if (lastVisibleIndex >= lastDataIndex - 6) viewModel.loadMoreBrowse(target)
-            }
-    }
+    LibraryPagination(listState, browse.visibleCursor,
+        onPrevious = { viewModel.loadPreviousBrowse(browse.visibleTarget) },
+        onNext = { viewModel.loadMoreBrowse(browse.visibleTarget) })
 
     Column(modifier) {
         Row(
@@ -151,14 +129,14 @@ internal fun LibraryBrowseScreen(
                     LibraryCategoryRow(kind, onClick = { viewModel.openLibraryKind(kind) })
                 }
             }
-            browse.isLoading && browse.collections.isEmpty() && browse.tracks.isEmpty() ->
+            browse.isLoading && browse.visibleItemsEmpty ->
                 ContentState(
                     stringResource(R.string.loading_library),
                     stringResource(R.string.loading_library_detail),
                     loading = true,
                     modifier = Modifier.fillMaxSize(),
                 )
-            browseError != null && browse.collections.isEmpty() && browse.tracks.isEmpty() -> ContentState(
+            browseError != null && browse.visibleItemsEmpty -> ContentState(
                 stringResource(R.string.library_unavailable),
                 browseError,
                 onRetry = {
@@ -189,7 +167,7 @@ internal fun LibraryBrowseScreen(
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
             ) {
-                item {
+                if (browse.visibleCursor.windowStart == 0) item {
                     Text(
                         if (showingTracks) {
                             pluralStringResource(R.plurals.song_count, browse.total, browse.total)
@@ -204,6 +182,11 @@ internal fun LibraryBrowseScreen(
                 if (browse.isLoadingPrevious) {
                     item { LibraryPageProgress() }
                 }
+                if (browse.visibleCursor.hasPrevious && browseError != null) {
+                    item(key = "browse-previous-error") {
+                        LibraryPageError(browseError) { viewModel.retryBrowse(browse.visibleTarget) }
+                    }
+                }
                 if (showingTracks && groupTracksByAlbum) {
                     items(trackRows, key = LibraryBrowseRow::key) { row ->
                         when (row) {
@@ -212,7 +195,7 @@ internal fun LibraryBrowseScreen(
                             is LibraryBrowseRow.Song -> TrackRow(
                                 row.track,
                                 viewModel,
-                                enabled = ConnectionAvailability.from(state.connection).controlsEnabled,
+                                enabled = state.playbackControlsEnabled,
                                 pending = state.player.pending(PlaybackAction.PlayTrack) != null &&
                                     state.player.trackId == row.track.id,
                                 current = state.player.trackId == row.track.id,
@@ -226,7 +209,7 @@ internal fun LibraryBrowseScreen(
                         TrackRow(
                             track,
                             viewModel,
-                            enabled = ConnectionAvailability.from(state.connection).controlsEnabled,
+                            enabled = state.playbackControlsEnabled,
                             pending = state.player.pending(PlaybackAction.PlayTrack) != null &&
                                 state.player.trackId == track.id,
                             current = state.player.trackId == track.id,
@@ -240,6 +223,9 @@ internal fun LibraryBrowseScreen(
                             viewModel.openLibraryCollection(collection)
                         }
                     }
+                }
+                item(key = "browse-page-error") {
+                    LibraryPageError(browseError) { viewModel.retryBrowse(browse.visibleTarget) }
                 }
                 if (browse.isLoadingMore) {
                     item { LibraryPageProgress() }
@@ -316,14 +302,7 @@ private fun CollectionArtwork(collection: LibraryCollectionUiState, viewModel: T
 
 @Composable
 private fun BrowseArtwork(artworkId: String, title: String, viewModel: TunesLinkViewModel) {
-    var artwork by remember(artworkId) { mutableStateOf<Bitmap?>(null) }
-    DisposableEffect(artworkId) {
-        val request = viewModel.requestArtwork(artworkId, 128, object : BridgeClient.Result<Bitmap> {
-            override fun success(value: Bitmap?) { artwork = value }
-            override fun failure(message: String, unauthorized: Boolean) = Unit
-        })
-        onDispose(request::cancel)
-    }
+    val artwork = rememberLibraryArtwork(artworkId, 128, viewModel)
     ArtworkSurface(
         artwork,
         if (artwork != null) stringResource(R.string.artwork_for, title) else null,
@@ -387,19 +366,8 @@ internal fun SearchScreen(state: TunesLinkUiState, viewModel: TunesLinkViewModel
     val listState = key(searchIdentity) { rememberLazyListState() }
     val focusManager = LocalFocusManager.current
 
-    LaunchedEffect(listState, library.items.size) {
-        snapshotFlow {
-            val visible = listState.layoutInfo.visibleItemsInfo
-            (visible.firstOrNull()?.index ?: 0) to (visible.lastOrNull()?.index ?: 0)
-        }
-            .distinctUntilChanged()
-            .collect { (firstVisibleIndex, lastVisibleIndex) ->
-                if (firstVisibleIndex <= 6) viewModel.loadPrevious()
-                if (lastVisibleIndex >= library.items.lastIndex - 6) {
-                    viewModel.loadMore()
-                }
-            }
-        }
+    LibraryPagination(listState, library.pageCursor(),
+        onPrevious = viewModel::loadPrevious, onNext = viewModel::loadMore)
 
     Column(modifier) {
         Row(
@@ -475,7 +443,7 @@ internal fun SearchScreen(state: TunesLinkUiState, viewModel: TunesLinkViewModel
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
             ) {
-                item {
+                if (library.windowStart == 0) item {
                     Text(
                         pluralStringResource(R.plurals.result_count, library.total, library.total),
                         style = MaterialTheme.typography.labelMedium,
@@ -486,17 +454,25 @@ internal fun SearchScreen(state: TunesLinkUiState, viewModel: TunesLinkViewModel
                 if (library.isLoadingPrevious) {
                     item { LibraryPageProgress() }
                 }
+                if (library.hasPrevious && library.error != null) {
+                    item(key = "search-previous-error") {
+                        LibraryPageError(library.error, viewModel::refreshLibrary)
+                    }
+                }
                 itemsIndexed(library.items, key = { _, track -> track.id }) { _, track ->
                     TrackRow(
                         track,
                         viewModel = viewModel,
-                        enabled = ConnectionAvailability.from(state.connection).controlsEnabled,
+                        enabled = state.playbackControlsEnabled,
                         pending = state.player.pending(PlaybackAction.PlayTrack) != null &&
                             state.player.trackId == track.id,
                         current = state.player.trackId == track.id,
                         playing = state.player.playing,
                         onClick = { viewModel.playTrack(track) },
                     )
+                }
+                item(key = "search-page-error") {
+                    LibraryPageError(library.error, viewModel::refreshLibrary)
                 }
                 if (library.isLoadingMore) {
                     item { LibraryPageProgress() }

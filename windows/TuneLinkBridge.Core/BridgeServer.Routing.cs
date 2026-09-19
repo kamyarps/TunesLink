@@ -167,7 +167,7 @@ internal sealed partial class BridgeServer
                 return;
             }
             int offset = int.TryParse(QueryValue(request.Target, "offset"), out int parsedOffset)
-                ? Math.Clamp(parsedOffset, 0, 100_000) : 0;
+                ? Math.Max(parsedOffset, 0) : 0;
             int limit = int.TryParse(QueryValue(request.Target, "limit"), out int parsedLimit)
                 ? Math.Clamp(parsedLimit, 1, 60) : 40;
             using CancellationTokenSource operation = OperationTimeout(BridgeProtocol.CollectionTimeout, token);
@@ -189,7 +189,7 @@ internal sealed partial class BridgeServer
                 return;
             }
             int offset = int.TryParse(QueryValue(request.Target, "offset"), out int parsedOffset)
-                ? Math.Clamp(parsedOffset, 0, 100_000) : 0;
+                ? Math.Max(parsedOffset, 0) : 0;
             int limit = int.TryParse(QueryValue(request.Target, "limit"), out int parsedLimit)
                 ? Math.Clamp(parsedLimit, 1, 60) : 40;
             if (collectionKind.Length > 0

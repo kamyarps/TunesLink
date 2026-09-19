@@ -214,6 +214,7 @@ internal fun TunesLinkViewModel.announceMutationSuccess(action: PlaybackAction, 
 }
 
 internal fun TunesLinkViewModel.loadArtwork(artworkId: String) {
+    artworkRefreshAt = System.currentTimeMillis()
     artworkRequest.cancel()
     if (artworkId.isBlank()) {
         mutableState.update { it.copy(player = it.player.copy(artworkState = ArtworkLoadState.Missing)) }

@@ -21,6 +21,8 @@ internal static partial class BridgeSelfTest
         {
             Console.WriteLine("self-test:safety");
             await TestSafetyRegressionsAsync(directory);
+            Console.WriteLine("self-test:release-regressions");
+            await TestReleaseRegressionsAsync(directory);
             Console.WriteLine("self-test:worker-isolation");
             await TestWorkerIsolationAsync();
             await TestWorkerFailureCategoriesAsync();

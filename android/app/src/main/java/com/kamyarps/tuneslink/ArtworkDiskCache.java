@@ -19,9 +19,13 @@ import java.util.concurrent.atomic.AtomicBoolean;
 /** Private, bounded second-level artwork cache. Android may evict it under storage pressure. */
 final class ArtworkDiskCache implements AutoCloseable {
     private static final long MAX_BYTES = 128L * 1024 * 1024;
-    private static final long MAX_AGE_MS = 30L * 24 * 60 * 60 * 1000;
+    static final long MAX_AGE_MS = 5L * 60 * 1000;
 
-    interface Loaded { void accept(Bitmap bitmap); }
+    static boolean isFresh(long fetchedAt, long now) {
+        return now >= fetchedAt && now - fetchedAt < MAX_AGE_MS;
+    }
+
+    interface Loaded { void accept(Bitmap bitmap, long fetchedAt); }
     interface Handle { void cancel(); }
 
     private final File directory;
@@ -36,26 +40,32 @@ final class ArtworkDiskCache implements AutoCloseable {
     Handle load(String scope, String key, Loaded loaded) {
         AtomicBoolean cancelled = new AtomicBoolean();
         if (closed.get()) return () -> { };
-        executor.execute(() -> {
+        executeBestEffort(() -> {
             Bitmap bitmap = null;
-            File file = file(scope, key);
-            long now = System.currentTimeMillis();
-            if (file.isFile()) {
-                if (now - file.lastModified() <= MAX_AGE_MS) {
-                    BitmapFactory.Options bounds = new BitmapFactory.Options();
-                    bounds.inJustDecodeBounds = true;
-                    BitmapFactory.decodeFile(file.getAbsolutePath(), bounds);
-                    if (BridgeClient.isSafeArtworkDimensions(bounds.outWidth, bounds.outHeight))
-                        bitmap = BitmapFactory.decodeFile(file.getAbsolutePath());
-                    if (bitmap != null) file.setLastModified(now);
-                    else file.delete();
-                } else {
-                    file.delete();
+            long fetchedAt = 0;
+            try {
+                File file = file(scope, key);
+                long now = System.currentTimeMillis();
+                if (file.isFile()) {
+                    if (isFresh(file.lastModified(), now)) {
+                        BitmapFactory.Options bounds = new BitmapFactory.Options();
+                        bounds.inJustDecodeBounds = true;
+                        BitmapFactory.decodeFile(file.getAbsolutePath(), bounds);
+                        if (BridgeClient.isSafeArtworkDimensions(bounds.outWidth, bounds.outHeight))
+                            bitmap = BitmapFactory.decodeFile(file.getAbsolutePath());
+                        if (bitmap != null) fetchedAt = file.lastModified();
+                        else file.delete();
+                    } else {
+                        file.delete();
+                    }
                 }
+            } catch (Exception ignored) {
+                // A failed optional disk read is a miss; always let the caller fetch it.
             }
             Bitmap result = bitmap;
+            long storedAt = fetchedAt;
             main.post(() -> {
-                if (!cancelled.get() && !closed.get()) loaded.accept(result);
+                if (!cancelled.get() && !closed.get()) loaded.accept(result, storedAt);
             });
         });
         return () -> cancelled.set(true);
@@ -63,7 +73,7 @@ final class ArtworkDiskCache implements AutoCloseable {
 
     void save(String scope, String key, Bitmap bitmap) {
         if (closed.get() || bitmap == null) return;
-        executor.execute(() -> {
+        executeBestEffort(() -> {
             if (!directory.exists() && !directory.mkdirs()) return;
             File destination = file(scope, key);
             File temporary = new File(directory, destination.getName() + ".tmp");
@@ -85,11 +95,21 @@ final class ArtworkDiskCache implements AutoCloseable {
     void clearScope(String scope) {
         if (closed.get()) return;
         String prefix = digest(scope) + "-";
-        executor.execute(() -> {
+        executeBestEffort(() -> {
             File[] files = directory.listFiles(file -> file.getName().startsWith(prefix));
             if (files == null) return;
             for (File file : files) file.delete();
         });
+    }
+
+    private void executeBestEffort(Runnable operation) {
+        try {
+            executor.execute(() -> {
+                try { operation.run(); } catch (Exception ignored) { }
+            });
+        } catch (java.util.concurrent.RejectedExecutionException ignored) {
+            // The repository is closing and its observers have been cancelled.
+        }
     }
 
     private void trim() {
@@ -98,7 +118,7 @@ final class ArtworkDiskCache implements AutoCloseable {
         long now = System.currentTimeMillis();
         long total = 0;
         for (File file : files) {
-            if (now - file.lastModified() > MAX_AGE_MS) file.delete();
+            if (!isFresh(file.lastModified(), now)) file.delete();
             else total += file.length();
         }
         if (total <= MAX_BYTES) return;

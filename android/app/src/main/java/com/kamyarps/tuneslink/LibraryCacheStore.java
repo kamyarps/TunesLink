@@ -14,7 +14,10 @@ import org.json.JSONObject;
 
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 /** Bounded, bridge-scoped disk cache for library pages displayed while fresh data is fetched. */
 final class LibraryCacheStore implements AutoCloseable {
@@ -32,13 +35,27 @@ final class LibraryCacheStore implements AutoCloseable {
         void cancel();
     }
 
-    private final Database database;
-    private final ExecutorService executor = Executors.newSingleThreadExecutor();
-    private final Handler main = new Handler(Looper.getMainLooper());
+    private final Supplier<SQLiteDatabase> openDatabase;
+    private final Runnable closeDatabase;
+    private final ExecutorService executor;
+    private final Consumer<Runnable> dispatch;
     private final AtomicBoolean closed = new AtomicBoolean();
 
     LibraryCacheStore(Context context) {
-        database = new Database(context.getApplicationContext());
+        this(new Database(context.getApplicationContext()));
+    }
+
+    private LibraryCacheStore(Database database) {
+        this(database::getWritableDatabase, database::close,
+                Executors.newSingleThreadExecutor(), new Handler(Looper.getMainLooper())::post);
+    }
+
+    LibraryCacheStore(Supplier<SQLiteDatabase> openDatabase, Runnable closeDatabase,
+                      ExecutorService executor, Consumer<Runnable> dispatch) {
+        this.openDatabase = openDatabase;
+        this.closeDatabase = closeDatabase;
+        this.executor = executor;
+        this.dispatch = dispatch;
     }
 
     LoadHandle loadTracks(String scope, String requestKey,
@@ -72,7 +89,7 @@ final class LibraryCacheStore implements AutoCloseable {
 
     void clearScope(String scope) {
         if (scope == null || scope.isBlank() || closed.get()) return;
-        executor.execute(() -> database.getWritableDatabase().delete(
+        executeBestEffort(() -> openDatabase.get().delete(
                 "pages", "scope = ?", new String[] { scope }));
     }
 
@@ -82,45 +99,51 @@ final class LibraryCacheStore implements AutoCloseable {
                                 Loaded<T> loaded) {
         if (closed.get()) return LoadHandle.NONE;
         AtomicBoolean cancelled = new AtomicBoolean();
-        executor.execute(() -> {
+        Runnable miss = () -> dispatch.accept(() -> {
+            if (!cancelled.get() && !closed.get()) loaded.accept(null);
+        });
+        boolean submitted = executeBestEffort(() -> {
             T value = null;
             long now = System.currentTimeMillis();
-            SQLiteDatabase db = database.getWritableDatabase();
-            try (Cursor cursor = db.query("pages", new String[] { "payload", "stored_at" },
-                    "scope = ? AND request_key = ? AND kind = ?",
-                    new String[] { scope, requestKey, Integer.toString(kind) },
-                    null, null, null, "1")) {
-                if (cursor.moveToFirst()) {
-                    long storedAt = cursor.getLong(1);
-                    if (now - storedAt <= MAX_AGE_MS) {
-                        value = parser.parse(new JSONObject(cursor.getString(0)));
-                        ContentValues access = new ContentValues();
-                        access.put("accessed_at", now);
-                        db.update("pages", access,
-                                "scope = ? AND request_key = ? AND kind = ?",
-                                new String[] { scope, requestKey, Integer.toString(kind) });
-                    } else {
-                        db.delete("pages", "scope = ? AND request_key = ? AND kind = ?",
-                                new String[] { scope, requestKey, Integer.toString(kind) });
+            try {
+                SQLiteDatabase db = openDatabase.get();
+                try (Cursor cursor = db.query("pages", new String[] { "payload", "stored_at" },
+                        "scope = ? AND request_key = ? AND kind = ?",
+                        new String[] { scope, requestKey, Integer.toString(kind) },
+                        null, null, null, "1")) {
+                    if (cursor.moveToFirst()) {
+                        long storedAt = cursor.getLong(1);
+                        if (now >= storedAt && now - storedAt <= MAX_AGE_MS) {
+                            value = parser.parse(new JSONObject(cursor.getString(0)));
+                            ContentValues access = new ContentValues();
+                            access.put("accessed_at", now);
+                            db.update("pages", access,
+                                    "scope = ? AND request_key = ? AND kind = ?",
+                                    new String[] { scope, requestKey, Integer.toString(kind) });
+                        } else {
+                            db.delete("pages", "scope = ? AND request_key = ? AND kind = ?",
+                                    new String[] { scope, requestKey, Integer.toString(kind) });
+                        }
                     }
                 }
             } catch (Exception ignored) {
                 // A corrupt or obsolete cache entry is a miss; the network remains authoritative.
             }
             T result = value;
-            main.post(() -> {
+            dispatch.accept(() -> {
                 if (!cancelled.get() && !closed.get()) loaded.accept(result);
             });
         });
+        if (!submitted) miss.run();
         return () -> cancelled.set(true);
     }
 
     private void save(String scope, String requestKey, int kind, String revision,
                       JSONObject payload) {
         if (closed.get()) return;
-        executor.execute(() -> {
+        executeBestEffort(() -> {
             long now = System.currentTimeMillis();
-            SQLiteDatabase db = database.getWritableDatabase();
+            SQLiteDatabase db = openDatabase.get();
             db.beginTransaction();
             try {
                 if (revision != null && !revision.isBlank()) {
@@ -146,6 +169,20 @@ final class LibraryCacheStore implements AutoCloseable {
                 db.endTransaction();
             }
         });
+    }
+
+    private boolean executeBestEffort(Runnable operation) {
+        try {
+            executor.execute(() -> {
+                try { operation.run(); }
+                catch (Exception ignored) {
+                    // Optional storage must never interrupt browsing or crash its worker thread.
+                }
+            });
+            return true;
+        } catch (RejectedExecutionException ignored) {
+            return false;
+        }
     }
 
     private static JSONObject tracksJson(BridgeClient.LibraryPage page) throws JSONException {
@@ -201,7 +238,7 @@ final class LibraryCacheStore implements AutoCloseable {
     @Override
     public void close() {
         if (!closed.compareAndSet(false, true)) return;
-        executor.execute(database::close);
+        executeBestEffort(closeDatabase);
         executor.shutdown();
     }
 
