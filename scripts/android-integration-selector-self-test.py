@@ -149,6 +149,17 @@ def main() -> None:
     if "gboard-setup" not in smoke_source:
         raise AssertionError("Smoke script must dismiss Gboard first-run UI")
 
+    start = source.index("return_to_library()")
+    restore = source[start : source.index("capture()", start)]
+    if 'node_center text "Midnight Drive"' not in restore:
+        raise AssertionError("return_to_library must wait for Midnight Drive instead of returning after the first Songs tap")
+    if 'text="Archive Track' not in restore:
+        raise AssertionError("return_to_library must scroll a restored archive page up to Midnight Drive")
+    delay = source.index("library-delay:60:1800")
+    rotate = source[delay : delay + 400]
+    if "wait_orientation landscape 1" not in rotate or rotate.find("wait_orientation landscape 1") > rotate.find("wait_orientation portrait 0"):
+        raise AssertionError("Delayed page rotation must wait for landscape before returning to portrait")
+
     print("Android integration selector self-test passed.")
 
 

@@ -131,37 +131,32 @@ suppress_gboard_first_run() {
 set_rotation() {
   local rotation="$1"
   local output
+  # Smoke restores accelerometer rotation on exit. If this lock path succeeds
+  # without disabling it, later emulator frames can rotate back to landscape.
+  "$adb_command" shell settings put system accelerometer_rotation 0 >/dev/null
   if output="$("$adb_command" shell wm user-rotation lock "$rotation" 2>&1)" &&
       [[ -z "${output//[[:space:]]/}" ]]; then
     return
   fi
-  "$adb_command" shell settings put system accelerometer_rotation 0
   "$adb_command" shell settings put system user_rotation "$rotation"
 }
 
 orientation_matches() {
   local expected="$1"
-  python3 - "$ui_xml" "$expected" "$package" <<'PY'
-import re
+  python3 - "$ui_xml" "$expected" <<'PY'
 import sys
 import xml.etree.ElementTree as ET
 
-xml, expected, package = sys.argv[1:]
-bounds = re.compile(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]")
-sizes = []
-for node in ET.parse(xml).getroot().iter("node"):
-    if node.attrib.get("package") != package:
-        continue
-    match = bounds.fullmatch(node.attrib.get("bounds", ""))
-    if match is None:
-        continue
-    left, top, right, bottom = map(int, match.groups())
-    sizes.append((right - left, bottom - top))
-if not sizes:
+xml, expected = sys.argv[1:]
+try:
+    rotation = int(ET.parse(xml).getroot().attrib.get("rotation", "0"))
+except (OSError, ValueError, ET.ParseError):
     raise SystemExit(1)
-width, height = max(sizes, key=lambda size: size[0] * size[1])
-actual = "landscape" if width > height else "portrait"
-raise SystemExit(0 if actual == expected else 1)
+# uiautomator rotation 0/2 is portrait; 1/3 is landscape. Node aspect ratio is
+# a false portrait signal while a landscape rotation is still settling.
+if expected == "landscape":
+    raise SystemExit(0 if rotation % 2 == 1 else 1)
+raise SystemExit(0 if rotation % 2 == 0 else 1)
 PY
 }
 
@@ -518,8 +513,12 @@ clear_search() {
 return_to_library() {
   local center=""
 
-  for _ in $(seq 1 10); do
+  for _ in $(seq 1 20); do
     dump_ui
+
+    if node_center text "Midnight Drive" >/dev/null; then
+      return
+    fi
 
     # Phone search exposes a Cancel action while the field is active, followed
     # by the bottom-navigation Library destination.
@@ -528,22 +527,53 @@ return_to_library() {
       sleep 1
       continue
     fi
+    if node_center text "Search your music" >/dev/null ||
+        node_center text "Search Results" >/dev/null ||
+        node_center text "1 result" >/dev/null; then
+      if center="$(node_center text "Songs")"; then
+        "$adb_command" shell input tap $center
+      elif center="$(node_center desc "Library")"; then
+        "$adb_command" shell input tap $center
+      else
+        "$adb_command" shell input keyevent KEYCODE_BACK
+      fi
+      sleep 1
+      continue
+    fi
+
+    # Leaving Search can restore Songs at the archive page from earlier paging.
+    # Midnight Drive is on page one, so scroll instead of re-tapping Library.
+    if grep -q 'text="Archive Track' "$ui_xml"; then
+      if ! scrollable_swipe up; then
+        sleep 1
+      fi
+      sleep 1
+      continue
+    fi
+
     if center="$(node_center desc "Library")"; then
       "$adb_command" shell input tap $center
-      return
+      sleep 1
+      continue
     fi
 
     # Tablet search is part of the persistent library workspace. Selecting a
     # sidebar category cancels search and restores the Library destination.
+    # Do not return on the first tap: the field can still be focused, and an
+    # earlier Songs page can still be scrolled to archive tracks.
     if center="$(node_center text "Songs")"; then
       "$adb_command" shell input tap $center
-      return
+      sleep 1
+      continue
     fi
 
+    if ! scrollable_swipe up; then
+      sleep 1
+    fi
     sleep 1
   done
 
-  printf 'Unable to leave Search for the Library destination.\n' >&2
+  printf 'Unable to restore the Songs list to Midnight Drive.\n' >&2
   cat "$ui_xml" >&2
   return 1
 }
@@ -595,6 +625,8 @@ tap_until_log() {
 
 "$adb_command" wait-for-device
 suppress_gboard_first_run
+"$adb_command" shell settings put system accelerometer_rotation 0 >/dev/null
+set_rotation 0
 "$adb_command" install -r "$apk" >/dev/null
 "$adb_command" shell pm clear "$package" >/dev/null
 "$adb_command" logcat -b crash -c >/dev/null 2>&1 || true
@@ -674,7 +706,7 @@ capture "paired-library-songs"
 scroll_until_bridge_line "library-delay:60:1800"
 expect_bridge_line "library-delay:60:1800"
 set_rotation 1
-sleep 1
+wait_orientation landscape 1
 set_rotation 0
 wait_orientation portrait 0
 for _ in $(seq 1 30); do

@@ -27,11 +27,11 @@ trap cleanup EXIT
 set_rotation() {
   local rotation="$1"
   local output
+  adb shell settings put system accelerometer_rotation 0 >/dev/null
   if output="$(adb shell wm user-rotation lock "$rotation" 2>&1)" &&
       [[ -z "${output//[[:space:]]/}" ]]; then
     return
   fi
-  adb shell settings put system accelerometer_rotation 0
   adb shell settings put system user_rotation "$rotation"
 }
 
