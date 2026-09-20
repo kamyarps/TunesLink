@@ -152,6 +152,28 @@ internal sealed partial class BridgeServer
             return;
         }
 
+        if (request.Method == "GET" && path == "/api/collection-albums")
+        {
+            string kind = QueryValue(request.Target, "kind").Trim().ToLowerInvariant();
+            string id = QueryValue(request.Target, "id").Trim();
+            string query = QueryValue(request.Target, "query").Trim();
+            if (query.Length > 120 || kind is not ("artists" or "genres")
+                || !ItunesCollectionId.TryDecodeText(id, kind, out _))
+            {
+                await WriteJsonAsync(stream, 400, new { error = "Invalid album collection" }, token);
+                return;
+            }
+            int offset = int.TryParse(QueryValue(request.Target, "offset"), out int parsedOffset)
+                ? Math.Max(0, parsedOffset) : 0;
+            int limit = int.TryParse(QueryValue(request.Target, "limit"), out int parsedLimit)
+                ? Math.Clamp(parsedLimit, 1, 60) : 40;
+            using CancellationTokenSource operation = OperationTimeout(BridgeProtocol.CollectionTimeout, token);
+            LibraryCollectionPage page = await media.GetCollectionAlbumsAsync(kind, id, query,
+                offset, limit, operation.Token).ConfigureAwait(false);
+            await WriteJsonAsync(stream, 200, page, token);
+            return;
+        }
+
         if (request.Method == "GET" && path == "/api/collections")
         {
             string kind = QueryValue(request.Target, "kind").Trim().ToLowerInvariant();
@@ -276,7 +298,9 @@ internal sealed partial class BridgeServer
                 }
                 if (value is not null && !double.IsFinite(value.Value))
                     throw new ArgumentException("Command value must be finite");
-                using CancellationTokenSource operation = OperationTimeout(BridgeProtocol.StateTimeout, token);
+                using CancellationTokenSource operation = OperationTimeout(
+                    command is "previous" or "shuffle" or "repeat"
+                        ? BridgeProtocol.PlaybackTimeout : BridgeProtocol.StateTimeout, token);
                 await media.ExecuteAsync(new PlayerCommand(command, value), operation.Token)
                     .ConfigureAwait(false);
                 stateHub.Wake();

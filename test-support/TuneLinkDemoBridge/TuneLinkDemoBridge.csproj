@@ -22,6 +22,7 @@
     <Compile Include="..\..\windows\TuneLinkBridge.Core\BridgeServer.Routing.cs" Link="Bridge\BridgeServer.Routing.cs" />
     <Compile Include="..\..\windows\TuneLinkBridge.Core\BridgeTlsIdentity.cs" Link="Bridge\BridgeTlsIdentity.cs" />
     <Compile Include="..\..\windows\TuneLinkBridge.Core\DemoLibrary.cs" Link="Bridge\DemoLibrary.cs" />
+    <Compile Include="..\..\windows\TuneLinkBridge.Core\CollectionAlbums.cs" Link="Bridge\CollectionAlbums.cs" />
     <Compile Include="..\..\windows\TuneLinkBridge.Core\ItunesCollectionId.cs" Link="Bridge\ItunesCollectionId.cs" />
     <Compile Include="..\..\windows\TuneLinkBridge.Core\ItunesTrackId.cs" Link="Bridge\ItunesTrackId.cs" />
     <Compile Include="..\..\windows\TuneLinkBridge.Core\ItunesWorkerProtocol.cs" Link="Bridge\ItunesWorkerProtocol.cs" />

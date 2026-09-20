@@ -144,6 +144,10 @@ internal data class LibraryBrowseUiState(
     val tracks: List<TrackUiState> = emptyList(),
     val collectionsCursor: LibraryPageCursor = LibraryPageCursor(),
     val tracksCursor: LibraryPageCursor = LibraryPageCursor(),
+    val albumParent: SelectedLibraryCollection? = null,
+    val parentBrowse: LibraryBrowseUiState? = null,
+    val collectionScrollIndex: Int = 0,
+    val collectionScrollOffset: Int = 0,
 ) {
     val canNavigateUp: Boolean get() = kind != null
     val showingTracks: Boolean

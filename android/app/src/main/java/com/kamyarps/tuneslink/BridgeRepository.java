@@ -528,12 +528,17 @@ final class BridgeRepository implements AutoCloseable {
 
     RequestHandle getCollections(String kind, String query, int offset, int limit,
                                  PageResult<BridgeClient.LibraryCollectionPage> result) {
+        return getCollections(kind, "", query, offset, limit, result);
+    }
+
+    RequestHandle getCollections(String kind, String parentId, String query, int offset, int limit,
+                                 PageResult<BridgeClient.LibraryCollectionPage> result) {
         BridgeSession.Request request = capture();
         if (request == null) return RequestHandle.NONE;
-        String key = libraryRequestKey(kind, "", query, offset, limit);
+        String key = libraryRequestKey(kind, parentId, query, offset, limit);
         if (libraryCache == null) {
             BridgeClient.Cancellation network = client.getCollections(
-                    request.bridge, kind, query, offset, limit,
+                    request.bridge, kind, parentId, query, offset, limit,
                     authoritativeOnly(request, result));
             return network::cancel;
         }
@@ -545,7 +550,7 @@ final class BridgeRepository implements AutoCloseable {
                     if (cancelled.get() || !session.isCurrent(request)) return;
                     if (cached != null) result.page(cached, false);
                     BridgeClient.Cancellation started = client.getCollections(request.bridge,
-                            kind, query, offset, limit,
+                            kind, parentId, query, offset, limit,
                             cacheCollectionsResult(request, key, cancelled, result));
                     network.set(started);
                     if (cancelled.get()) started.cancel();

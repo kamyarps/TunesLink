@@ -135,6 +135,11 @@ internal static class ItunesWorkerHost
                     Collections: await media.GetCollectionsAsync(request.CollectionKind,
                         request.Query, request.Offset, request.Limit, cancellationToken)
                         .ConfigureAwait(false));
+            case "collectionAlbums":
+                return new ItunesWorkerResponse(request.Id, true,
+                    Collections: await media.GetCollectionAlbumsAsync(request.CollectionKind,
+                        request.CollectionId, request.Query, request.Offset, request.Limit,
+                        cancellationToken).ConfigureAwait(false));
             case "collectionTracks":
                 return new ItunesWorkerResponse(request.Id, true,
                     Library: await media.GetCollectionTracksAsync(request.CollectionKind,

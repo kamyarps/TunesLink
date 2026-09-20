@@ -75,7 +75,9 @@ internal fun LibraryBrowseScreen(
         ?: "root"
     val showingTracks = browse.showingTracks
     val browseError = browse.error
-    val collectionsListState = key(browse.kind?.name ?: "root") { rememberLazyListState() }
+    val collectionsListState = key(browse.albumParent?.id ?: browse.kind?.name ?: "root") {
+        rememberLazyListState(browse.collectionScrollIndex, browse.collectionScrollOffset)
+    }
     val tracksListState = key(browseIdentity) { rememberLazyListState() }
     val listState = if (showingTracks) tracksListState else collectionsListState
     val groupTracksByAlbum = browse.groupsTracksByAlbum()
@@ -100,7 +102,7 @@ internal fun LibraryBrowseScreen(
                 Spacer(Modifier.width(12.dp))
             }
             Text(
-                browse.selectedCollection?.title ?: browse.kind?.let { it.displayName() }
+                browse.selectedCollection?.title ?: browse.albumParent?.title ?: browse.kind?.let { it.displayName() }
                     ?: stringResource(R.string.library),
                 style = MaterialTheme.typography.headlineLarge,
                 color = TunesLinkTheme.colors.primaryText,
@@ -139,22 +141,12 @@ internal fun LibraryBrowseScreen(
             browseError != null && browse.visibleItemsEmpty -> ContentState(
                 stringResource(R.string.library_unavailable),
                 browseError,
-                onRetry = {
-                    val selected = browse.selectedCollection
-                    if (selected != null) {
-                        viewModel.openLibraryCollection(
-                            LibraryCollectionUiState(
-                                selected.id,
-                                selected.title,
-                                selected.subtitle,
-                                0,
-                                "",
-                            ),
-                        )
-                    } else {
-                        browse.kind.let(viewModel::openLibraryKind)
-                    }
-                },
+                onRetry = { viewModel.retryBrowse(browse.visibleTarget) },
+                modifier = Modifier.fillMaxSize(),
+            )
+            !showingTracks && browse.albumParent != null && browse.collections.isEmpty() -> ContentState(
+                stringResource(R.string.no_albums),
+                stringResource(R.string.no_albums_detail),
                 modifier = Modifier.fillMaxSize(),
             )
             showingTracks && browse.tracks.isEmpty() -> ContentState(
@@ -171,6 +163,8 @@ internal fun LibraryBrowseScreen(
                     Text(
                         if (showingTracks) {
                             pluralStringResource(R.plurals.song_count, browse.total, browse.total)
+                        } else if (browse.kind == LibraryBrowseKind.Albums) {
+                            pluralStringResource(R.plurals.album_count, browse.total, browse.total)
                         } else {
                             pluralStringResource(R.plurals.result_count, browse.total, browse.total)
                         },
@@ -220,7 +214,8 @@ internal fun LibraryBrowseScreen(
                 } else {
                     itemsIndexed(browse.collections, key = { _, collection -> collection.id }) { _, collection ->
                         LibraryCollectionRow(collection, viewModel) {
-                            viewModel.openLibraryCollection(collection)
+                            viewModel.openPhoneLibraryCollection(collection,
+                                listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset)
                         }
                     }
                 }

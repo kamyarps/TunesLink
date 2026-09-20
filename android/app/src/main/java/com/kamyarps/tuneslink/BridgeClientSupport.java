@@ -101,8 +101,8 @@ class BridgeClientSupport {
     static int readTimeoutFor(String path) {
         String route = path == null ? "" : path.split("\\?", 2)[0];
         return switch (route) {
-            case "/api/library", "/api/collections" -> LIBRARY_READ_TIMEOUT_MS;
-            case "/api/play" -> PLAYBACK_READ_TIMEOUT_MS;
+            case "/api/library", "/api/collections", "/api/collection-albums" -> LIBRARY_READ_TIMEOUT_MS;
+            case "/api/play", "/api/command" -> PLAYBACK_READ_TIMEOUT_MS;
             case "/api/artwork" -> MEDIA_READ_TIMEOUT_MS;
             default -> DEFAULT_READ_TIMEOUT_MS;
         };

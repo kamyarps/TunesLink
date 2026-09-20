@@ -41,6 +41,7 @@ TunesLink has two parts that work together:
 From Android you can:
 
 - browse playlists, artists, albums, songs, and genres;
+- on phones, open an artist or genre to see its albums, then tap an album to see its songs;
 - search the iTunes library;
 - view album artwork and the current track;
 - play, pause, skip, seek, and change the volume;
@@ -131,16 +132,28 @@ are released together and currently use wire protocol `TunesLink-3`.
   if the close button should exit instead.
 - **Open at login:** starts the bridge in the background for the current Windows user.
 - **Paired devices:** up to two devices can be retained; each can be revoked from the bridge.
-- **Collection playback:** when Android starts an album, artist, or genre, the bridge creates one
+- **Collection playback:** when Android starts an album, artist, genre, or playlist, the bridge creates one
   temporary `TunesLink Playback Queue` playlist so iTunes keeps Next, Previous, shuffle, repeat,
   and automatic track changes inside that collection. The managed playlist can appear in iTunes
   while it is active and is removed when playback switches elsewhere.
+  The selected track starts the native queue. Earlier tracks remain available through Previous,
+  shuffle, or repeat all; with shuffle and repeat off, playback stops at the collection's end.
 - **Windows data:** identity, paired-device hashes, settings, and the bounded metadata index live
   under `%LOCALAPPDATA%\TunesLink Bridge`.
 - **Android data:** credentials use encrypted platform storage; metadata and artwork caches are
   bounded and scoped to the paired bridge.
 
 ## Troubleshooting
+
+### iTunes plays but an AirPlay speaker is silent
+
+TunesLink uses the audio outputs selected in iTunes. It does not currently list, select, or check
+AirPlay speakers. Open the AirPlay menu in iTunes on the PC and check the desired speaker; if a
+receiver stopped responding after another app used it, try deselecting and reselecting it there.
+See [Apple's speaker troubleshooting](https://support.apple.com/guide/itunes/itns3095/windows).
+The Windows COM interface used by this bridge does not expose AirPlay device controls; remote
+speaker selection would require an additional integration. Playback status in TunesLink does not
+confirm that a remote speaker is connected or audible.
 
 ### The phone cannot find the computer
 

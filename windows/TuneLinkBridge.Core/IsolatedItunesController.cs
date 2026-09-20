@@ -27,6 +27,10 @@ internal sealed class IsolatedItunesController : IMediaController
         int limit, CancellationToken cancellationToken = default) =>
         libraryWorker.GetCollectionsAsync(kind, query, offset, limit, cancellationToken);
 
+    public Task<LibraryCollectionPage> GetCollectionAlbumsAsync(string kind, string id, string query,
+        int offset, int limit, CancellationToken cancellationToken = default) =>
+        libraryWorker.GetCollectionAlbumsAsync(kind, id, query, offset, limit, cancellationToken);
+
     public Task<LibraryPage> GetCollectionTracksAsync(string kind, string id, string query,
         int offset, int limit, CancellationToken cancellationToken = default) =>
         libraryWorker.GetCollectionTracksAsync(kind, id, query, offset, limit, cancellationToken);
@@ -113,6 +117,13 @@ internal sealed class ItunesWorkerClient : IDisposable
             response => response.Collections ?? throw MissingPayload("collections"),
             BridgeProtocol.CollectionTimeout, cancellationToken);
 
+    public Task<LibraryCollectionPage> GetCollectionAlbumsAsync(string kind, string id, string query,
+        int offset, int limit, CancellationToken cancellationToken = default) =>
+        CallAsync(new ItunesWorkerRequest(NextId(), "collectionAlbums", query, offset, limit,
+                CollectionKind: kind, CollectionId: id),
+            response => response.Collections ?? throw MissingPayload("collection albums"),
+            BridgeProtocol.CollectionTimeout, cancellationToken);
+
     public Task<LibraryPage> GetCollectionTracksAsync(string kind, string id, string query,
         int offset, int limit, CancellationToken cancellationToken = default) =>
         CallAsync(new ItunesWorkerRequest(NextId(), "collectionTracks", query, offset, limit,
@@ -130,7 +141,8 @@ internal sealed class ItunesWorkerClient : IDisposable
 
     public Task ExecuteAsync(PlayerCommand command, CancellationToken cancellationToken = default) =>
         CallAsync(new ItunesWorkerRequest(NextId(), "command", Command: command),
-            _ => true, BridgeProtocol.StateTimeout, cancellationToken);
+            _ => true, command.Command is "previous" or "shuffle" or "repeat"
+                ? BridgeProtocol.PlaybackTimeout : BridgeProtocol.StateTimeout, cancellationToken);
 
     public Task<ArtworkData?> GetArtworkAsync(string id, int maxSize,
         CancellationToken cancellationToken = default) =>

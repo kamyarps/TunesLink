@@ -37,6 +37,9 @@
     <string name="loading_library_detail">Reading music from iTunes.</string>
     <string name="library_unavailable">Library unavailable</string>
     <string name="no_songs">No songs</string>
+    <string name="no_albums">No albums</string>
+    <string name="no_albums_detail">There are no albums in this collection.</string>
+    <string name="error_bridge_update_required">Update TunesLink Bridge on your PC to browse albums by artist or genre.</string>
     <string name="no_songs_detail">This collection does not contain any songs.</string>
     <string name="now_playing">Now Playing</string>
     <string name="player">Player</string>
@@ -48,6 +51,7 @@
     <string name="cancel">Cancel</string>
     <plurals name="result_count"><item quantity="one">%d result</item><item quantity="other">%d results</item></plurals>
     <plurals name="song_count"><item quantity="one">%d song</item><item quantity="other">%d songs</item></plurals>
+    <plurals name="album_count"><item quantity="one">%d album</item><item quantity="other">%d albums</item></plurals>
     <string name="connection_status_accessibility">%1$s, %2$s. View connection details.</string>
     <string name="connection_default">Connection</string>
     <string name="open_itunes">Open iTunes on your computer</string>

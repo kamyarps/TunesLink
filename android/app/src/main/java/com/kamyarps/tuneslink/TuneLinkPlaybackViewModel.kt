@@ -144,6 +144,11 @@ internal fun TunesLinkViewModel.pendingMutation(
     expectedTrackId = expectedTrackId,
     previousTrackId = previous.trackId,
     startedAtMillis = System.currentTimeMillis(),
+    deadlineMillis = when (action) {
+        PlaybackAction.PlayTrack, PlaybackAction.Previous, PlaybackAction.Shuffle, PlaybackAction.Repeat ->
+            BridgeClient.PLAYBACK_READ_TIMEOUT_MS.toLong()
+        else -> 4_000L
+    },
 )
 
 internal fun TunesLinkViewModel.scheduleMutationReconciliation(mutation: PendingMutation) {

@@ -7,7 +7,7 @@ using System.Text;
 
 namespace TunesLinkBridge;
 
-internal sealed class ItunesController : IMediaController
+internal sealed partial class ItunesController : IMediaController
 {
     internal const int SearchAllFields = 0;
     internal const int SearchAlbums = 3;
@@ -17,8 +17,9 @@ internal sealed class ItunesController : IMediaController
     internal static readonly TimeSpan ArtworkLifetime = TimeSpan.FromMinutes(5);
     private const int MaxArtworkDimension = 4096;
     private const long MaxArtworkPixels = 16_000_000;
-    private const string ManagedQueuePrefix =
+    private const string DefaultManagedQueuePrefix =
         "TunesLink Playback Queue [managed-7f4d6b21]-";
+    private readonly string managedQueuePrefix;
     private sealed class WorkItem
     {
         public required Func<object?> Action { get; init; }
@@ -56,7 +57,6 @@ internal sealed class ItunesController : IMediaController
         int TrackNumber,
         int OriginalIndex);
 
-    private sealed record ManagedQueue(int PlaylistId, string Kind, string Filter);
 
     internal static readonly TimeSpan MissingArtworkLifetime = TimeSpan.FromMinutes(5);
     private const int MaxMissingArtworkEntries = 512;
@@ -77,10 +77,15 @@ internal sealed class ItunesController : IMediaController
     private bool disposed;
 
     public ItunesController(string? configDirectory = null,
-                            IAtomicFilePersistence? persistence = null, TimeProvider? timeProvider = null)
+                            IAtomicFilePersistence? persistence = null, TimeProvider? timeProvider = null,
+                            string managedQueuePrefix = DefaultManagedQueuePrefix)
     {
+        this.managedQueuePrefix = managedQueuePrefix;
         this.timeProvider = timeProvider ?? TimeProvider.System;
         string directory = configDirectory ?? BrandPaths.UserConfigDirectory();
+        queueStatePath = Path.Combine(directory, "Cache", "managed-queue-v1.json");
+        queuePersistence = persistence ?? AtomicFilePersistence.Instance;
+        managedQueue = LoadManagedQueue();
         libraryIndexStore = new LibraryIndexStore(directory, persistence);
         librarySnapshot = LoadPersistedLibrarySnapshot(libraryIndexStore);
         staThread = new Thread(RunSta)
@@ -180,6 +185,27 @@ internal sealed class ItunesController : IMediaController
         };
     }, cancellationToken);
 
+    public Task<LibraryCollectionPage> GetCollectionAlbumsAsync(string kind, string id, string query,
+        int offset, int limit, CancellationToken cancellationToken = default) => Invoke<LibraryCollectionPage>(() =>
+    {
+        CollectionAlbums.Validate(kind, id);
+        _ = ItunesCollectionId.TryDecodeText(id, kind, out string filter);
+        object app = GetITunes();
+        LibrarySnapshot snapshot = CurrentLibrarySnapshot()
+            ?? ValidatePersistedLibrarySnapshot(app, cancellationToken)
+            ?? BuildAndPersistLibrarySnapshot(app, cancellationToken);
+        HashSet<string> albumKeys = new(StringComparer.OrdinalIgnoreCase);
+        for (int index = 0; index < snapshot.Tracks.Length; index++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            LibraryTrack track = snapshot.Tracks[index];
+            if (MatchesCollection(track, snapshot.TrackGenres[index], kind, filter))
+                albumKeys.Add(LibraryGrouping.AlbumKey(track.AlbumArtist, track.Album));
+        }
+        return CollectionAlbums.Page(snapshot.Tracks.Where(track => albumKeys.Contains(
+            LibraryGrouping.AlbumKey(track.AlbumArtist, track.Album))), query, offset, limit, snapshot.Revision);
+    }, cancellationToken);
+
     public Task<LibraryPage> GetCollectionTracksAsync(string kind, string id, string query,
         int offset, int limit, CancellationToken cancellationToken = default) => Invoke<LibraryPage>(() =>
     {
@@ -264,13 +290,12 @@ internal sealed class ItunesController : IMediaController
             {
                 PlayLibraryTrack((object)app, selection.TrackId);
                 managedQueue = null;
+                ClearQueueState();
                 CleanupManagedQueues((object)app);
             }
             else if (kind == "playlists")
             {
-                PlayPlaylistTrack((object)app, selection.TrackId, collectionId);
-                managedQueue = null;
-                CleanupManagedQueues((object)app);
+                PlayManagedPlaylist((object)app, selection.TrackId, collectionId, cancellationToken);
             }
             else if (kind is "artists" or "albums" or "genres")
             {
@@ -291,164 +316,6 @@ internal sealed class ItunesController : IMediaController
         if (track is null) throw new MediaNotFoundException("That song is no longer available");
         try { track.Play(); }
         finally { ReleaseCom(track); }
-    }
-
-    private static void PlayPlaylistTrack(object appObject, string trackId, string collectionId)
-    {
-        if (!ItunesCollectionId.TryDecodePlaylist(collectionId,
-                out ItunesPlaylistLocator playlistLocator)
-            || !ItunesTrackId.TryDecode(trackId, out ItunesTrackLocator trackLocator))
-        {
-            throw new MediaNotFoundException("That playlist is no longer available");
-        }
-
-        dynamic app = appObject;
-        dynamic? playlist = null;
-        dynamic? tracks = null;
-        dynamic? playable = null;
-        try
-        {
-            playlist = ResolvePlaylist(appObject, playlistLocator)
-                ?? throw new MediaNotFoundException("That playlist is no longer available");
-            tracks = playlist.Tracks;
-            playable = FindTrackByDatabaseId(tracks, trackLocator.DatabaseId);
-            if (playable is null)
-                throw new MediaNotFoundException("That song is no longer in this playlist");
-            bool shuffleEnabled = ReadBool(playlist, "Shuffle");
-            SetProperty(playlist, "Shuffle", false);
-            try
-            {
-                playlist.PlayFirstTrack();
-                playable.Play();
-            }
-            finally { SetProperty(playlist, "Shuffle", shuffleEnabled); }
-        }
-        finally
-        {
-            ReleaseCom(playable);
-            ReleaseCom(tracks);
-            ReleaseCom(playlist);
-        }
-    }
-
-    private void PlayManagedCollection(object appObject, string trackId, string kind,
-        string collectionId, CancellationToken cancellationToken)
-    {
-        if (!ItunesCollectionId.TryDecodeText(collectionId, kind, out string filter))
-            throw new MediaNotFoundException("That collection is no longer available");
-
-        dynamic app = appObject;
-        if (TryPlayWithinActiveQueue(appObject, trackId, kind, filter)) return;
-
-        // The queue order has to match the order the browse list showed, or a song started from
-        // that list would carry on through a different running order than the one on screen.
-        List<QueueTrack> selected = [.. LibraryGrouping.InCollectionOrder(
-            SelectCollectionTracks(appObject, kind, filter, cancellationToken),
-            item => item.Album, item => item.AlbumArtist,
-            item => item.DiscNumber, item => item.TrackNumber, item => item.OriginalIndex)];
-        int targetIndex = selected.FindIndex(item =>
-            string.Equals(item.Id, trackId, StringComparison.Ordinal));
-        if (targetIndex < 0)
-            throw new MediaNotFoundException("That song is no longer in this collection");
-
-        (bool shuffleEnabled, string repeatMode) = ReadPlaybackModes(appObject);
-        dynamic? queuePlaylist = null;
-        dynamic? queueTracks = null;
-        dynamic? queueTrack = null;
-        bool activated = false;
-        try
-        {
-            queuePlaylist = app.CreatePlaylist(
-                ManagedQueuePrefix + Guid.NewGuid().ToString("N")[..8]);
-            for (int index = 0; index < selected.Count; index++)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                dynamic? sourceTrack = null;
-                try
-                {
-                    sourceTrack = ResolveTrack(app, selected[index].Id)
-                        ?? throw new MediaNotFoundException(
-                            "A song in that collection is no longer available");
-                    queuePlaylist.AddTrack(sourceTrack);
-                }
-                finally { ReleaseCom(sourceTrack); }
-            }
-
-            // IITTrack.Play alone can fall back to iTunes' Music library even when the
-            // track object belongs to this playlist. PlayFirstTrack establishes the
-            // playlist as the active queue before selecting the requested track.
-            SetProperty(queuePlaylist, "Shuffle", false);
-            SetProperty(queuePlaylist, "SongRepeat", repeatMode switch
-            {
-                "one" => 1,
-                "all" => 2,
-                _ => 0,
-            });
-            queueTracks = queuePlaylist.Tracks;
-            queueTrack = queueTracks.Item(targetIndex + 1);
-            queuePlaylist.PlayFirstTrack();
-            if (targetIndex > 0) queueTrack.Play();
-            SetProperty(queuePlaylist, "Shuffle", shuffleEnabled);
-            activated = true;
-            int queuePlaylistId = ReadInt(queuePlaylist, "PlaylistID");
-            managedQueue = new ManagedQueue(queuePlaylistId, kind, filter);
-            CleanupManagedQueues(appObject, queuePlaylistId);
-        }
-        finally
-        {
-            if (!activated && queuePlaylist is not null)
-            {
-                try { queuePlaylist.Delete(); }
-                catch { }
-            }
-            ReleaseCom(queueTrack);
-            ReleaseCom(queueTracks);
-            ReleaseCom(queuePlaylist);
-        }
-    }
-
-    private bool TryPlayWithinActiveQueue(object appObject, string trackId, string kind,
-        string filter)
-    {
-        ManagedQueue? active = managedQueue;
-        if (active is null
-            || !string.Equals(active.Kind, kind, StringComparison.Ordinal)
-            || !string.Equals(active.Filter, filter, StringComparison.OrdinalIgnoreCase)
-            || !ItunesTrackId.TryDecode(trackId, out ItunesTrackLocator locator)
-            || locator.DatabaseId == 0)
-        {
-            return false;
-        }
-        dynamic app = appObject;
-        dynamic? current = null;
-        dynamic? tracks = null;
-        dynamic? target = null;
-        try
-        {
-            current = app.CurrentPlaylist;
-            if (current is null
-                || ReadInt((object)current, "PlaylistID") != active.PlaylistId
-                || !ReadString((object)current, "Name").StartsWith(
-                    ManagedQueuePrefix, StringComparison.Ordinal))
-            {
-                return false;
-            }
-            tracks = current.Tracks;
-            target = FindTrackByDatabaseId(tracks, locator.DatabaseId);
-            if (target is null) return false;
-            target.Play();
-            return true;
-        }
-        catch
-        {
-            return false;
-        }
-        finally
-        {
-            ReleaseCom(target);
-            ReleaseCom(tracks);
-            ReleaseCom(current);
-        }
     }
 
     private List<QueueTrack> SelectCollectionTracks(object appObject, string kind, string filter,
@@ -507,19 +374,7 @@ internal sealed class ItunesController : IMediaController
         }
     }
 
-    private static dynamic? FindTrackByDatabaseId(dynamic tracks, int databaseId)
-    {
-        if (tracks is null || databaseId == 0) return null;
-        foreach (object trackObject in tracks)
-        {
-            dynamic track = trackObject;
-            if (ReadInt(track, "TrackDatabaseID") == databaseId) return track;
-            ReleaseCom(trackObject);
-        }
-        return null;
-    }
-
-    private static void CleanupManagedQueues(object appObject, int keepPlaylistId = 0)
+    private void CleanupManagedQueues(object appObject, int keepPlaylistId = 0)
     {
         dynamic app = appObject;
         dynamic? source = null;
@@ -539,7 +394,7 @@ internal sealed class ItunesController : IMediaController
                     if (playlistObject is null
                         || ReadInt(playlistObject, "PlaylistID") == keepPlaylistId
                         || !ReadString(playlistObject, "Name").StartsWith(
-                            ManagedQueuePrefix, StringComparison.Ordinal))
+                            managedQueuePrefix, StringComparison.Ordinal))
                     {
                         continue;
                     }
@@ -565,15 +420,19 @@ internal sealed class ItunesController : IMediaController
         {
             case "playPause": app.PlayPause(); break;
             case "next": app.NextTrack(); break;
-            case "previous": app.PreviousTrack(); break;
+            case "previous":
+                if (!TryManagedPrevious((object)app, cancellationToken)) app.PreviousTrack();
+                break;
             case "shuffle":
                 if (command.Value is null) throw new ArgumentException("Shuffle requires a value");
-                SetCurrentPlaylistProperty((object)app, "Shuffle", command.Value.Value >= 0.5);
+                if (!TryChangeManagedModes((object)app, command.Value.Value >= 0.5, null, cancellationToken))
+                    SetCurrentPlaylistProperty((object)app, "Shuffle", command.Value.Value >= 0.5);
                 break;
             case "repeat":
                 if (command.Value is null) throw new ArgumentException("Repeat requires a value");
-                SetCurrentPlaylistProperty((object)app, "SongRepeat",
-                    Math.Clamp((int)Math.Round(command.Value.Value), 0, 2));
+                int repeat = Math.Clamp((int)Math.Round(command.Value.Value), 0, 2);
+                if (!TryChangeManagedModes((object)app, null, repeat, cancellationToken))
+                    SetCurrentPlaylistProperty((object)app, "SongRepeat", repeat);
                 break;
             case "volume":
                 if (command.Value is null) throw new ArgumentException("Volume requires a value");
@@ -1043,7 +902,7 @@ internal sealed class ItunesController : IMediaController
                     object? playlistObject = playlist;
                     if (playlistObject is null || ReadInt(playlistObject, "Kind") != 2) continue;
                     string title = ReadString(playlistObject, "Name").Trim();
-                    if (title.StartsWith(ManagedQueuePrefix, StringComparison.Ordinal)) continue;
+                    if (title.StartsWith(managedQueuePrefix, StringComparison.Ordinal)) continue;
                     if (title.Length == 0 || !title.Contains(query.Trim(),
                             StringComparison.OrdinalIgnoreCase)) continue;
                     int sourceId = ReadInt(playlistObject, "SourceID");
@@ -1482,10 +1341,16 @@ internal sealed class ItunesController : IMediaController
             playlist = track.Playlist;
             if (playlist is null
                 || !ReadString(playlist, "Name").StartsWith(
-                    ManagedQueuePrefix, StringComparison.Ordinal))
+                    managedQueuePrefix, StringComparison.Ordinal))
             {
                 return RegisterTrack(track);
             }
+
+            managedQueue ??= LoadManagedQueue();
+            if (managedQueue is { } active && ReadInt((object)playlist!, "PlaylistID") == active.PlaylistId
+                && ReadString((object)playlist!, "Name") == active.Name
+                && active.TrackIndices.TryGetValue(ReadInt((object)track, "TrackID"), out int index))
+                return active.Tracks[index].Id;
 
             dynamic app = appObject;
             int high = ReadParameterizedInt(appObject, "ITObjectPersistentIDHigh", track);

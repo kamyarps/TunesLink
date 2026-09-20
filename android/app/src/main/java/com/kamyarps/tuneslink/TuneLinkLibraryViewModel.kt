@@ -76,6 +76,35 @@ internal fun TunesLinkViewModel.openLibraryKind(kind: LibraryBrowseKind) {
     }
 }
 
+internal fun TunesLinkViewModel.openPhoneLibraryCollection(
+    collection: LibraryCollectionUiState,
+    scrollIndex: Int,
+    scrollOffset: Int,
+) {
+    val browse = mutableState.value.browse
+    val kind = browse.kind ?: return
+    if (kind != LibraryBrowseKind.Artists && kind != LibraryBrowseKind.Genres) {
+        openLibraryCollection(collection)
+        return
+    }
+    browseCollectionsRequest.cancel()
+    browseTracksRequest.cancel()
+    browseCollectionsGeneration++
+    browseTracksGeneration++
+    mutableState.update {
+        it.copy(browse = browse.copy(collectionScrollIndex = scrollIndex,
+            collectionScrollOffset = scrollOffset).openAlbums(collection))
+    }
+    retryBrowse(LibraryBrowseTarget.Collections)
+}
+
+internal fun LibraryBrowseUiState.openAlbums(collection: LibraryCollectionUiState) = LibraryBrowseUiState(
+    kind = LibraryBrowseKind.Albums,
+    albumParent = SelectedLibraryCollection(requireNotNull(kind), collection.id, collection.title, collection.subtitle),
+    parentBrowse = copy(collectionsCursor = collectionsCursor.copy(
+        isLoading = false, isLoadingMore = false, isLoadingPrevious = false)),
+)
+
 internal fun TunesLinkViewModel.openLibraryCollection(collection: LibraryCollectionUiState) {
     val kind = mutableState.value.browse.kind ?: return
     if (kind == LibraryBrowseKind.Songs) return
@@ -113,7 +142,7 @@ internal fun TunesLinkViewModel.navigateUpLibrary(): Boolean {
     if (browse.selectedCollection == null) {
         browseCollectionsRequest.cancel()
         browseCollectionsGeneration++
-        mutableState.update { it.copy(browse = LibraryBrowseUiState()) }
+        mutableState.update { it.copy(browse = browse.parentBrowse ?: LibraryBrowseUiState()) }
         return true
     }
     mutableState.update {
@@ -174,8 +203,9 @@ private fun TunesLinkViewModel.requestBrowsePage(
     mutableState.update { it.copy(browse = it.browse.withCursor(target, cursor)) }
     if (target == LibraryBrowseTarget.Collections) {
         browseCollectionsRequest.cancel()
+        val parent = mutableState.value.browse.albumParent
         browseCollectionsRequest = repository.getCollections(
-            kind.wireValue, "", offset, limit,
+            parent?.kind?.wireValue ?: kind.wireValue, parent?.id.orEmpty(), "", offset, limit,
             browseCollectionsResult(browseCollectionsGeneration, replace = false, requestedOffset = offset),
         )
         return

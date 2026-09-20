@@ -896,6 +896,7 @@ internal class TunesLinkViewModel(
     ): String {
         val normalized = diagnostic.lowercase()
         val messageRes = when {
+            "update tuneslink bridge" in normalized -> R.string.error_bridge_update_required
             "already being paired" in normalized -> R.string.error_operation_in_progress
             "two paired phones" in normalized || "device limit" in normalized ->
                 R.string.error_device_limit

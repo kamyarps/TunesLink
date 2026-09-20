@@ -619,10 +619,18 @@ class BridgeClient extends BridgeClientSupport {
     Cancellation getCollections(SecureStore.SavedBridge bridge, String kind, String query,
                                 int offset, int limit,
                                 Result<LibraryCollectionPage> result) {
+        return getCollections(bridge, kind, "", query, offset, limit, result);
+    }
+
+    Cancellation getCollections(SecureStore.SavedBridge bridge, String kind, String parentId,
+                                String query, int offset, int limit,
+                                Result<LibraryCollectionPage> result) {
         ConnectionCancellation cancellation = new ConnectionCancellation();
         Future<?> future = executor.submit(() -> {
             try {
-                String path = "/api/collections?kind=" + urlEncode(kind == null ? "" : kind)
+                String path = (parentId.isEmpty() ? "/api/collections" : "/api/collection-albums")
+                        + "?kind=" + urlEncode(kind == null ? "" : kind)
+                        + "&id=" + urlEncode(parentId)
                         + "&query=" + urlEncode(query == null ? "" : query)
                         + "&offset=" + Math.max(0, offset)
                         + "&limit=" + clamp(limit, 1, 60);
@@ -631,6 +639,9 @@ class BridgeClient extends BridgeClientSupport {
                 if (response.status == 401) {
                     deliverFailure(result, "This phone is no longer paired", true, cancellation);
                     return;
+                }
+                if (response.status == 404 && !parentId.isEmpty()) {
+                    throw new IOException("Update TunesLink Bridge to browse collection albums");
                 }
                 if (response.status != 200) {
                     JSONObject body = parseObject(response.body);

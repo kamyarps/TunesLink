@@ -71,8 +71,10 @@ public final class BridgeClientTest {
     public void endpointTimeoutsCoverBridgeOperationBudgets() {
         assertEquals(130_000, BridgeClient.readTimeoutFor("/api/library?offset=0"));
         assertEquals(130_000, BridgeClient.readTimeoutFor("/api/collections?kind=artists"));
+        assertEquals(130_000, BridgeClient.readTimeoutFor("/api/collection-albums?kind=genres&id=genre"));
         assertEquals(14_000, BridgeClient.readTimeoutFor("/api/artwork?id=track"));
         assertEquals(45_000, BridgeClient.readTimeoutFor("/api/play"));
+        assertEquals(45_000, BridgeClient.readTimeoutFor("/api/command"));
         assertEquals(10_000, BridgeClient.readTimeoutFor("/api/state"));
     }
 

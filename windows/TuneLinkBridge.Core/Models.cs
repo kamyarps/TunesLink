@@ -64,6 +64,9 @@ internal interface IMediaController : IDisposable
         CancellationToken cancellationToken = default);
     Task<LibraryCollectionPage> GetCollectionsAsync(string kind, string query, int offset,
         int limit, CancellationToken cancellationToken = default);
+    Task<LibraryCollectionPage> GetCollectionAlbumsAsync(string kind, string id, string query,
+        int offset, int limit, CancellationToken cancellationToken = default) =>
+        CollectionAlbums.ReadAsync(this, kind, id, query, offset, limit, cancellationToken);
     Task<LibraryPage> GetCollectionTracksAsync(string kind, string id, string query, int offset,
         int limit, CancellationToken cancellationToken = default);
     Task PlayTrackAsync(PlaybackSelection selection,

@@ -23,6 +23,7 @@ internal static partial class BridgeSelfTest
             await TestSafetyRegressionsAsync(directory);
             Console.WriteLine("self-test:release-regressions");
             await TestReleaseRegressionsAsync(directory);
+            TestIssue4Regressions();
             Console.WriteLine("self-test:worker-isolation");
             await TestWorkerIsolationAsync();
             await TestWorkerFailureCategoriesAsync();
@@ -97,6 +98,8 @@ internal static partial class BridgeSelfTest
 
             HttpResponseMessage denied = await client.GetAsync("/api/state");
             Ensure(denied.StatusCode == HttpStatusCode.Unauthorized, "unauthorized request");
+            Ensure((await client.GetAsync("/api/collection-albums?kind=artists&id=missing")).StatusCode
+                == HttpStatusCode.Unauthorized, "scoped albums require authentication");
 
             HttpResponseMessage invalidPair = await PostJsonAsync(client, "/api/pair",
                 new { deviceName = "Missing code" });
@@ -200,6 +203,18 @@ internal static partial class BridgeSelfTest
             string artistId = artists.RootElement.GetProperty("items")[0]
                 .GetProperty("id").GetString()!;
             artists.Dispose();
+            using (JsonDocument scopedAlbums = JsonDocument.Parse(await client.GetByteArrayAsync(
+                "/api/collection-albums?kind=artists&id=" + Uri.EscapeDataString(artistId))))
+            {
+                Ensure(scopedAlbums.RootElement.GetProperty("total").GetInt32() == 1,
+                    "artist-scoped album endpoint");
+            }
+            Ensure((await client.GetAsync("/api/collection-albums?kind=albums&id="
+                + Uri.EscapeDataString(artistId))).StatusCode == HttpStatusCode.BadRequest,
+                "scoped albums reject unsupported parents");
+            Ensure((await client.GetAsync("/api/collection-albums?kind=genres&id="
+                + Uri.EscapeDataString(artistId))).StatusCode == HttpStatusCode.BadRequest,
+                "scoped albums reject mismatched collection IDs");
             JsonDocument artistTracks = JsonDocument.Parse(await client.GetByteArrayAsync(
                 "/api/library?collectionKind=artists&collectionId="
                 + Uri.EscapeDataString(artistId) + "&offset=0&limit=40"));
@@ -219,6 +234,12 @@ internal static partial class BridgeSelfTest
             string genreId = genres.RootElement.GetProperty("items")[0]
                 .GetProperty("id").GetString()!;
             genres.Dispose();
+            using (JsonDocument scopedAlbums = JsonDocument.Parse(await client.GetByteArrayAsync(
+                "/api/collection-albums?kind=genres&id=" + Uri.EscapeDataString(genreId))))
+            {
+                Ensure(scopedAlbums.RootElement.GetProperty("total").GetInt32() == 1,
+                    "genre-scoped album endpoint");
+            }
             JsonDocument genreTracks = JsonDocument.Parse(await client.GetByteArrayAsync(
                 "/api/library?collectionKind=genres&collectionId="
                 + Uri.EscapeDataString(genreId) + "&offset=0&limit=40"));
