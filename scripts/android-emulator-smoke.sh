@@ -7,6 +7,7 @@ workspace="${GITHUB_WORKSPACE:-$PWD}"
 apk="${workspace}/android/app/build/outputs/apk/debug/app-debug.apk"
 reports="${workspace}/android/app/build/reports/device-smoke"
 ui_node_center_script="${workspace}/scripts/android-ui-node-center.py"
+ui_blocking_script="${workspace}/scripts/android-ui-blocking-foreground.py"
 ui_contract_script="${workspace}/scripts/android-ui-contract.py"
 
 mkdir -p "$reports"
@@ -87,10 +88,21 @@ capture() {
     if [[ -n "$expected_rotation" ]]; then
       set_rotation "$expected_rotation"
     fi
-    if grep -Fq "System UI isn't responding" "$xml" &&
-        center="$(python3 "$ui_node_center_script" "$xml" text "Wait")"; then
-      adb shell input tap $center
-      sleep 2
+    kind="$(python3 "$ui_blocking_script" "$xml" "$package")"
+    if [[ "$kind" == "anr" ]]; then
+      if center="$(python3 "$ui_node_center_script" "$xml" text "Wait")"; then
+        adb shell input tap $center
+        sleep 2
+        continue
+      fi
+    fi
+    if [[ "$kind" == "gboard-setup" ]]; then
+      if center="$(python3 "$ui_node_center_script" "$xml" desc "Navigate up")"; then
+        adb shell input tap $center
+      else
+        adb shell input keyevent KEYCODE_BACK
+      fi
+      sleep 1
       continue
     fi
     sleep 1
@@ -110,6 +122,8 @@ launch() {
 }
 
 adb wait-for-device
+source "$workspace/scripts/android-emulator-ime.sh"
+android_emulator_suppress_gboard_first_run adb
 adb install -r "$apk" >/dev/null
 # This smoke case verifies a fresh install. `adb install -r` intentionally keeps
 # app data, so clear it explicitly to avoid a previously paired emulator skipping

@@ -18,6 +18,7 @@ bridge_config="${RUNNER_TEMP:-/tmp}/TunesLink-demo-bridge-$$"
 bridge_log="${reports}/bridge.log"
 ui_xml="${reports}/window.xml"
 ui_node_center_script="${workspace}/scripts/android-ui-node-center.py"
+ui_blocking_script="${workspace}/scripts/android-ui-blocking-foreground.py"
 dotnet_command="${DOTNET_COMMAND:-dotnet}"
 adb_command="${ADB_COMMAND:-adb}"
 bridge_port="${TunesLink_BRIDGE_PORT:-45832}"
@@ -56,7 +57,7 @@ for _ in $(seq 1 60); do
 done
 grep -q "^ready:" "$bridge_log"
 
-dump_ui() {
+pull_ui_hierarchy() {
   local attempt
   local remote_ui_xml="/sdcard/tunelink-integration-window.xml"
   for attempt in $(seq 1 6); do
@@ -70,6 +71,61 @@ dump_ui() {
   done
   printf 'Unable to capture the Android UI hierarchy after %s attempts.\n' "$attempt" >&2
   return 1
+}
+
+blocking_foreground_kind() {
+  python3 "$ui_blocking_script" "$ui_xml" "$package"
+}
+
+dismiss_blocking_foreground() {
+  local kind
+  local center=""
+  kind="$(blocking_foreground_kind)"
+  case "$kind" in
+    anr)
+      printf 'Dismissing System UI ANR dialog.\n' >&2
+      if center="$(node_center text "Wait")"; then
+        "$adb_command" shell input tap $center
+      else
+        "$adb_command" shell input keyevent KEYCODE_BACK
+      fi
+      sleep 2
+      return 0
+      ;;
+    gboard-setup)
+      printf 'Dismissing Gboard first-run UI covering TunesLink.\n' >&2
+      if center="$(node_center desc "Navigate up")"; then
+        "$adb_command" shell input tap $center
+      else
+        "$adb_command" shell input keyevent KEYCODE_BACK
+      fi
+      sleep 1
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+dump_ui() {
+  local attempt
+  pull_ui_hierarchy
+  for attempt in $(seq 1 8); do
+    if ! dismiss_blocking_foreground; then
+      return
+    fi
+    pull_ui_hierarchy
+  done
+  if [[ "$(blocking_foreground_kind)" == "gboard-setup" ]]; then
+    printf 'Force-stopping Gboard first-run activity.\n' >&2
+    "$adb_command" shell am force-stop com.google.android.inputmethod.latin >/dev/null 2>&1 || true
+    sleep 1
+    pull_ui_hierarchy
+  fi
+}
+
+suppress_gboard_first_run() {
+  source "$workspace/scripts/android-emulator-ime.sh"
+  android_emulator_suppress_gboard_first_run "$adb_command"
 }
 
 set_rotation() {
@@ -538,6 +594,7 @@ tap_until_log() {
 }
 
 "$adb_command" wait-for-device
+suppress_gboard_first_run
 "$adb_command" install -r "$apk" >/dev/null
 "$adb_command" shell pm clear "$package" >/dev/null
 "$adb_command" logcat -b crash -c >/dev/null 2>&1 || true

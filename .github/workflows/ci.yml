@@ -142,6 +142,9 @@ jobs:
           heap-size: 512M
           # The smoke script exercises both enabled and disabled animation policies.
           disable-animations: false
+          # Hardware keyboard keeps Gboard from covering the app under test on
+          # API 31 google_apis images during the first IME initialization.
+          enable-hw-keyboard: true
           emulator-options: >-
             -no-window -gpu swiftshader -noaudio -no-boot-anim
             -camera-back none -camera-front none -no-snapshot-save
