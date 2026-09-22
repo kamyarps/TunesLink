@@ -318,6 +318,34 @@ class TunesLinkPresentationTest {
     }
 
     @Test
+    fun selectingCurrentTrackWaitsForPlayRequestBeforeAcceptingStateFrame() {
+        val mutation = PendingMutation(
+            operationId = 9,
+            action = PlaybackAction.PlayTrack,
+            affectedFields = PlaybackAction.PlayTrack.playerFields(),
+            expectedTrackId = "same-track",
+            previousTrackId = "same-track",
+            startedAtMillis = 0,
+        )
+        val oldFrame = BridgeClient.PlayerState(
+            true, true, "Song", "Artist", "Album", 200.0, 60.0, 50, "art",
+            "same-track", false, "off",
+        )
+        val optimistic = PlayerUiState(
+            title = "Song",
+            position = 0.0,
+            trackId = "same-track",
+            pendingMutations = mapOf(PlaybackAction.PlayTrack to mutation),
+        )
+
+        assertFalse(mutation.matches(oldFrame))
+        val merged = mergePlaybackState(optimistic, oldFrame)
+        assertEquals(0.0, merged.position, 0.0)
+        assertTrue(merged.pending(PlaybackAction.PlayTrack) != null)
+        assertTrue(mutation.copy(requestSucceeded = true).matches(oldFrame))
+    }
+
+    @Test
     fun skipConfirmationAcceptsQueueEndAndTrackRestart() {
         fun state(trackId: String, position: Double) = BridgeClient.PlayerState(
             true, true, "Song", "Artist", "Album", 200.0, position, 50, "art",

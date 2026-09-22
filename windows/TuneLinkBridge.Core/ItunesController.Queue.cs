@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 
 namespace TunesLinkBridge;
@@ -22,10 +23,20 @@ internal sealed partial class ItunesController
     {
         if (!ItunesCollectionId.TryDecodeText(collectionId, kind, out string filter))
             throw new MediaNotFoundException("That collection is no longer available");
-        QueueTrack[] tracks = [.. LibraryGrouping.InCollectionOrder(
-            SelectCollectionTracks(appObject, kind, filter, cancellationToken),
-            item => item.Album, item => item.AlbumArtist,
-            item => item.DiscNumber, item => item.TrackNumber, item => item.OriginalIndex)];
+        long started = Stopwatch.GetTimestamp();
+        QueueTrack[] tracks;
+        try
+        {
+            tracks = [.. LibraryGrouping.InCollectionOrder(
+                SelectCollectionTracks(appObject, kind, filter, cancellationToken),
+                item => item.Album, item => item.AlbumArtist,
+                item => item.DiscNumber, item => item.TrackNumber, item => item.OriginalIndex)];
+        }
+        finally
+        {
+            BridgeDiagnostics.RecordDuration("play.collection.select",
+                (long)Stopwatch.GetElapsedTime(started).TotalMilliseconds);
+        }
         PlayManagedSelection(appObject, tracks, trackId, kind, filter, cancellationToken);
     }
 
@@ -74,6 +85,7 @@ internal sealed partial class ItunesController
         dynamic app = appObject;
         dynamic? playlist = null;
         bool activated = false;
+        long started = Stopwatch.GetTimestamp();
         string name = managedQueuePrefix + Guid.NewGuid().ToString("N")[..8];
         int[] order = QueueOrder(tracks.Length, selected, shuffle, repeat);
         Dictionary<int, int> indices = [];
@@ -123,6 +135,8 @@ internal sealed partial class ItunesController
         }
         finally
         {
+            BridgeDiagnostics.RecordDuration("play.queue.activate",
+                (long)Stopwatch.GetElapsedTime(started).TotalMilliseconds);
             if (!activated && playlist is not null)
             {
                 try { playlist.Delete(); } catch { }

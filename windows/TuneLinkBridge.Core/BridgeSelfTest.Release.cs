@@ -10,6 +10,7 @@ internal static partial class BridgeSelfTest
     private static async Task TestReleaseRegressionsAsync(string root)
     {
         TestAbsoluteCacheExpiry(Path.Combine(root, "cache-expiry"));
+        TestAlbumPlaybackSearch(Path.Combine(root, "album-search"));
         using ReleaseProbeMedia media = new();
         using PlaybackStateHub hub = new(media);
         using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
@@ -109,6 +110,34 @@ internal static partial class BridgeSelfTest
             && validate.Invoke(controller, [(object)app, CancellationToken.None]) is null,
             "recent validation cannot extend original snapshot expiry");
 
+        // A separate browsing worker can replace the file while this playback worker lives.
+        // The next cache miss must see that replacement without extending the old index.
+        new LibraryIndexStore(directory).Save(new LibraryIndexData(
+            [new LibraryTrack("track-002", "Fresh title", "Artist", "Album", 180, 1, 1, "", "Artist")],
+            ["Rock"], [], [], [], new string('b', 64), signature, clock.GetUtcNow()));
+        object? reloaded = validate.Invoke(controller, [(object)app, CancellationToken.None]);
+        LibraryTrack[]? reloadedTracks = (LibraryTrack[]?)reloaded?.GetType()
+            .GetProperty("Tracks")?.GetValue(reloaded);
+        Ensure(reloadedTracks is [{ Id: "track-002" }],
+            "playback worker reloads an index written by the browsing worker");
+
+        clock.Advance(TimeSpan.FromMinutes(1));
+        new LibraryIndexStore(directory).Save(new LibraryIndexData(
+            [new LibraryTrack("track-003", "Another title", "Artist", "Album", 180, 1, 1, "", "Artist")],
+            ["Rock"], [], [], [], new string('c', 64), signature, clock.GetUtcNow()));
+        Ensure(current.Invoke(controller, null) is null,
+            "a newer browsing index invalidates the playback worker's still-fresh copy");
+        object? replaced = validate.Invoke(controller, [(object)app, CancellationToken.None]);
+        LibraryTrack[]? replacedTracks = (LibraryTrack[]?)replaced?.GetType()
+            .GetProperty("Tracks")?.GetValue(replaced);
+        Ensure(replacedTracks is [{ Id: "track-003" }],
+            "playback worker adopts a newer browsing index before the old copy expires");
+        File.WriteAllText(Path.Combine(directory, "Cache", "library-index-v1.json"), "invalid");
+        Ensure(current.Invoke(controller, null) is null
+            && validate.Invoke(controller, [(object)app, CancellationToken.None]) is null
+            && validate.Invoke(controller, [(object)app, CancellationToken.None]) is null,
+            "an invalid replacement cannot revive the previous in-memory snapshot");
+
         MethodInfo saveArtwork = type.GetMethod("CacheArtwork", BindingFlags.Instance | BindingFlags.NonPublic)!;
         MethodInfo readArtwork = type.GetMethod("FreshArtwork", BindingFlags.Instance | BindingFlags.NonPublic)!;
         ArtworkData oldArtwork = new("track-001", [1, 2, 3], "image/jpeg");
@@ -123,6 +152,50 @@ internal static partial class BridgeSelfTest
         saveArtwork.Invoke(controller, ["track-001:256", changedArtwork]);
         Ensure(ReferenceEquals(readArtwork.Invoke(controller, ["track-001:256"]), changedArtwork),
             "replacement artwork is served after expiry");
+    }
+
+    private static void TestAlbumPlaybackSearch(string directory)
+    {
+        AlbumSearchProbe playlist = new();
+        dynamic app = new ExpandoObject();
+        app.LibraryPlaylist = playlist;
+        using ItunesController controller = new(directory);
+        MethodInfo select = typeof(ItunesController).GetMethod("SelectCollectionTracks",
+            BindingFlags.Instance | BindingFlags.NonPublic)!;
+        string albumKey = LibraryGrouping.AlbumKey("Artist", "Shared Album");
+        var selected = (System.Collections.IList)select.Invoke(controller,
+            [(object)app, "albums", albumKey, CancellationToken.None])!;
+        Ensure(playlist.SearchCount == 1 && playlist.LastSearchKind == ItunesController.SearchAlbums
+            && selected.Count == 1, "album playback narrows candidates then filters exact album artist");
+    }
+
+    public sealed class AlbumSearchProbe
+    {
+        public int SearchCount { get; private set; }
+        public int LastSearchKind { get; private set; }
+        public List<AlbumSearchTrack> Tracks { get; } =
+        [
+            new("Artist", "Shared Album", 1),
+            new("Other Artist", "Shared Album", 2),
+            new("Artist", "Another Album", 3)
+        ];
+
+        public IEnumerable<AlbumSearchTrack> Search(string term, int kind)
+        {
+            SearchCount++;
+            LastSearchKind = kind;
+            return Tracks.Where(track => track.Album.Contains(term,
+                StringComparison.OrdinalIgnoreCase));
+        }
+    }
+
+    public sealed record AlbumSearchTrack(string Artist, string Album, int TrackID,
+        int SourceID = 1, int PlaylistID = 2, int DiscNumber = 1,
+        bool Compilation = false)
+    {
+        public string AlbumArtist => Artist;
+        public int TrackDatabaseID => TrackID;
+        public int TrackNumber => TrackID;
     }
 
     private sealed class ReleaseProbeMedia : IMediaController

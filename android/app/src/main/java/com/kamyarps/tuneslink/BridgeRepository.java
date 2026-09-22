@@ -649,12 +649,16 @@ final class BridgeRepository implements AutoCloseable {
                 + "\u001f" + Math.max(0, offset) + "\u001f" + Math.max(1, limit);
     }
 
-    void playTrack(String trackId, String collectionKind, String collectionId,
-                   BridgeClient.Result<Boolean> result) {
+    RequestHandle playTrack(String trackId, String collectionKind, String collectionId,
+                            BridgeClient.Result<Boolean> result) {
         BridgeSession.Request request = capture();
-        if (request != null) client.playTrack(request.bridge, trackId,
-                collectionKind, collectionId,
-                refreshAfterSuccess(request, result));
+        if (request == null) {
+            result.failure("Computer is not connected", false);
+            return RequestHandle.NONE;
+        }
+        BridgeClient.Cancellation cancellation = client.playTrack(request.bridge, trackId,
+                collectionKind, collectionId, refreshAfterSuccess(request, result));
+        return cancellation::cancel;
     }
 
     Bitmap cachedArtwork(String artworkId, int size) {

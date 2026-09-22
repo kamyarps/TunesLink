@@ -62,6 +62,8 @@ internal class TunesLinkViewModel(
         BridgeRepository.RequestHandle.NONE
     internal var browseTracksRequest: BridgeRepository.RequestHandle =
         BridgeRepository.RequestHandle.NONE
+    internal var playTrackRequest: BridgeRepository.RequestHandle =
+        BridgeRepository.RequestHandle.NONE
     private var restoreDestination = mutableState.value.navigation.destination
     private var pendingPermissionAction: PendingPermissionAction? = savedStateHandle
         .get<String>(KEY_PENDING_PERMISSION_ACTION)
@@ -719,6 +721,7 @@ internal class TunesLinkViewModel(
         libraryRequest.cancel()
         browseCollectionsRequest.cancel()
         browseTracksRequest.cancel()
+        playTrackRequest.cancel()
         mutationTimeoutJobs.values.forEach(Job::cancel)
         mutationTimeoutJobs.clear()
         connectedOnce = false
@@ -927,6 +930,7 @@ internal class TunesLinkViewModel(
         libraryRequest.cancel()
         browseCollectionsRequest.cancel()
         browseTracksRequest.cancel()
+        playTrackRequest.cancel()
         mutationTimeoutJobs.values.forEach(Job::cancel)
         mutationTimeoutJobs.clear()
         stateUpdatesActive = false

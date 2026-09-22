@@ -6,6 +6,7 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
+import android.util.Log;
 
 import org.json.JSONException;
 import org.json.JSONArray;
@@ -657,9 +658,11 @@ class BridgeClient extends BridgeClientSupport {
         return cancellation;
     }
 
-    void playTrack(SecureStore.SavedBridge bridge, String trackId, String collectionKind,
-                   String collectionId, Result<Boolean> result) {
-        executor.execute(() -> {
+    Cancellation playTrack(SecureStore.SavedBridge bridge, String trackId, String collectionKind,
+                           String collectionId, Result<Boolean> result) {
+        ConnectionCancellation cancellation = new ConnectionCancellation();
+        Future<?> task = executor.submit(() -> {
+            long started = SystemClock.elapsedRealtime();
             try {
                 JSONObject json = new JSONObject().put("trackId", trackId);
                 if (collectionKind != null && !collectionKind.isBlank()
@@ -670,19 +673,25 @@ class BridgeClient extends BridgeClientSupport {
                 BridgeHttpClient.Response response = request(bridge.host, bridge.port,
                         bridge.tlsFingerprint,
                         bridge.token, "POST", "/api/play",
-                        json.toString().getBytes(StandardCharsets.UTF_8));
+                        json.toString().getBytes(StandardCharsets.UTF_8), cancellation);
                 if (response.status == 401) {
-                    deliverFailure(result, "This phone is no longer paired", true);
+                    deliverFailure(result, "This phone is no longer paired", true, cancellation);
                 } else if (response.status == 200 || response.status == 204) {
-                    deliverSuccess(result, true);
+                    deliverSuccess(result, true, cancellation);
                 } else {
                     JSONObject body = parseObject(response.body);
                     throw new IOException(body.optString("error", "iTunes could not play that song"));
                 }
             } catch (Exception e) {
-                deliverFailure(result, friendly(e), false);
+                if (!cancellation.isCancelled())
+                    deliverFailure(result, friendly(e), false, cancellation);
+            } finally {
+                Log.i("TunesLinkTiming", "play.http_ms=" +
+                        (SystemClock.elapsedRealtime() - started));
             }
         });
+        cancellation.setTask(task);
+        return cancellation;
     }
 
     Cancellation getArtwork(SecureStore.SavedBridge bridge, String artworkId, int size,

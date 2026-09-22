@@ -219,10 +219,12 @@ internal static partial class BridgeSelfTest
         string diagnosticsDirectory = Path.Combine(rootDirectory, "diagnostics");
         BridgeDiagnostics.Record("self-test unsafe!", new InvalidOperationException(
             "sensitive message"), diagnosticsDirectory);
+        BridgeDiagnostics.RecordDuration("play.queue.activate", 123, diagnosticsDirectory);
         string diagnostics = File.ReadAllText(Path.Combine(diagnosticsDirectory,
             "diagnostics.log"));
         Ensure(diagnostics.Contains("self-testunsafe", StringComparison.Ordinal)
                && diagnostics.Contains(nameof(InvalidOperationException), StringComparison.Ordinal)
+               && diagnostics.Contains("play.queue.activate\t123", StringComparison.Ordinal)
                && !diagnostics.Contains("sensitive message", StringComparison.Ordinal),
             "diagnostics are useful and redact exception messages");
     }

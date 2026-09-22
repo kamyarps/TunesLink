@@ -72,6 +72,7 @@ internal sealed partial class ItunesController : IMediaController
     private LibrarySnapshot? librarySnapshot;
     private ManagedQueue? managedQueue;
     private readonly LibraryIndexStore libraryIndexStore;
+    private LibraryIndexFileStamp? libraryIndexStamp;
     private readonly TimeProvider timeProvider;
     private dynamic? itunes;
     private bool disposed;
@@ -87,7 +88,10 @@ internal sealed partial class ItunesController : IMediaController
         queuePersistence = persistence ?? AtomicFilePersistence.Instance;
         managedQueue = LoadManagedQueue();
         libraryIndexStore = new LibraryIndexStore(directory, persistence);
+        LibraryIndexFileStamp? stampBeforeLoad = libraryIndexStore.Stamp();
         librarySnapshot = LoadPersistedLibrarySnapshot(libraryIndexStore);
+        LibraryIndexFileStamp? stampAfterLoad = libraryIndexStore.Stamp();
+        libraryIndexStamp = stampBeforeLoad == stampAfterLoad ? stampAfterLoad : null;
         staThread = new Thread(RunSta)
         {
             IsBackground = true,
@@ -344,7 +348,14 @@ internal sealed partial class ItunesController : IMediaController
         try
         {
             library = app.LibraryPlaylist;
-            tracks = library.Tracks;
+            // The album search has the same exact-match filter below as browsing. It avoids
+            // walking the entire library when the index has not been built yet.
+            tracks = kind == "albums"
+                && CollectionAlbumName(filter) is string albumName
+                && albumName != LibraryGrouping.UnknownAlbum
+                    ? library.Search(albumName, SearchAlbums)
+                    : library.Tracks;
+            if (tracks is null) return selected;
             int originalIndex = 0;
             foreach (object trackObject in tracks)
             {
@@ -954,6 +965,7 @@ internal sealed partial class ItunesController : IMediaController
 
     private LibrarySnapshot? CurrentLibrarySnapshot() => librarySnapshot is { ValidatedAt: { } } snapshot
         && IsFresh(snapshot.CreatedAt, timeProvider.GetUtcNow(), LibrarySnapshotLifetime)
+        && libraryIndexStore.Stamp() == libraryIndexStamp
             ? snapshot
             : null;
 
@@ -977,6 +989,7 @@ internal sealed partial class ItunesController : IMediaController
                 snapshot.SourceSignature,
                 snapshot.CreatedAt);
             libraryIndexStore.Save(persisted);
+            libraryIndexStamp = libraryIndexStore.Stamp();
         }
         catch (Exception exception)
         {
@@ -990,8 +1003,17 @@ internal sealed partial class ItunesController : IMediaController
     {
         cancellationToken.ThrowIfCancellationRequested();
         LibrarySnapshot? snapshot = librarySnapshot;
-        if (snapshot is null) return null;
         DateTimeOffset now = timeProvider.GetUtcNow();
+        // Browsing runs in a separate worker and may replace the index while this worker's
+        // snapshot is still fresh. A file stamp check avoids repeatedly parsing an old index.
+        LibraryIndexFileStamp? currentStamp = libraryIndexStore.Stamp();
+        if (currentStamp != libraryIndexStamp)
+        {
+            snapshot = LoadPersistedLibrarySnapshot(libraryIndexStore);
+            librarySnapshot = snapshot;
+            libraryIndexStamp = currentStamp;
+        }
+        if (snapshot is null) return null;
         // Aggregate counts cannot detect tag-only edits. Never renew the original fetch time.
         if (!IsFresh(snapshot.CreatedAt, now, LibrarySnapshotLifetime))
         {

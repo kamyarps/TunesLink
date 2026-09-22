@@ -48,6 +48,7 @@ internal data class PendingMutation(
     val expectedRepeat: RepeatMode? = null,
     val expectedTrackId: String? = null,
     val previousTrackId: String? = null,
+    val requestSucceeded: Boolean = false,
     val startedAtMillis: Long,
     val timeoutMillis: Long = 2_000,
     val deadlineMillis: Long = 4_000,
@@ -63,7 +64,9 @@ internal data class PendingMutation(
         PlaybackAction.Next -> state.trackId != previousTrackId
         PlaybackAction.Previous ->
             state.trackId != previousTrackId || state.position <= 3.0
-        PlaybackAction.PlayTrack -> state.trackId == expectedTrackId
+        // The old SSE frame can already contain this ID when the listener selects the
+        // currently playing song. Wait for the play endpoint to accept the command first.
+        PlaybackAction.PlayTrack -> requestSucceeded && state.trackId == expectedTrackId
     }
 }
 

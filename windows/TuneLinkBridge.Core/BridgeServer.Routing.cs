@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using System.Net;
 using System.Text;
@@ -266,9 +267,19 @@ internal sealed partial class BridgeServer
                 }
                 using CancellationTokenSource operation =
                     OperationTimeout(BridgeProtocol.PlaybackTimeout, token);
-                await media.PlayTrackAsync(
-                    new PlaybackSelection(id, collectionKind, collectionId),
-                    operation.Token).ConfigureAwait(false);
+                long started = Stopwatch.GetTimestamp();
+                try
+                {
+                    await media.PlayTrackAsync(
+                        new PlaybackSelection(id, collectionKind, collectionId),
+                        operation.Token).ConfigureAwait(false);
+                }
+                finally
+                {
+                    BridgeDiagnostics.RecordDuration("play.request",
+                        (long)Stopwatch.GetElapsedTime(started).TotalMilliseconds,
+                        options.ConfigDirectory);
+                }
                 stateHub.Wake();
                 await WriteJsonAsync(stream, 200, new { ok = true }, token);
             }

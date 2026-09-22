@@ -186,6 +186,16 @@ Choose **Open diagnostics folder** from the bridge's tray menu, or inspect
 `%LOCALAPPDATA%\TunesLink Bridge\diagnostics.log`. The bounded diagnostic log excludes credentials,
 addresses, music metadata, and exception messages.
 
+### Selecting a song from an album is slow
+
+The same diagnostic log records playback durations in milliseconds: `play.request` is the bridge's
+total playback call, `play.collection.select` is collection lookup and ordering, and
+`play.queue.activate` is iTunes queue creation and activation. Android logs `play.http_ms` under the
+`TunesLinkTiming` tag for the phone's request. Compare several selections: a large collection or
+queue duration points to work inside iTunes, while a large phone duration with a small bridge
+duration points to connection setup or network delay. These timings contain no song names or
+addresses.
+
 ## Build from source
 
 TunesLink's build is designed for Windows and produces both applications in one run.

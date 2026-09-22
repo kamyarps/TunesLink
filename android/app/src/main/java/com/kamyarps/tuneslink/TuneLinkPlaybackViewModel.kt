@@ -69,7 +69,19 @@ internal fun TunesLinkViewModel.commandResult(
         override fun success(value: Boolean) {
             val player = mutableState.value.player
             if (player.pending(mutation.action)?.operationId != mutation.operationId) return
-            scheduleMutationReconciliation(mutation)
+            val accepted = if (mutation.action == PlaybackAction.PlayTrack) {
+                mutation.copy(requestSucceeded = true)
+            } else mutation
+            mutableState.update { state ->
+                val current = state.player.pending(mutation.action)
+                if (current?.operationId != mutation.operationId) state else state.copy(
+                    player = state.player.copy(
+                        pendingMutations = state.player.pendingMutations +
+                            (mutation.action to accepted),
+                    ),
+                )
+            }
+            scheduleMutationReconciliation(accepted)
         }
 
         override fun failure(message: String, unauthorized: Boolean) {

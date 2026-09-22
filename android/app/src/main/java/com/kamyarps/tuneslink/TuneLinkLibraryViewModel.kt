@@ -226,6 +226,7 @@ internal fun TunesLinkViewModel.playTrack(
     track: TrackUiState,
     collection: SelectedLibraryCollection? = null,
 ) {
+    playTrackRequest.cancel()
     val previous = mutableState.value.player
     val superseded = previous.pendingMutations.values.filter { pending ->
         pending.affectedFields.any(PlaybackAction.PlayTrack.playerFields()::contains)
@@ -259,7 +260,7 @@ internal fun TunesLinkViewModel.playTrack(
         )
     }
     loadArtwork(track.artworkId)
-    repository.playTrack(
+    playTrackRequest = repository.playTrack(
         track.id,
         collection?.kind?.wireValue.orEmpty(),
         collection?.id.orEmpty(),

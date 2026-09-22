@@ -13,6 +13,9 @@ internal sealed record LibraryIndexData(
     string SourceSignature,
     DateTimeOffset CreatedAt);
 
+internal readonly record struct LibraryIndexFileStamp(
+    long Length, long CreationUtcTicks, long LastWriteUtcTicks);
+
 internal sealed class LibraryIndexStore
 {
     // Version 4 moved the album artist onto each track so the wire model and the queue share it.
@@ -40,6 +43,20 @@ internal sealed class LibraryIndexStore
     {
         path = Path.Combine(configDirectory, "Cache", "library-index-v1.json");
         this.persistence = persistence ?? AtomicFilePersistence.Instance;
+    }
+
+    internal LibraryIndexFileStamp? Stamp()
+    {
+        try
+        {
+            FileInfo file = new(path);
+            if (!file.Exists) return null;
+            return new(file.Length, file.CreationTimeUtc.Ticks, file.LastWriteTimeUtc.Ticks);
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     internal LibraryIndexData? Load()
