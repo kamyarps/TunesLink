@@ -101,15 +101,16 @@ function Test-DotNetSdk {
         return $false
     }
     $installed = & $Executable --list-sdks 2>$null
-    if ($LASTEXITCODE -ne 0 -or
+    if ($LASTEXITCODE -ne 0 -or $null -eq $installed -or
         -not (Test-TunesLinkDotNetSdkList -SdkList $installed -RequiredVersion $requirements.DotNetSdk)) {
         return $false
     }
 
     Push-Location $root
     try {
-        $resolvedVersion = (& $Executable --version 2>$null | Select-Object -First 1).Trim()
-        return $LASTEXITCODE -eq 0 -and $resolvedVersion -eq $requirements.DotNetSdk
+        $versionOutput = @(& $Executable --version 2>$null)
+        if ($LASTEXITCODE -ne 0 -or $versionOutput.Count -eq 0) { return $false }
+        return $versionOutput[0].Trim() -eq $requirements.DotNetSdk
     }
     finally {
         Pop-Location
@@ -119,6 +120,7 @@ function Test-DotNetSdk {
 function Resolve-DotNet {
     $candidates = New-Object System.Collections.Generic.List[string]
     $diagnostics = New-Object System.Collections.Generic.List[string]
+    $candidates.Add((Join-Path $localTools ("dotnet-$($requirements.DotNetSdk)\dotnet.exe")))
     $candidates.Add((Join-Path $localTools "dotnet\dotnet.exe"))
     $command = Get-Command dotnet -ErrorAction SilentlyContinue
     if ($null -ne $command) { $candidates.Add($command.Source) }
@@ -135,7 +137,8 @@ function Resolve-DotNet {
     throw @"
 The exact .NET SDK $($requirements.DotNetSdk) required by global.json was not resolved.
 Install that SDK from https://dotnet.microsoft.com/download/dotnet/10.0 or place it at
-.tools\dotnet\dotnet.exe. A newer .NET 10 feature band is not accepted by this build.
+.tools\dotnet-$($requirements.DotNetSdk)\dotnet.exe (or .tools\dotnet\dotnet.exe).
+A newer .NET 10 feature band is not accepted by this build.
 Candidates checked:
 $($diagnostics -join "`n")
 "@

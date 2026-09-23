@@ -4,7 +4,13 @@ function Initialize-TunesLinkLocalToolchain {
     param([Parameter(Mandatory)] [string]$Root)
 
     $localTools = Join-Path $Root ".tools"
-    $localDotNet = Join-Path $localTools "dotnet\dotnet.exe"
+    $requiredSdk = (Get-TunesLinkBuildRequirements -Root $Root).DotNetSdk
+    $versionedDotNet = Join-Path $localTools ("dotnet-$requiredSdk\dotnet.exe")
+    $localDotNet = if (Test-Path -LiteralPath $versionedDotNet) {
+        $versionedDotNet
+    } else {
+        Join-Path $localTools "dotnet\dotnet.exe"
+    }
     $localJava = Join-Path $localTools "jdk"
     $localAndroid = Join-Path $localTools "android-sdk"
     if (Test-Path -LiteralPath $localDotNet) {
