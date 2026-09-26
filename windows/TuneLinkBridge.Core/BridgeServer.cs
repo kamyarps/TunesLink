@@ -29,7 +29,9 @@ internal sealed partial class BridgeServer : IDisposable
     private sealed record PlayRequest(
         string? TrackId,
         string? CollectionKind = null,
-        string? CollectionId = null);
+        string? CollectionId = null,
+        long? Sequence = null);
+    private sealed record CancelPlayRequest(long Sequence);
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -51,6 +53,7 @@ internal sealed partial class BridgeServer : IDisposable
     private readonly Dictionary<string, int> activeConnectionsByAddress = new();
     private readonly object connectionsGate = new();
     private readonly PairingRateLimiter pairingRateLimiter;
+    private readonly PlaybackRequests playbackRequests;
     private TcpListener? tcp;
     private UdpClient? udp;
     private Task? tcpLoop;
@@ -77,6 +80,7 @@ internal sealed partial class BridgeServer : IDisposable
         this.options = options;
         this.addressSelector = addressSelector;
         pairingRateLimiter = new PairingRateLimiter(timeProvider);
+        playbackRequests = new PlaybackRequests(security.ValidateToken);
     }
 
     public void Start()

@@ -135,7 +135,9 @@ are released together and currently use wire protocol `TunesLink-3`.
 - **Collection playback:** when Android starts an album, artist, genre, or playlist, the bridge creates one
   temporary `TunesLink Playback Queue` playlist so iTunes keeps Next, Previous, shuffle, repeat,
   and automatic track changes inside that collection. The managed playlist can appear in iTunes
-  while it is active and is removed when playback switches elsewhere.
+  while it is active. TunesLink removes older managed playlists when it starts
+  another selection; switching playback directly in iTunes leaves cleanup until
+  the next TunesLink selection.
   The selected track starts the native queue. Earlier tracks remain available through Previous,
   shuffle, or repeat all; with shuffle and repeat off, playback stops at the collection's end.
 - **Windows data:** identity, paired-device hashes, settings, and the bounded metadata index live
@@ -240,7 +242,15 @@ release build, formatting verification, bridge self-tests, responsive WinUI layo
 requirements self-tests, and repository hygiene checks.
 
 CI adds Android emulator coverage on API 26, 31, and 36, rotation and delayed-pagination cases,
-worker-hang recovery, artifact-size budgets, and a full-history secret scan.
+pairing cooldown and playback-error flows, worker-hang recovery, artifact-size budgets, and a
+full-history secret scan. Release publishing requires the device suite for the verified release
+commit and smoke tests of the signed, optimized APK.
+
+API 37 permission flows remain a manual release check pending qualification of a working
+runner/image combination. On the Windows audit host, API 37.0/37.1 images crash in
+SurfaceFlinger before app launch with emulator 37.1.11 and 37.2.10. The integration script
+includes API 37 grant/revocation checks; add that platform to the device matrix after
+validating the environment.
 
 To run the optional integration test against a real iTunes library and current track:
 

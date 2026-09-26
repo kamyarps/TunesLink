@@ -53,6 +53,7 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
@@ -200,7 +201,11 @@ private fun PairingDialog(
                     keyboardActions = KeyboardActions(onDone = { submitPairing() }),
                     singleLine = true,
                     isError = state.pairing.codeError != null,
-                    supportingText = state.pairing.codeError?.let { error -> { Text(error, color = TunesLinkTheme.colors.danger) } },
+                    enabled = state.pairing.phase == PairingPhase.Editing,
+                    supportingText = if (state.pairing.retryAfterSeconds > 0) {
+                        { Text(pluralStringResource(R.plurals.pairing_cooldown,
+                            state.pairing.retryAfterSeconds, state.pairing.retryAfterSeconds)) }
+                    } else state.pairing.codeError?.let { error -> { Text(error, color = TunesLinkTheme.colors.danger) } },
                     colors = tunesLinkTextFieldColors(),
                     shape = RoundedCornerShape(16.dp),
                     modifier = Modifier.fillMaxWidth().focusRequester(requester),

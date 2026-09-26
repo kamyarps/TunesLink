@@ -164,7 +164,7 @@ internal static partial class BridgeSelfTest
             BindingFlags.Instance | BindingFlags.NonPublic)!;
         string albumKey = LibraryGrouping.AlbumKey("Artist", "Shared Album");
         var selected = (System.Collections.IList)select.Invoke(controller,
-            [(object)app, "albums", albumKey, CancellationToken.None])!;
+            [(object)app, "albums", ItunesCollectionId.EncodeText("albums", albumKey), CancellationToken.None])!;
         Ensure(playlist.SearchCount == 1 && playlist.LastSearchKind == ItunesController.SearchAlbums
             && selected.Count == 1, "album playback narrows candidates then filters exact album artist");
     }

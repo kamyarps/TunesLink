@@ -74,9 +74,11 @@ internal data class PairingUiState(
     val code: String = "",
     val codeError: String? = null,
     val phase: PairingPhase = PairingPhase.Editing,
+    val retryAfterSeconds: Int = 0,
 ) {
     val canSubmit: Boolean
-        get() = code.length == 6 && phase == PairingPhase.Editing
+        get() = code.length == 6 && code.all { it in '0'..'9' } &&
+            phase == PairingPhase.Editing && retryAfterSeconds == 0
 }
 
 internal fun TunesLinkUiState.afterTransientCancellation(): TunesLinkUiState = copy(

@@ -51,7 +51,8 @@ internal fun TunesLinkViewModel.sendCommand(action: PlaybackAction, value: Doubl
             error("This action uses a dedicated endpoint")
     }
     mutableState.update { it.copy(player = optimistic) }
-    scheduleMutationReconciliation(mutation)
+    // Commands share an ordered transport lane with play selections. Reconciliation starts
+    // after acceptance, so time spent behind a slow queue build is not reported as failure.
     repository.command(
         checkNotNull(action.wireCommand),
         value,

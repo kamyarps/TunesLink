@@ -1,5 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <lint>
+    <!-- Toolchain versions are pinned and upgraded deliberately. Keep availability notices
+         visible without making identical source builds fail when a new release appears. -->
+    <issue id="AndroidGradlePluginVersion" severity="informational" />
     <!-- These manifest attributes are intentionally ignored on older supported devices. -->
     <issue id="UnusedAttribute">
         <ignore path="app/src/main/AndroidManifest.xml" />

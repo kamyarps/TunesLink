@@ -58,8 +58,10 @@
   <data name="HeroPairTitle" xml:space="preserve"><value>Welcome to TunesLink.&#10;Let’s pair your phone.</value></data>
   <data name="HeroReadyDetail" xml:space="preserve"><value>Control iTunes on this PC wirelessly from your phone.</value></data>
   <data name="HeroReadyMultipleDetail" xml:space="preserve"><value>Control iTunes on this PC wirelessly from your phones.</value></data>
-  <data name="HeroReadyTitle" xml:space="preserve"><value>Your phone is connected.&#10;You’re ready to go.</value></data>
-  <data name="HeroReadyTitleMultiple" xml:space="preserve"><value>Your phones are connected.&#10;You’re ready to go.</value></data>
+  <data name="HeroUnavailableTitle" xml:space="preserve"><value>Bridge unavailable.</value></data>
+  <data name="HeroUnavailableDetail" xml:space="preserve"><value>Restart TunesLink Bridge to restore pairing and playback controls.</value></data>
+  <data name="HeroReadyTitle" xml:space="preserve"><value>Your phone is paired.</value></data>
+  <data name="HeroReadyTitleMultiple" xml:space="preserve"><value>Your phones are paired.</value></data>
   <data name="HidePairingCode" xml:space="preserve"><value>Hide pairing code</value></data>
   <data name="ItunesReady" xml:space="preserve"><value>iTunes ready</value></data>
   <data name="ItunesUnavailableDetail" xml:space="preserve"><value>Open iTunes on this PC to begin playback.</value></data>

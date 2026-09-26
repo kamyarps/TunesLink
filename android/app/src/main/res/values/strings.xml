@@ -2,6 +2,13 @@
 <resources xmlns:tools="http://schemas.android.com/tools"
     tools:keep="@drawable/tunelink_brand_app_icon">
     <string name="app_name">TunesLink</string>
+    <plurals name="pairing_cooldown">
+        <item quantity="one">Too many pairing attempts. Try again in %1$d second.</item>
+        <item quantity="other">Too many pairing attempts. Try again in %1$d seconds.</item>
+    </plurals>
+    <string name="pairing_rate_limited">Too many pairing attempts. Please wait before trying again.</string>
+    <string name="dismiss">Dismiss</string>
+    <string name="playback_connection_interrupted">The connection changed during playback control. Check the current song before trying again.</string>
     <string name="welcome_title">Your iTunes. Right here.</string>
     <string name="welcome_detail">Control the music on your Windows PC from this phone. Both devices stay on your local network.</string>
     <string name="find_computer">Find my computer</string>

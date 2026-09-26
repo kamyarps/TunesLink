@@ -417,14 +417,6 @@ private fun PlayerDetails(
                 modifier = Modifier.semantics { liveRegion = LiveRegionMode.Assertive },
             )
         }
-        if (player.commandError != null) {
-            Text(
-                player.commandError,
-                style = MaterialTheme.typography.bodyMedium,
-                color = TunesLinkTheme.colors.danger,
-                modifier = Modifier.semantics { liveRegion = LiveRegionMode.Assertive },
-            )
-        }
     }
 }
 

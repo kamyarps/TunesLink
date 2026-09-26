@@ -6,6 +6,7 @@ Optional scenarios:
 
 - `--large-library`: 720 songs, including a 120-track album and 601 albums/artists/genres. Scroll past the Android 480-item window and back to the beginning to verify forward and backward pagination. Expand **A Long Album** on a tablet to verify track paging inside the album detail.
 - `--library-fault-file <path>`: while this file exists, library requests fail while playback state stays available. Open an uncached album to verify the error and retry UI. Remove the file and retry to recover. This option is confined to the demo harness.
+- `--playback-fault-file <path>`: while this file exists, song selections and playback commands fail. Verify the shared error banner in Library, Search, Now Playing, and the tablet workspace, then dismiss it or remove the file and retry.
 - `--library-delay-ms <milliseconds>`: delay the first continuation request for songs/search to verify loading states and cancellation.
 - `--legacy-state`: disable the state stream to exercise polling fallback.
 
@@ -15,6 +16,16 @@ Automated release regressions run with the existing Android unit tests and Windo
 
 Issue #4 regressions additionally cover album pages within artists/genres, distinct album artists,
 authenticated scoped browsing, queue order with shuffle/repeat, and phone navigation history.
+
+Release-audit regressions cover reconnect retries, abandoned browse cursors, shrinking
+unversioned pages, long international collection names, pairing cooldowns, empty-search Back,
+and sequenced playback cancellation. The TLS tests deliberately overlap a slow selection with
+a newer one and send cancellation both before and after request arrival. The COM fixture also
+fails during queue activation and verifies that the user's global mute setting is never changed.
+
+The emulator integration suite checks cooldown expiry and command errors across phone and
+tablet surfaces. Release publishing runs this same suite against the verified source commit,
+then installs the signed, optimized release APK for the viewport and launch smoke checks.
 
 ## Live iTunes queue regression
 

@@ -12,6 +12,7 @@ internal sealed class PortableDemoController : IMediaController
     private readonly DemoTrack[] tracks;
     private readonly int libraryDelayMilliseconds;
     private readonly string? libraryFaultFile;
+    private readonly string? playbackFaultFile;
     private int delayedContinuation;
     private int index;
     private bool playing = true;
@@ -21,10 +22,11 @@ internal sealed class PortableDemoController : IMediaController
     private string repeatMode = "off";
 
     internal PortableDemoController(int libraryDelayMilliseconds = 0, bool largeLibrary = false,
-        string? libraryFaultFile = null)
+        string? libraryFaultFile = null, string? playbackFaultFile = null)
     {
         this.libraryDelayMilliseconds = Math.Max(0, libraryDelayMilliseconds);
         this.libraryFaultFile = libraryFaultFile;
+        this.playbackFaultFile = playbackFaultFile;
         tracks = largeLibrary
             ? Enumerable.Range(1, 120).Select(number => new DemoTrack($"Long Track {number:D3}",
                 "Album Artist", "A Long Album", 180, "Long Collection"))
@@ -104,10 +106,17 @@ internal sealed class PortableDemoController : IMediaController
             throw new IOException("Injected library failure for UI verification");
     }
 
+    private void ThrowIfPlaybackFaultRequested()
+    {
+        if (playbackFaultFile is not null && File.Exists(playbackFaultFile))
+            throw new IOException("Injected playback failure for UI verification");
+    }
+
     public Task PlayTrackAsync(PlaybackSelection selection,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        ThrowIfPlaybackFaultRequested();
         lock (gate)
         {
             int selected = Array.FindIndex(tracks,
@@ -124,6 +133,7 @@ internal sealed class PortableDemoController : IMediaController
     public Task ExecuteAsync(PlayerCommand command, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        ThrowIfPlaybackFaultRequested();
         lock (gate)
         {
             switch (command.Command)

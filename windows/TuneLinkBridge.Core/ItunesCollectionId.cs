@@ -1,4 +1,5 @@
 using System.Text;
+using System.Security.Cryptography;
 
 namespace TunesLinkBridge;
 
@@ -11,8 +12,25 @@ internal static class ItunesCollectionId
     public static string EncodeText(string kind, string value)
     {
         string payload = kind + "\n" + value;
-        return "c_" + Base64UrlEncode(Encoding.UTF8.GetBytes(payload));
+        string encoded = "c_" + Base64UrlEncode(Encoding.UTF8.GetBytes(payload));
+        return payload.Length <= MaxDecodedCharacters && encoded.Length <= 1024
+            ? encoded : HashId(kind, value);
     }
+
+    // Short legacy identifiers remain stable. Long metadata uses a bounded, case-insensitive
+    // key which can be matched against a fresh library without an in-memory lookup table.
+    private static string HashId(string kind, string value) => "h_" + kind + "_" +
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value.ToUpperInvariant())));
+
+    public static bool IsValidText(string id, string kind) =>
+        TryDecodeText(id, kind, out _) || (id.StartsWith("h_" + kind + "_", StringComparison.Ordinal)
+            && id.Length == kind.Length + 67 && id[(kind.Length + 3)..].All(char.IsAsciiHexDigit));
+
+    public static bool MatchesText(string id, string kind, string value) =>
+        id.StartsWith("h_", StringComparison.Ordinal)
+            ? string.Equals(id, HashId(kind, value), StringComparison.Ordinal)
+            : TryDecodeText(id, kind, out string decoded)
+                && string.Equals(decoded, value, StringComparison.OrdinalIgnoreCase);
 
     public static bool TryDecodeText(string id, string expectedKind, out string value)
     {

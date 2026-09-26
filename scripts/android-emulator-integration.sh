@@ -30,6 +30,7 @@ if [[ "${TunesLink_BRIDGE_EXTERNAL:-0}" != "1" ]]; then
   "$dotnet_command" run --project "$bridge_project" --configuration Release -- \
     --port "$bridge_port" --discovery-port 0 --pair-code 123456 \
     --library-delay-ms 1800 \
+    --playback-fault-file "${bridge_config}.playback-fault" \
     --config-directory "$bridge_config" >"$bridge_log" 2>&1 &
   bridge_pid=$!
 fi
@@ -42,6 +43,8 @@ cleanup() {
   "$adb_command" shell settings put system font_scale 1.0 >/dev/null 2>&1 || true
   "$adb_command" shell settings put system accelerometer_rotation 1 >/dev/null 2>&1 || true
   "$adb_command" shell wm user-rotation free >/dev/null 2>&1 || true
+  "$adb_command" shell wm size reset >/dev/null 2>&1 || true
+  "$adb_command" shell wm density reset >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
@@ -143,20 +146,35 @@ set_rotation() {
 
 orientation_matches() {
   local expected="$1"
-  python3 - "$ui_xml" "$expected" <<'PY'
+  local expected_rotation="$2"
+  python3 - "$ui_xml" "$expected" "$expected_rotation" "$package" <<'PY'
+import re
 import sys
 import xml.etree.ElementTree as ET
 
-xml, expected = sys.argv[1:]
+xml, expected, expected_rotation, package = sys.argv[1:]
 try:
-    rotation = int(ET.parse(xml).getroot().attrib.get("rotation", "0"))
+    root = ET.parse(xml).getroot()
+    rotation = int(root.attrib.get("rotation", "0"))
 except (OSError, ValueError, ET.ParseError):
     raise SystemExit(1)
-# uiautomator rotation 0/2 is portrait; 1/3 is landscape. Node aspect ratio is
-# a false portrait signal while a landscape rotation is still settling.
-if expected == "landscape":
-    raise SystemExit(0 if rotation % 2 == 1 else 1)
-raise SystemExit(0 if rotation % 2 == 0 else 1)
+# Check both the requested rotation and settled viewport. A tablet override can
+# be naturally landscape at rotation 0, unlike the default phone viewport.
+if rotation != int(expected_rotation):
+    raise SystemExit(1)
+sizes = []
+for node in root.iter("node"):
+    if node.get("package") != package:
+        continue
+    match = re.fullmatch(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", node.get("bounds", ""))
+    if match:
+        left, top, right, bottom = map(int, match.groups())
+        sizes.append((right - left, bottom - top))
+if not sizes:
+    raise SystemExit(1)
+width, height = max(sizes, key=lambda size: size[0] * size[1])
+actual = "landscape" if width > height else "portrait"
+raise SystemExit(0 if actual == expected else 1)
 PY
 }
 
@@ -165,7 +183,7 @@ wait_orientation() {
   local rotation="$2"
   for _ in $(seq 1 20); do
     dump_ui
-    if orientation_matches "$expected"; then
+    if orientation_matches "$expected" "$rotation"; then
       return
     fi
     set_rotation "$rotation"
@@ -669,12 +687,40 @@ fi
 wait_node class "android.widget.EditText" >/dev/null
 connect_manual_address "$bridge_address"
 
+# Exercise the real 429 contract and its countdown before completing pairing.
+if [[ -n "$bridge_pid" ]]; then
+  replace_focused_edit_text "000000"
+  "$adb_command" shell input keyevent KEYCODE_ENTER
+  dismiss_ime_if_visible
+  wait_node text "The pairing code was not accepted. Check the current code on your computer." >/dev/null
+  for _ in $(seq 1 5); do
+    tap_node text "Pair securely"
+    sleep 1
+  done
+  dump_ui
+  grep -q "Too many pairing attempts. Try again in" "$ui_xml"
+  python3 "$workspace/scripts/android-pairing-cooldown-check.py" "$ui_xml" blocked
+  capture "pairing-cooldown"
+  tap_node class "android.widget.EditText"
+  replace_focused_edit_text "123456"
+  dismiss_ime_if_visible
+  for _ in $(seq 1 65); do
+    dump_ui
+    if python3 "$workspace/scripts/android-pairing-cooldown-check.py" "$ui_xml" ready; then
+      break
+    fi
+    sleep 1
+  done
+  python3 "$workspace/scripts/android-pairing-cooldown-check.py" "$ui_xml" ready
+  tap_node text "Pair securely"
+else
 # connect_manual_address returns only after the pairing field is focused.
 replace_focused_edit_text "123456"
 # Pairing exposes ImeAction.Done and maps it to the same guarded pair action as
 # the dialog button. Keep submission on the focused field so older emulators do
 # not lose a synthetic button tap during keyboard dismissal.
 "$adb_command" shell input keyevent KEYCODE_ENTER
+fi
 
 wait_node text "Midnight Drive" >/dev/null
 wait_node text "Browse Library" >/dev/null
@@ -684,6 +730,17 @@ for _ in $(seq 1 20); do
 done
 [[ "$(tr -d '\r' < "$bridge_log" | grep -c '^state-stream:open$')" -eq 1 ]]
 capture "paired-library-categories"
+
+# Empty Search must return to Library after any keyboard/search-focus dismissal.
+open_search
+dismiss_ime_if_visible
+"$adb_command" shell input keyevent 4
+dump_ui
+if ! node_center text "Browse Library" >/dev/null; then
+  "$adb_command" shell input keyevent 4
+fi
+wait_node text "Browse Library" >/dev/null
+capture "empty-search-back"
 
 # Collection browsing is a distinct Library flow. Verify playlist drill-down and back navigation
 # before opening the full Songs collection used by the paging checks below.
@@ -804,6 +861,45 @@ if (( streams_after != streams_before || closes_after != closes_before )); then
   exit 1
 fi
 capture "foreground-stream-preserved"
+
+# Playback failure feedback must remain visible on every connected surface.
+if [[ -n "$bridge_pid" ]]; then
+  tap_node desc "Library"
+  dump_ui
+  if ! node_center text "Browse Library" >/dev/null; then
+    "$adb_command" shell input keyevent 4
+  fi
+  wait_node text "Browse Library" >/dev/null
+  touch "${bridge_config}.playback-fault"
+  tap_node text "Songs"
+  tap_node text "Golden Static"
+  wait_node text "Couldn’t play Golden Static" >/dev/null
+  capture "command-error-library"
+  tap_node desc "Search"
+  dismiss_ime_if_visible
+  wait_node text "Couldn’t play Golden Static" >/dev/null
+  capture "command-error-search"
+  tap_node desc "Now Playing"
+  wait_node text "Couldn’t play Golden Static" >/dev/null
+  capture "command-error-player"
+  "$adb_command" shell wm size 1600x1000
+  "$adb_command" shell wm density 240
+  set_rotation 0
+  wait_orientation landscape 0
+  wait_node text "Couldn’t play Golden Static" >/dev/null
+  capture "command-error-tablet"
+  tap_node text "Dismiss"
+  dump_ui
+  if grep -q "Couldn’t play Golden Static" "$ui_xml"; then
+    printf 'Dismissed command error is still visible.\n' >&2
+    exit 1
+  fi
+  rm -f "${bridge_config}.playback-fault"
+  "$adb_command" shell wm size 1080x1920
+  "$adb_command" shell wm density 420
+  set_rotation 0
+  tap_node desc "Library"
+fi
 
 # Exercise configuration recreation and accessibility-sized text while paired.
 set_rotation 1

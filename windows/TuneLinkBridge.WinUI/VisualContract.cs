@@ -72,10 +72,13 @@ internal static class VisualContract
         HeroPresentation full = HeroPresentation.Create(BridgeSecurity.MaxPairedDevices, true);
         Ensure(firstRun.Mode == HeroMode.PairFirstPhone && firstRun.PairingExpanded,
             "first phone pairing is primary");
-        Ensure(ready.Mode == HeroMode.Ready && !ready.PairingExpanded,
+        Ensure(ready.Mode == HeroMode.Paired && !ready.PairingExpanded,
             "returning state prioritizes readiness");
         Ensure(expanded.PairingExpanded, "pair another phone expansion survives refresh");
         Ensure(!full.PairingExpanded, "pairing closes when the two-phone limit is reached");
+        Ensure(!ready.Title.Contains("connected", StringComparison.OrdinalIgnoreCase)
+            && !ready.Title.Contains("ready", StringComparison.OrdinalIgnoreCase),
+            "a saved pairing does not claim a current connection or healthy backend");
 
         RuntimeAvailabilityPresentation unavailable =
             RuntimeAvailabilityPresentation.Create(runtimeAvailable: false, hasValidatedLanAddress: true);

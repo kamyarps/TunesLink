@@ -16,6 +16,8 @@ permissions:
 jobs:
   validate:
     name: Validate release source
+    outputs:
+      source-sha: ${{ steps.source.outputs.sha }}
     runs-on: ubuntu-24.04
     env:
       RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
@@ -41,6 +43,21 @@ jobs:
             throw "Release tag must point at the current main commit."
           }
 
+      - name: Record verified source commit
+        id: source
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  device-validation:
+    name: Validate release on Android devices
+    needs: [validate, android]
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/android-device.yml
+    with:
+      ref: ${{ needs.validate.outputs.source-sha }}
+      release-artifact: TunesLink-android-signed
+
   android:
     name: Signed Android release
     needs: validate
@@ -58,7 +75,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref }}
+          ref: ${{ needs.validate.outputs.source-sha }}
       - name: Read build requirements
         id: requirements
         shell: pwsh
@@ -149,7 +166,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref }}
+          ref: ${{ needs.validate.outputs.source-sha }}
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           global-json-file: global.json
@@ -229,7 +246,7 @@ jobs:
 
   publish:
     name: Publish GitHub release
-    needs: [android, windows]
+    needs: [validate, android, windows, device-validation]
     runs-on: windows-2025
     permissions:
       actions: read
@@ -237,6 +254,7 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
+      RELEASE_SHA: ${{ needs.validate.outputs.source-sha }}
     steps:
       - name: Validate release tag
         shell: pwsh
@@ -245,6 +263,10 @@ jobs:
             throw "Release tag must begin with v followed by a digit."
           }
           gh api "repos/$env:GITHUB_REPOSITORY/git/ref/tags/$env:RELEASE_TAG" | Out-Null
+          $publishedSha = gh api "repos/$env:GITHUB_REPOSITORY/commits/$env:RELEASE_TAG" --jq '.sha'
+          if ($LASTEXITCODE -ne 0 -or $publishedSha -ne $env:RELEASE_SHA) {
+            throw "Release tag changed after its artifacts and device tests were validated."
+          }
       - name: Download release assets
         shell: pwsh
         run: |

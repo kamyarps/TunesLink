@@ -59,6 +59,11 @@ public sealed partial class MainWindow
 
     private void ApplySystemPresentationSettings()
     {
+        bool largeText = Math.Max(uiSettings.TextScaleFactor, launch.TextScale) >= 1.5;
+        HeroArtworkContainer.Visibility = largeText ? Visibility.Collapsed : Visibility.Visible;
+        // The settings button overlays the illustration in the standard layout. Reserve its
+        // own row when decoration is hidden so scaled headings never run behind the button.
+        Grid.SetRow(SettingsButton, largeText ? 0 : 1);
         MotionPolicy policy = new(uiSettings.AnimationsEnabled,
             uiSettings.AdvancedEffectsEnabled, accessibilitySettings.HighContrast);
         animationsEnabled = policy.AnimationsEnabled;
@@ -119,9 +124,21 @@ public sealed partial class MainWindow
             throw new InvalidOperationException("TunesLink WinUI minimum viewport verification failed.");
         if (runtime is null && (PairAnotherButton.IsEnabled || CopyCodeButton.IsEnabled
             || CopyAddressButton.IsEnabled
-            || DevicesItems.IsEnabled || KeepRunningToggle.IsEnabled || OpenAtLoginToggle.IsEnabled))
+            || DevicesItems.IsEnabled || KeepRunningToggle.IsEnabled || OpenAtLoginToggle.IsEnabled
+            || ItunesStatusChip.Visibility != Visibility.Collapsed))
             throw new InvalidOperationException("TunesLink WinUI unavailable-state verification failed.");
         VerifyVisibleBoundsAndTargets();
+        if (launch.Demo && OpenAtLoginToggle.IsEnabled)
+            throw new InvalidOperationException("Preview must not expose persistent startup registration.");
+        if (launch.TextScale >= 1.5 && HeroArtworkContainer.Visibility != Visibility.Collapsed)
+            throw new InvalidOperationException("Large text must prioritize status and actions over decoration.");
+        Rect heroBounds = HeroTitle.TransformToVisual(RootGrid).TransformBounds(
+            new Rect(0, 0, HeroTitle.ActualWidth, HeroTitle.ActualHeight));
+        Rect settingsBounds = SettingsButton.TransformToVisual(RootGrid).TransformBounds(
+            new Rect(0, 0, SettingsButton.ActualWidth, SettingsButton.ActualHeight));
+        if (heroBounds.Top < settingsBounds.Bottom && heroBounds.Bottom > settingsBounds.Top
+            && heroBounds.Left < settingsBounds.Right && heroBounds.Right > settingsBounds.Left)
+            throw new InvalidOperationException($"The settings button overlaps the hero heading: {settingsBounds}; {heroBounds}.");
         if (launch.SnapshotPath is not null) await CaptureSnapshotAsync(launch.SnapshotPath);
         Environment.ExitCode = 0;
         RootGrid.Loaded -= RootGrid_Loaded;
@@ -255,7 +272,7 @@ public sealed partial class MainWindow
         DevicesItems.IsEnabled = availability.CanManageDevices;
         ForgetAllButton.IsEnabled = availability.CanManageDevices;
         KeepRunningToggle.IsEnabled = availability.CanChangeRuntimeSettings;
-        OpenAtLoginToggle.IsEnabled = availability.CanChangeRuntimeSettings;
+        OpenAtLoginToggle.IsEnabled = availability.CanChangeRuntimeSettings && !launch.Demo;
     }
 
     private bool TryGetRuntime(string operation, out BridgeRuntime availableRuntime)
@@ -418,12 +435,12 @@ public sealed partial class MainWindow
         SetHeroText(hero);
         // The signal rings exist only while a phone is connected: static rings behind the devices,
         // and the outward pulse on top of them.
-        heroReady = hero.Mode == HeroMode.Ready;
+        heroReady = hero.Mode == HeroMode.Paired;
         ApplyRingPulsePolicy(ringPulseAllowedByPolicy && heroReady);
         PhoneCheckMark.Visibility = !heroRasterActive && heroReady
             ? Visibility.Visible : Visibility.Collapsed;
         PairingPanel.Visibility = hero.PairingExpanded ? Visibility.Visible : Visibility.Collapsed;
-        PairAnotherButton.Visibility = hero.Mode == HeroMode.Ready
+        PairAnotherButton.Visibility = hero.Mode == HeroMode.Paired
             && pairedPhoneCount < BridgeSecurity.MaxPairedDevices
             ? Visibility.Visible : Visibility.Collapsed;
         PairAnotherButton.IsChecked = hero.PairingExpanded;

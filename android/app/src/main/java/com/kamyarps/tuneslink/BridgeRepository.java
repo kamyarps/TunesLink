@@ -109,6 +109,7 @@ final class BridgeRepository implements AutoCloseable {
     private BridgeClient.Cancellation relocationRequest = BridgeClient.Cancellation.NONE;
     private long manualGeneration;
     private long relocationGeneration;
+    private final AtomicBoolean relocationInFlight = new AtomicBoolean();
     private boolean retryingRevocations;
     private final ArrayList<BridgeClient.Result<Integer>> revocationRetryObservers =
             new ArrayList<>();
@@ -256,6 +257,11 @@ final class BridgeRepository implements AutoCloseable {
             public void failure(String message, boolean unauthorized) {
                 finishPairingFailure(begin.generation, message, unauthorized);
             }
+
+            @Override public void rateLimited(int retryAfterSeconds) {
+                BridgeClient.Result<SecureStore.SavedBridge> observer = pendingPairing.finish(begin.generation);
+                if (observer != null) observer.rateLimited(retryAfterSeconds);
+            }
         });
     }
 
@@ -375,6 +381,7 @@ final class BridgeRepository implements AutoCloseable {
                 try {
                     SecureStore.SavedBridge relocated = store.updateEndpoint(trusted, verified);
                     stopStateUpdates();
+                    cancelPendingArtwork();
                     current = relocated;
                     session.activate(relocated);
                     result.success(Relocation.relocated(trusted, relocated));
@@ -396,6 +403,7 @@ final class BridgeRepository implements AutoCloseable {
 
     private void cancelRelocation(long generation) {
         if (generation != relocationGeneration) return;
+        relocationInFlight.set(false);
         relocationGeneration++;
         relocationRequest.cancel();
         relocationRequest = BridgeClient.Cancellation.NONE;
@@ -443,12 +451,12 @@ final class BridgeRepository implements AutoCloseable {
         }
         stopStateUpdates();
         updatesRequest = request;
-        AtomicBoolean relocationAttempted = new AtomicBoolean();
+        relocationInFlight.set(false);
         client.startStateUpdates(request.bridge, new BridgeClient.StateListener() {
             @Override
             public void state(BridgeClient.PlayerState state) {
                 if (session.isCurrent(request) && updatesRequest == request) {
-                    relocationAttempted.set(false);
+                    if (relocationInFlight.getAndSet(false)) cancelRelocation();
                     listener.state(state);
                 }
             }
@@ -459,7 +467,7 @@ final class BridgeRepository implements AutoCloseable {
                     listener.connectionChanged(request.bridge, connected, message);
                 if (connected) retryPendingRevocations(null);
                 if (!connected && session.isCurrent(request) && updatesRequest == request
-                        && relocationAttempted.compareAndSet(false, true)) {
+                        && relocationInFlight.compareAndSet(false, true)) {
                     relocateCurrent(new BridgeClient.Result<>() {
                         @Override public void success(Relocation relocation) {
                             if (relocation.status == Relocation.Status.IDENTITY_CHANGED) {
@@ -471,7 +479,9 @@ final class BridgeRepository implements AutoCloseable {
                         }
 
                         @Override public void failure(String ignored, boolean unauthorized) {
-                            // The stream's bounded reconnect loop remains the source of status.
+                            // The stream retries with bounded backoff; allow its next failure
+                            // to rediscover a PC which was absent during this discovery window.
+                            relocationInFlight.set(false);
                         }
                     });
                 }
@@ -656,8 +666,15 @@ final class BridgeRepository implements AutoCloseable {
             result.failure("Computer is not connected", false);
             return RequestHandle.NONE;
         }
+        final long sequence;
+        try {
+            sequence = store.nextPlaybackSequence();
+        } catch (RuntimeException failure) {
+            result.failure("Could not safely save the playback request. Try again.", false);
+            return RequestHandle.NONE;
+        }
         BridgeClient.Cancellation cancellation = client.playTrack(request.bridge, trackId,
-                collectionKind, collectionId, refreshAfterSuccess(request, result));
+                collectionKind, collectionId, sequence, refreshAfterSuccess(request, result));
         return cancellation::cancel;
     }
 

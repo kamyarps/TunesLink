@@ -183,6 +183,9 @@ class BridgeClient extends BridgeClientSupport {
     interface Result<T> {
         void success(T value);
         void failure(String message, boolean unauthorized);
+        default void rateLimited(int retryAfterSeconds) {
+            failure("Too many pairing attempts. Try again later.", false);
+        }
     }
 
     interface Cancellation {
@@ -349,6 +352,7 @@ class BridgeClient extends BridgeClientSupport {
     private static final class StopStreamException extends IOException {}
 
     private final ExecutorService executor = Executors.newFixedThreadPool(4);
+    private final ExecutorService commandExecutor = Executors.newSingleThreadExecutor();
     private final ExecutorService artworkExecutor = Executors.newFixedThreadPool(2);
     private final ExecutorService stateExecutor = Executors.newSingleThreadExecutor();
     private final BridgeHttpClient http = new BridgeHttpClient();
@@ -501,6 +505,13 @@ class BridgeClient extends BridgeClientSupport {
                         "/api/pair", request.toString().getBytes(StandardCharsets.UTF_8),
                         cancellation);
                 JSONObject json = parseObject(response.body);
+                if (response.status == 429) {
+                    main.post(() -> {
+                        if (!closed.get() && !cancellation.isCancelled())
+                            result.rateLimited(response.retryAfterSeconds);
+                    });
+                    return;
+                }
                 if (response.status != 200) {
                     throw new IOException(json.optString("error", "Pairing failed"));
                 }
@@ -536,7 +547,7 @@ class BridgeClient extends BridgeClientSupport {
 
     void command(SecureStore.SavedBridge bridge, String command, Double value,
                  Result<Boolean> result) {
-        executor.execute(() -> {
+        commandExecutor.execute(() -> {
             try {
                 JSONObject json = new JSONObject().put("command", command);
                 if (value != null) json.put("value", value);
@@ -659,12 +670,14 @@ class BridgeClient extends BridgeClientSupport {
     }
 
     Cancellation playTrack(SecureStore.SavedBridge bridge, String trackId, String collectionKind,
-                           String collectionId, Result<Boolean> result) {
+                           String collectionId, long sequence, Result<Boolean> result) {
         ConnectionCancellation cancellation = new ConnectionCancellation();
-        Future<?> task = executor.submit(() -> {
+        AtomicBoolean acknowledged = new AtomicBoolean();
+        Future<?> task = commandExecutor.submit(() -> {
             long started = SystemClock.elapsedRealtime();
             try {
-                JSONObject json = new JSONObject().put("trackId", trackId);
+                JSONObject json = new JSONObject().put("trackId", trackId)
+                        .put("sequence", sequence);
                 if (collectionKind != null && !collectionKind.isBlank()
                         && collectionId != null && !collectionId.isBlank()) {
                     json.put("collectionKind", collectionKind);
@@ -674,6 +687,7 @@ class BridgeClient extends BridgeClientSupport {
                         bridge.tlsFingerprint,
                         bridge.token, "POST", "/api/play",
                         json.toString().getBytes(StandardCharsets.UTF_8), cancellation);
+                acknowledged.set(true);
                 if (response.status == 401) {
                     deliverFailure(result, "This phone is no longer paired", true, cancellation);
                 } else if (response.status == 200 || response.status == 204) {
@@ -691,7 +705,22 @@ class BridgeClient extends BridgeClientSupport {
             }
         });
         cancellation.setTask(task);
-        return cancellation;
+        return () -> {
+            if (cancellation.isCancelled()) return;
+            cancellation.cancel();
+            if (closed.get() || acknowledged.get()) return;
+            executor.execute(() -> {
+                try {
+                    byte[] body = new JSONObject().put("sequence", sequence).toString()
+                            .getBytes(StandardCharsets.UTF_8);
+                    request(bridge.host, bridge.port, bridge.tlsFingerprint, bridge.token,
+                            "POST", "/api/play/cancel", body);
+                } catch (Exception ignored) {
+                    // A newer selection also supersedes this request at the bridge. Older
+                    // bridges may not support explicit cancellation yet.
+                }
+            });
+        };
     }
 
     Cancellation getArtwork(SecureStore.SavedBridge bridge, String artworkId, int size,
@@ -922,6 +951,7 @@ class BridgeClient extends BridgeClientSupport {
         closed.set(true);
         stopStateUpdates();
         executor.shutdownNow();
+        commandExecutor.shutdownNow();
         artworkExecutor.shutdownNow();
         stateExecutor.shutdownNow();
         http.clear();

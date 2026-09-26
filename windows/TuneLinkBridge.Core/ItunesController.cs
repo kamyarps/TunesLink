@@ -193,7 +193,7 @@ internal sealed partial class ItunesController : IMediaController
         int offset, int limit, CancellationToken cancellationToken = default) => Invoke<LibraryCollectionPage>(() =>
     {
         CollectionAlbums.Validate(kind, id);
-        _ = ItunesCollectionId.TryDecodeText(id, kind, out string filter);
+        string filter = id;
         object app = GetITunes();
         LibrarySnapshot snapshot = CurrentLibrarySnapshot()
             ?? ValidatePersistedLibrarySnapshot(app, cancellationToken)
@@ -218,20 +218,20 @@ internal sealed partial class ItunesController : IMediaController
         snapshot ??= ValidatePersistedLibrarySnapshot((object)app, cancellationToken);
         if (snapshot is not null
             && kind is "artists" or "albums" or "genres"
-            && ItunesCollectionId.TryDecodeText(id, kind, out string snapshotFilter))
+            && ItunesCollectionId.IsValidText(id, kind))
         {
-            return PageSnapshotTracks(snapshot, query, offset, limit, kind, snapshotFilter);
+            return PageSnapshotTracks(snapshot, query, offset, limit, kind, id);
         }
         dynamic? playlist = null;
         dynamic? tracks = null;
         try
         {
-            string filter = "";
+            string filter = id;
             switch (kind)
             {
                 case "artists":
                 case "albums":
-                    if (!ItunesCollectionId.TryDecodeText(id, kind, out filter))
+                    if (!ItunesCollectionId.IsValidText(id, kind))
                         throw new MediaNotFoundException("That collection is no longer available");
                     playlist = app.LibraryPlaylist;
                     // A search here only narrows the candidates; the exact match still runs per
@@ -255,7 +255,7 @@ internal sealed partial class ItunesController : IMediaController
                     }
                     break;
                 case "genres":
-                    if (!ItunesCollectionId.TryDecodeText(id, kind, out filter))
+                    if (!ItunesCollectionId.IsValidText(id, kind))
                         throw new MediaNotFoundException("That collection is no longer available");
                     playlist = app.LibraryPlaylist;
                     tracks = string.IsNullOrWhiteSpace(query)
@@ -292,7 +292,7 @@ internal sealed partial class ItunesController : IMediaController
             string collectionId = selection.CollectionId.Trim();
             if (kind.Length == 0 && collectionId.Length == 0)
             {
-                PlayLibraryTrack((object)app, selection.TrackId);
+                PlayLibraryTrack((object)app, selection.TrackId, cancellationToken);
                 managedQueue = null;
                 ClearQueueState();
                 CleanupManagedQueues((object)app);
@@ -313,12 +313,16 @@ internal sealed partial class ItunesController : IMediaController
             return null;
         }, cancellationToken);
 
-    private static void PlayLibraryTrack(object appObject, string trackId)
+    private static void PlayLibraryTrack(object appObject, string trackId, CancellationToken cancellationToken)
     {
         dynamic app = appObject;
         dynamic? track = ResolveTrack(app, trackId);
         if (track is null) throw new MediaNotFoundException("That song is no longer available");
-        try { track.Play(); }
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            track.Play();
+        }
         finally { ReleaseCom(track); }
     }
 
@@ -1122,13 +1126,11 @@ internal sealed partial class ItunesController : IMediaController
     private static bool MatchesCollection(LibraryTrack track, string genre,
         string kind, string value)
     {
-        if (kind == "genres") return string.Equals(genre, value,
-            StringComparison.OrdinalIgnoreCase);
-        if (kind == "artists") return string.Equals(track.AlbumArtist, value,
-            StringComparison.OrdinalIgnoreCase);
+        if (kind == "genres") return ItunesCollectionId.MatchesText(value, kind, genre);
+        if (kind == "artists") return ItunesCollectionId.MatchesText(value, kind, track.AlbumArtist);
         if (kind != "albums") return true;
-        return string.Equals(LibraryGrouping.AlbumKey(track.AlbumArtist, track.Album), value,
-            StringComparison.OrdinalIgnoreCase);
+        return ItunesCollectionId.MatchesText(value, kind,
+            LibraryGrouping.AlbumKey(track.AlbumArtist, track.Album));
     }
 
     private static string ComputeLibraryRevision(LibraryTrack[] tracks, string[] genres)
@@ -1152,17 +1154,14 @@ internal sealed partial class ItunesController : IMediaController
     {
         // Genre is settled before the album artist so filtering by genre never pays for the
         // album artist and compilation reads.
-        if (kind == "genres") return string.Equals(
-            LibraryGrouping.DisplayGenre(ReadString(track, "Genre")), value,
-            StringComparison.OrdinalIgnoreCase);
+        if (kind == "genres") return ItunesCollectionId.MatchesText(value, kind,
+            LibraryGrouping.DisplayGenre(ReadString(track, "Genre")));
         string albumArtist = LibraryGrouping.AlbumArtist(ReadString(track, "Artist"),
             ReadString(track, "AlbumArtist"), ReadBool(track, "Compilation"));
-        if (kind == "artists") return string.Equals(albumArtist, value,
-            StringComparison.OrdinalIgnoreCase);
+        if (kind == "artists") return ItunesCollectionId.MatchesText(value, kind, albumArtist);
         if (kind != "albums") return true;
-        return string.Equals(
-            LibraryGrouping.AlbumKey(albumArtist, ReadString(track, "Album")), value,
-            StringComparison.OrdinalIgnoreCase);
+        return ItunesCollectionId.MatchesText(value, kind,
+            LibraryGrouping.AlbumKey(albumArtist, ReadString(track, "Album")));
     }
 
     internal static string DisplayArtist(string artist) =>
@@ -1173,7 +1172,8 @@ internal sealed partial class ItunesController : IMediaController
     internal static string DisplayGenre(string genre) => LibraryGrouping.DisplayGenre(genre);
 
     private static string? CollectionAlbumName(string value) =>
-        LibraryGrouping.AlbumNameFromKey(value);
+        ItunesCollectionId.TryDecodeText(value, "albums", out string key)
+            ? LibraryGrouping.AlbumNameFromKey(key) : null;
 
     private static dynamic? ResolvePlaylist(object appObject, ItunesPlaylistLocator locator)
     {

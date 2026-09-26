@@ -192,6 +192,30 @@ internal fun TunesLinkViewModel.retryBrowse(target: LibraryBrowseTarget) {
         TunesLinkViewModel.PAGE_SIZE, cursor.copy(isLoading = true, error = null))
 }
 
+internal fun TunesLinkViewModel.restoreBrowseAfterReconnect() {
+    browseCollectionsRequest.cancel()
+    browseTracksRequest.cancel()
+    browseCollectionsGeneration++
+    browseTracksGeneration++
+    mutableState.update { it.copy(browse = it.browse.afterReconnect()) }
+    val browse = mutableState.value.browse
+    if (browse.kind == null) return
+    if (browse.kind != LibraryBrowseKind.Songs) retryBrowse(LibraryBrowseTarget.Collections)
+    if (browse.kind == LibraryBrowseKind.Songs || browse.selectedCollection != null) {
+        retryBrowse(LibraryBrowseTarget.Tracks)
+    }
+}
+
+internal fun LibraryBrowseUiState.afterReconnect(): LibraryBrowseUiState = copy(
+    collectionsCursor = collectionsCursor.afterReconnect(),
+    tracksCursor = tracksCursor.afterReconnect(),
+    parentBrowse = parentBrowse?.afterReconnect(),
+)
+
+private fun LibraryPageCursor.afterReconnect() = copy(
+    isLoading = false, isLoadingMore = false, isLoadingPrevious = false, error = null,
+)
+
 private fun TunesLinkViewModel.requestBrowsePage(
     target: LibraryBrowseTarget,
     kind: LibraryBrowseKind,
@@ -378,8 +402,9 @@ internal fun TunesLinkViewModel.libraryResult(query: String, generation: Int, re
                     library.windowStart,
                     converted,
                     value.offset,
-                    replace || revisionReplaced || value.total < library.windowStart + library.items.size,
+                    replace || revisionReplaced,
                     TunesLinkViewModel.MAX_LIBRARY_WINDOW_ITEMS,
+                    total = value.total,
                 )
                 state.copy(
                     library = library.copy(
@@ -398,7 +423,12 @@ internal fun TunesLinkViewModel.libraryResult(query: String, generation: Int, re
                     ),
                 )
             }
-            if (!authoritative || alreadyAnnounced) return
+            if (!authoritative) return
+            if (mutableState.value.library.items.isEmpty() && value.total > 0 && requestedOffset >= value.total) {
+                commitSearch(query)
+                return
+            }
+            if (alreadyAnnounced) return
             announcedResultQuery = query
             announcePlural(R.plurals.result_count, value.total, listOf(value.total))
         }
@@ -461,8 +491,7 @@ internal fun TunesLinkViewModel.browseCollectionsResult(generation: Int, replace
                         ),
                     )
                 }
-                val replaced = replace || revisionChanged(cursor.revision, value.revision) ||
-                    value.total < cursor.windowStart
+                val replaced = replace || revisionChanged(cursor.revision, value.revision)
                 val window = mergePageWindow(
                     state.browse.collections,
                     cursor.windowStart,
@@ -470,6 +499,7 @@ internal fun TunesLinkViewModel.browseCollectionsResult(generation: Int, replace
                     value.offset,
                     replaced,
                     TunesLinkViewModel.MAX_LIBRARY_WINDOW_ITEMS,
+                    total = value.total,
                 )
                 state.copy(
                     browse = state.browse.copy(
@@ -479,6 +509,14 @@ internal fun TunesLinkViewModel.browseCollectionsResult(generation: Int, replace
                         ),
                     ),
                 )
+            }
+            val browse = mutableState.value.browse
+            if (authoritative && browse.collections.isEmpty() && value.total > 0 &&
+                requestedOffset >= value.total && browse.kind != null
+            ) {
+                requestBrowsePage(LibraryBrowseTarget.Collections, browse.kind,
+                    browse.selectedCollection, 0, TunesLinkViewModel.PAGE_SIZE,
+                    browse.collectionsCursor.copy(isLoading = true, windowStart = 0))
             }
         }
 
@@ -523,8 +561,7 @@ internal fun TunesLinkViewModel.browseTracksResult(generation: Int, replace: Boo
                         ),
                     )
                 }
-                val replaced = replace || revisionChanged(cursor.revision, value.revision) ||
-                    value.total < cursor.windowStart
+                val replaced = replace || revisionChanged(cursor.revision, value.revision)
                 val window = mergePageWindow(
                     state.browse.tracks,
                     cursor.windowStart,
@@ -532,6 +569,7 @@ internal fun TunesLinkViewModel.browseTracksResult(generation: Int, replace: Boo
                     value.offset,
                     replaced,
                     TunesLinkViewModel.MAX_LIBRARY_WINDOW_ITEMS,
+                    total = value.total,
                 )
                 state.copy(
                     browse = state.browse.copy(
@@ -541,6 +579,14 @@ internal fun TunesLinkViewModel.browseTracksResult(generation: Int, replace: Boo
                         ),
                     ),
                 )
+            }
+            val browse = mutableState.value.browse
+            if (authoritative && browse.tracks.isEmpty() && value.total > 0 &&
+                requestedOffset >= value.total && browse.kind != null
+            ) {
+                requestBrowsePage(LibraryBrowseTarget.Tracks, browse.kind,
+                    browse.selectedCollection, 0, TunesLinkViewModel.PAGE_SIZE,
+                    browse.tracksCursor.copy(isLoading = true, windowStart = 0))
             }
         }
 
@@ -626,8 +672,21 @@ internal fun <T> mergePageWindow(
     incomingStart: Int,
     replace: Boolean,
     maximumItems: Int,
+    total: Int = Int.MAX_VALUE,
 ): PageWindow<T> {
     require(maximumItems > 0)
+    require(total >= 0)
+    if (total == 0) return PageWindow(emptyList(), 0)
+    val window = mergeUnboundedPageWindow(existing, existingStart, incoming, incomingStart,
+        replace, maximumItems)
+    val start = window.startOffset.coerceAtMost(total)
+    return PageWindow(window.items.take(total - start), start)
+}
+
+private fun <T> mergeUnboundedPageWindow(
+    existing: List<T>, existingStart: Int, incoming: List<T>, incomingStart: Int,
+    replace: Boolean, maximumItems: Int,
+): PageWindow<T> {
     if (replace || existing.isEmpty()) {
         val kept = incoming.take(maximumItems)
         return PageWindow(kept, incomingStart.coerceAtLeast(0))

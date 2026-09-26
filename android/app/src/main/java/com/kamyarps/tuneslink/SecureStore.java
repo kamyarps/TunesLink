@@ -128,6 +128,13 @@ final class SecureStore {
         return generated;
     }
 
+    synchronized long nextPlaybackSequence() {
+        long next = Math.addExact(Long.parseLong(backend.getString("playbackSequence", "0")), 1);
+        if (next <= 0 || !backend.commit(Map.of("playbackSequence", Long.toString(next)), Set.of()))
+            throw new IllegalStateException("Could not save playback request order");
+        return next;
+    }
+
     synchronized void save(BridgeClient.BridgeInfo bridge, String token) throws Exception {
         SavedBridge saved = validated(new SavedBridge(bridge.id, bridge.name, bridge.host,
                 bridge.port, bridge.tlsFingerprint, token));

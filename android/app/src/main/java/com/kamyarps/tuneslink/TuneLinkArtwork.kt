@@ -9,6 +9,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -18,7 +19,8 @@ import kotlinx.coroutines.isActive
 internal fun rememberLibraryArtwork(artworkId: String, size: Int, viewModel: TunesLinkViewModel): Bitmap? {
     var artwork by remember(artworkId, size) { mutableStateOf<Bitmap?>(null) }
     val lifecycle = LocalLifecycleOwner.current.lifecycle
-    LaunchedEffect(artworkId, size, viewModel, lifecycle) {
+    val session by viewModel.artworkSession.collectAsStateWithLifecycle()
+    LaunchedEffect(artworkId, size, viewModel, lifecycle, session) {
         if (artworkId.isBlank()) return@LaunchedEffect
         lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
             while (isActive) {

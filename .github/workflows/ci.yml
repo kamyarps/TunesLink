@@ -84,84 +84,13 @@ jobs:
         shell: pwsh
         run: ./scripts/verify-repository.ps1 -RequireCleanWorktree
   android-device:
-    name: Android device API ${{ matrix.api-level }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 35
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - api-level: 26
-            target: google_apis
-            run-integration: false
-          - api-level: 31
-            target: google_apis
-            run-integration: true
-          # API 37 is still compiled and exercised by the local release audit. The
-          # hosted sdkmanager feed does not yet publish platforms;android-37 to
-          # emulator-runner, so CI uses the latest hosted stable device image.
-          - api-level: 36
-            target: google_apis
-            run-integration: true
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Read build requirements
-        id: requirements
-        shell: pwsh
-        run: |
-          Import-Module ./scripts/BuildRequirements.psm1
-          $required = Get-TunesLinkBuildRequirements -Root $env:GITHUB_WORKSPACE
-          "java=$($required.JavaMajor)" >> $env:GITHUB_OUTPUT
-      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
-        with:
-          distribution: temurin
-          java-version: ${{ steps.requirements.outputs.java }}
-      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
-        with:
-          global-json-file: global.json
-      - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
-        with:
-          cache-provider: basic
-      - name: Build debug APK
-        working-directory: android
-        run: ./gradlew --no-daemon --warning-mode all --dependency-verification strict :app:assembleDebug
-      - name: Enable KVM access
-        run: |
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' |
-            sudo tee /etc/udev/rules.d/99-kvm4all.rules
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
-      - name: Exercise phone and tablet viewports
-        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
-        with:
-          api-level: ${{ matrix.api-level }}
-          target: ${{ matrix.target }}
-          arch: x86_64
-          profile: pixel_2
-          ram-size: 4096M
-          heap-size: 512M
-          # The smoke script exercises both enabled and disabled animation policies.
-          disable-animations: false
-          emulator-options: >-
-            -no-window -gpu swiftshader -noaudio -no-boot-anim
-            -camera-back none -camera-front none -no-snapshot-save
-          script: |
-            bash scripts/android-emulator-smoke.sh
-            [ "${{ matrix.run-integration }}" != "true" ] || bash scripts/android-emulator-integration.sh
-      - name: Verify Android visual baselines
-        if: matrix.api-level == 36
-        run: python3 scripts/android-visual-regression.py
-      - name: Verify repository hygiene
-        shell: pwsh
-        run: ./scripts/verify-repository.ps1 -RequireCleanWorktree
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        if: always()
-        with:
-          name: android-device-api-${{ matrix.api-level }}
-          path: |
-            android/app/build/reports/device-smoke
-            android/app/build/reports/device-integration
-          if-no-files-found: warn
+    name: Android device validation
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/android-device.yml
+    with:
+      ref: ${{ github.sha }}
 
   windows:
     name: Windows bridge

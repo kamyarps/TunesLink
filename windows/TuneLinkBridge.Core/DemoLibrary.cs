@@ -110,7 +110,7 @@ internal static class DemoLibrary
         string query, int offset, int limit, out LibraryPage page)
     {
         DemoTrack[] catalog = tracks.ToArray();
-        if (!ItunesCollectionId.TryDecodeText(id, kind, out string value))
+        if (!ItunesCollectionId.IsValidText(id, kind))
         {
             page = new LibraryPage([], 0, Math.Clamp(limit, 1, 60), 0, false,
                 Revision(catalog));
@@ -118,13 +118,10 @@ internal static class DemoLibrary
         }
         IEnumerable<DemoTrack> matching = kind switch
         {
-            "artists" => catalog.Where(track => track.GroupingArtist.Equals(value,
-                StringComparison.OrdinalIgnoreCase)),
-            "albums" => catalog.Where(track => track.AlbumKey.Equals(value,
-                StringComparison.OrdinalIgnoreCase)),
-            "genres" => catalog.Where(track => track.Genre.Equals(value,
-                StringComparison.OrdinalIgnoreCase)),
-            "playlists" when value == "Night Drive" => catalog.Take(1),
+            "artists" => catalog.Where(track => ItunesCollectionId.MatchesText(id, kind, track.GroupingArtist)),
+            "albums" => catalog.Where(track => ItunesCollectionId.MatchesText(id, kind, track.AlbumKey)),
+            "genres" => catalog.Where(track => ItunesCollectionId.MatchesText(id, kind, track.Genre)),
+            "playlists" when ItunesCollectionId.MatchesText(id, kind, "Night Drive") => catalog.Take(1),
             "playlists" => catalog,
             _ => throw new ArgumentException("Unknown library collection"),
         };

@@ -75,7 +75,7 @@ internal sealed class BridgeHealthState
 internal enum HeroMode
 {
     PairFirstPhone,
-    Ready
+    Paired
 }
 
 internal sealed record HeroPresentation(
@@ -92,10 +92,10 @@ internal sealed record HeroPresentation(
                 UiStrings.Get("HeroPairDetail",
                     "Open TunesLink on your Android phone and enter the pairing code below."),
                 true);
-        return new(HeroMode.Ready,
+        return new(HeroMode.Paired,
             pairedPhoneCount == 1
-                ? UiStrings.Get("HeroReadyTitle", "Your phone is connected.\nYou’re ready to go.")
-                : UiStrings.Get("HeroReadyTitleMultiple", "Your phones are connected.\nYou’re ready to go."),
+                ? UiStrings.Get("HeroReadyTitle", "Your phone is paired.")
+                : UiStrings.Get("HeroReadyTitleMultiple", "Your phones are paired."),
             pairedPhoneCount == 1
                 ? UiStrings.Get("HeroReadyDetail", "Control iTunes on this PC wirelessly from your phone.")
                 : UiStrings.Get("HeroReadyMultipleDetail", "Control iTunes on this PC wirelessly from your phones."),

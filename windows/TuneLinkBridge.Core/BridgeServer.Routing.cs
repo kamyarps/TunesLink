@@ -36,7 +36,12 @@ internal sealed partial class BridgeServer
             if (!pairingRateLimiter.CanAttempt(remote, out int retryAfter))
             {
                 await WriteJsonAsync(stream, 429,
-                    new { error = $"Too many attempts. Try again in {retryAfter} seconds." }, token,
+                    new
+                    {
+                        error = $"Too many attempts. Try again in {retryAfter} seconds.",
+                        code = "pairing_rate_limited",
+                        retryAfterSeconds = retryAfter
+                    }, token,
                     new Dictionary<string, string> { ["Retry-After"] = retryAfter.ToString(CultureInfo.InvariantCulture) });
                 return;
             }
@@ -159,7 +164,7 @@ internal sealed partial class BridgeServer
             string id = QueryValue(request.Target, "id").Trim();
             string query = QueryValue(request.Target, "query").Trim();
             if (query.Length > 120 || kind is not ("artists" or "genres")
-                || !ItunesCollectionId.TryDecodeText(id, kind, out _))
+                || !ItunesCollectionId.IsValidText(id, kind))
             {
                 await WriteJsonAsync(stream, 400, new { error = "Invalid album collection" }, token);
                 return;
@@ -241,11 +246,28 @@ internal sealed partial class BridgeServer
             return;
         }
 
+        if (request.Method == "POST" && path == "/api/play/cancel")
+        {
+            try
+            {
+                CancelPlayRequest? submitted = JsonSerializer.Deserialize<CancelPlayRequest>(request.Body, JsonOptions);
+                if (submitted is null || submitted.Sequence <= 0) throw new JsonException();
+                playbackRequests.Cancel(bearer!, submitted.Sequence);
+                await WriteJsonAsync(stream, 200, new { ok = true }, token);
+            }
+            catch (JsonException)
+            {
+                await WriteJsonAsync(stream, 400, new { error = "Invalid playback cancellation" }, token);
+            }
+            return;
+        }
+
         if (request.Method == "POST" && path == "/api/play")
         {
             try
             {
                 PlayRequest? submitted = JsonSerializer.Deserialize<PlayRequest>(request.Body, JsonOptions);
+                if (submitted?.Sequence is <= 0) throw new JsonException("Invalid playback sequence");
                 string id = submitted?.TrackId?.Trim() ?? "";
                 string collectionKind = submitted?.CollectionKind?.Trim().ToLowerInvariant() ?? "";
                 string collectionId = submitted?.CollectionId?.Trim() ?? "";
@@ -267,12 +289,25 @@ internal sealed partial class BridgeServer
                 }
                 using CancellationTokenSource operation =
                     OperationTimeout(BridgeProtocol.PlaybackTimeout, token);
+                using PlaybackRequests.Lease? selection = submitted?.Sequence is { } sequence
+                    ? playbackRequests.Begin(bearer!, sequence, operation.Token) : null;
+                if (submitted?.Sequence is not null && selection is null)
+                {
+                    await WriteJsonAsync(stream, 409, new { error = "Playback selection was superseded" }, token);
+                    return;
+                }
                 long started = Stopwatch.GetTimestamp();
                 try
                 {
                     await media.PlayTrackAsync(
                         new PlaybackSelection(id, collectionKind, collectionId),
-                        operation.Token).ConfigureAwait(false);
+                        selection?.Token ?? operation.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (selection?.Token.IsCancellationRequested == true
+                    && !token.IsCancellationRequested && !operation.IsCancellationRequested)
+                {
+                    await WriteJsonAsync(stream, 409, new { error = "Playback selection was canceled" }, token);
+                    return;
                 }
                 finally
                 {

@@ -2,6 +2,7 @@ package com.kamyarps.tuneslink
 
 import android.app.Application
 import android.graphics.Bitmap
+import android.os.SystemClock
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.SavedStateHandle
@@ -56,6 +57,7 @@ internal class TunesLinkViewModel(
     private var connectedOnce = false
     private var stateUpdatesActive = false
     internal var artworkRefreshAt: Long = 0
+    internal val artworkSession = MutableStateFlow(0L)
     internal var artworkRequest: BridgeRepository.RequestHandle = BridgeRepository.RequestHandle.NONE
     internal var libraryRequest: BridgeRepository.RequestHandle = BridgeRepository.RequestHandle.NONE
     internal var browseCollectionsRequest: BridgeRepository.RequestHandle =
@@ -86,6 +88,7 @@ internal class TunesLinkViewModel(
     private var lastAvailabilityKind: ConnectionAvailabilityKind? = null
     private var backgroundStopJob: Job? = null
     private var artworkRefreshJob: Job? = null
+    private var pairingCooldownJob: Job? = null
 
     init {
         viewModelScope.launch {
@@ -296,9 +299,10 @@ internal class TunesLinkViewModel(
 
     fun updatePairingCode(value: String) {
         mutableState.update {
+            if (it.pairing.phase != PairingPhase.Editing) return@update it
             it.copy(
                 pairing = it.pairing.copy(
-                    code = value.filter(Char::isDigit).take(PAIRING_CODE_LENGTH),
+                    code = value.filter { character -> character in '0'..'9' }.take(PAIRING_CODE_LENGTH),
                     codeError = null,
                     phase = PairingPhase.Editing,
                 ),
@@ -309,6 +313,7 @@ internal class TunesLinkViewModel(
     fun pair() {
         val snapshot = mutableState.value
         val bridge = (snapshot.modal as? TunesLinkModal.Pairing)?.bridge ?: return
+        if (snapshot.pairing.phase != PairingPhase.Editing || snapshot.pairing.retryAfterSeconds > 0) return
         when {
             snapshot.pairing.code.length != PAIRING_CODE_LENGTH -> {
                 mutableState.update {
@@ -337,6 +342,9 @@ internal class TunesLinkViewModel(
         repository.pair(bridge, snapshot.pairing.code, object : BridgeClient.Result<SecureStore.SavedBridge> {
             override fun success(value: SecureStore.SavedBridge) {
                 if (generation != pairingGeneration) return
+                latestAuthoritativeState = null
+                mutationTimeoutJobs.values.forEach { it.cancel() }
+                mutationTimeoutJobs.clear()
                 updateBridge(value.name, value.host, value.port)
                 mutableState.update {
                     it.copy(
@@ -370,7 +378,38 @@ internal class TunesLinkViewModel(
                 }
                 announce(R.string.pairing_failed, haptic = HapticIntent.Reject)
             }
+
+            override fun rateLimited(retryAfterSeconds: Int) {
+                if (generation != pairingGeneration) return
+                savedStateHandle["pairingCooldownEndpoint"] = bridge.host + ":" + bridge.port
+                savedStateHandle["pairingCooldownUntil"] = SystemClock.elapsedRealtime() +
+                    retryAfterSeconds.coerceIn(1, 3600) * 1000L
+                mutableState.update { it.copy(connection = ConnectionState.Unpaired,
+                    pairing = it.pairing.copy(phase = PairingPhase.Editing, codeError = null)) }
+                startPairingCooldown(bridge)
+                announce(R.string.pairing_rate_limited, haptic = HapticIntent.Reject)
+            }
         })
+    }
+
+    private fun startPairingCooldown(bridge: BridgeClient.BridgeInfo) {
+        pairingCooldownJob?.cancel()
+        val endpoint = bridge.host + ":" + bridge.port
+        val until = if (savedStateHandle.get<String>("pairingCooldownEndpoint") == endpoint) {
+            savedStateHandle.get<Long>("pairingCooldownUntil") ?: 0L
+        } else 0L
+        fun remaining() = ((until - SystemClock.elapsedRealtime() + 999L) / 1000L).coerceIn(0, 3600).toInt()
+        mutableState.update { it.copy(pairing = it.pairing.copy(retryAfterSeconds = remaining())) }
+        pairingCooldownJob = viewModelScope.launch {
+            while (remaining() > 0) {
+                delay(1_000)
+                mutableState.update { it.copy(pairing = it.pairing.copy(retryAfterSeconds = remaining())) }
+            }
+        }
+    }
+
+    fun dismissCommandError() {
+        mutableState.update { it.copy(player = it.player.copy(commandError = null)) }
     }
 
     fun requestModalDismiss() {
@@ -654,8 +693,23 @@ internal class TunesLinkViewModel(
                     }
                     lastAvailabilityKind = ConnectionAvailabilityKind.Available
                     if (restored) {
+                        playTrackRequest.cancel()
+                        mutationTimeoutJobs.values.forEach { it.cancel() }
+                        mutationTimeoutJobs.clear()
+                        mutableState.update { state ->
+                            state.copy(player = state.player.copy(
+                                pendingMutations = emptyMap(),
+                                commandError = if (state.player.pendingMutations.isNotEmpty()) {
+                                    getApplication<Application>().getString(R.string.playback_connection_interrupted)
+                                } else state.player.commandError,
+                            ))
+                        }
+                        artworkRequest.cancel()
+                        artworkRefreshAt = 0
+                        artworkSession.value++
                         announce(R.string.connected_to, listOf(activeBridge.name))
                         commitSearch(mutableState.value.library.editingQuery)
+                        restoreBrowseAfterReconnect()
                     }
                 } else {
                     val identityChanged = message == BridgeClient.IDENTITY_CHANGED_MESSAGE
@@ -714,9 +768,11 @@ internal class TunesLinkViewModel(
                 navigation = it.navigation.copy(switchingComputer = false),
             )
         }
+        startPairingCooldown(bridge)
     }
 
     private fun finishLocalForget(messageRes: Int, haptic: HapticIntent) {
+        latestAuthoritativeState = null
         artworkRequest.cancel()
         libraryRequest.cancel()
         browseCollectionsRequest.cancel()

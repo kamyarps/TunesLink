@@ -30,7 +30,11 @@
                       HorizontalScrollBarVisibility="Disabled"
                       HorizontalContentAlignment="Stretch">
             <Grid x:Name="PageContent" Padding="28,4,28,20" HorizontalAlignment="Stretch">
-                <Grid x:Name="AmbientLayer" VerticalAlignment="Stretch"
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <Grid x:Name="AmbientLayer" Grid.RowSpan="2" VerticalAlignment="Stretch"
                       Margin="-28,-4,-28,-20" IsHitTestVisible="False"
                       AutomationProperties.AccessibilityView="Raw">
                     <Rectangle Height="470" VerticalAlignment="Top">
@@ -83,7 +87,7 @@
                     </Rectangle>
                     <Grid x:Name="BackdropWaveHost" Background="Transparent" />
                 </Grid>
-                <StackPanel x:Name="ContentStack" Spacing="16" MaxWidth="400"
+                <StackPanel x:Name="ContentStack" Grid.Row="1" Spacing="16" MaxWidth="400"
                             HorizontalAlignment="Stretch">
                     <StackPanel.ChildrenTransitions>
                         <TransitionCollection>
@@ -91,7 +95,7 @@
                         </TransitionCollection>
                     </StackPanel.ChildrenTransitions>
 
-                    <Viewbox MaxWidth="400" Stretch="Uniform" HorizontalAlignment="Center" Margin="0,2,0,0">
+                    <Viewbox x:Name="HeroArtworkContainer" MaxWidth="400" Stretch="Uniform" HorizontalAlignment="Center" Margin="0,2,0,0">
                     <Canvas x:Name="HeroIllustration" Width="372" Height="212"
                             HorizontalAlignment="Center"
                             AutomationProperties.AccessibilityView="Raw">
@@ -166,7 +170,7 @@
                                            VerticalAlignment="Center" />
                             </StackPanel>
                         </Border>
-                        <Border Style="{StaticResource ChipStyle}" HorizontalAlignment="Center">
+                        <Border x:Name="ItunesStatusChip" Style="{StaticResource ChipStyle}" HorizontalAlignment="Center">
                             <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
                                 <FontIcon x:Name="ItunesStatusIndicator" Glyph="&#xEC61;"
                                           FontSize="15" Foreground="{ThemeResource SuccessBrush}"
@@ -341,7 +345,7 @@
                     </StackPanel>
                 </StackPanel>
 
-                <Button x:Name="SettingsButton" x:Uid="SettingsButton"
+                <Button x:Name="SettingsButton" Grid.Row="1" x:Uid="SettingsButton"
                         Style="{StaticResource IconButtonStyle}"
                         HorizontalAlignment="Right" VerticalAlignment="Top"
                         Margin="0,6,0,0"

@@ -5,7 +5,7 @@ internal static class CollectionAlbums
     internal static void Validate(string kind, string id)
     {
         if (kind is not ("artists" or "genres")
-            || !ItunesCollectionId.TryDecodeText(id, kind, out _))
+            || !ItunesCollectionId.IsValidText(id, kind))
             throw new ArgumentException("Invalid album collection");
     }
 

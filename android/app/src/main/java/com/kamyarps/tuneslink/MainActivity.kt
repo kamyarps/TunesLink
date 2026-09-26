@@ -49,6 +49,7 @@ import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -77,6 +78,7 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
@@ -252,21 +254,18 @@ private fun TunesLinkApp(
         searchActive = state.library.searchActive,
         editingQuery = state.library.editingQuery,
     )
-    val backHandled = !imeVisible && (state.modal != null || showRecoveryDialog ||
-        state.browse.canNavigateUp || searchBackable ||
-        connectedDestination == TunesLinkDestination.NowPlaying)
+    val backAction = navigationBackAction(state.modal != null, searchBackable, connectedDestination)
+    val browseBackable = connectedDestination == TunesLinkDestination.Library && state.browse.canNavigateUp
+    val backHandled = !imeVisible && (showRecoveryDialog || browseBackable ||
+        backAction != NavigationBackAction.System)
     TunesLinkSharedTransitionRoot {
         BackHandler(enabled = backHandled) {
         if (showRecoveryDialog) {
             requestRecoveryAction(RecoveryDialogAction.Dismiss)
-        } else if (connectedDestination == TunesLinkDestination.Library && state.browse.canNavigateUp) {
+        } else if (state.modal == null && browseBackable) {
             viewModel.navigateUpLibrary()
         } else {
-            when (navigationBackAction(
-                hasModal = state.modal != null,
-                searchActive = searchBackable,
-                destination = connectedDestination,
-            )) {
+            when (backAction) {
                 NavigationBackAction.DismissModal -> viewModel.requestModalDismiss()
                 NavigationBackAction.CancelSearch -> viewModel.cancelSearch()
                 NavigationBackAction.ShowLibrary -> viewModel.navigate(TunesLinkDestination.Library)
@@ -614,6 +613,39 @@ private fun ConnectingScreen(computer: String, padding: PaddingValues) {
 
 @Composable
 private fun ConnectedScreen(
+    state: TunesLinkUiState,
+    destination: TunesLinkDestination,
+    padding: PaddingValues,
+    viewModel: TunesLinkViewModel,
+    showNavigationRail: Boolean,
+    showTabletWorkspace: Boolean,
+    animatedVisibilityScope: androidx.compose.animation.AnimatedVisibilityScope,
+) {
+    Column(Modifier.fillMaxSize().padding(padding)) {
+        state.player.commandError?.let { message ->
+            Row(
+                Modifier.fillMaxWidth().background(TunesLinkTheme.colors.surface)
+                    .padding(horizontal = 16.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(message, modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 3, overflow = TextOverflow.Ellipsis,
+                    color = TunesLinkTheme.colors.danger)
+                TextButton(onClick = viewModel::dismissCommandError) {
+                    Text(stringResource(R.string.dismiss))
+                }
+            }
+        }
+        Box(Modifier.weight(1f)) {
+            ConnectedContent(state, destination, PaddingValues(0.dp), viewModel,
+                showNavigationRail, showTabletWorkspace, animatedVisibilityScope)
+        }
+    }
+}
+
+@Composable
+private fun ConnectedContent(
     state: TunesLinkUiState,
     destination: TunesLinkDestination,
     padding: PaddingValues,

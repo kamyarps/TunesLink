@@ -1,0 +1,111 @@
+name: Android device validation
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: Exact source commit under test
+        required: true
+        type: string
+      release-artifact:
+        description: Optional signed APK artifact from the calling release workflow
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  android-device:
+    name: Android device API ${{ matrix.api-level }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - api-level: 26
+            target: google_apis
+            run-integration: false
+          - api-level: 31
+            target: google_apis
+            run-integration: true
+          - api-level: 36
+            target: google_apis
+            run-integration: true
+        # API 37 permission scenarios are in the integration script. Qualification
+        # on the Windows audit host was blocked by SurfaceFlinger crashes in the
+        # 37.0/37.1 images with emulator 37.1.11 and 37.2.10 (hasReadColorBufferDma).
+        # Add this platform after qualifying a working runner/image combination.
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+      - name: Read build requirements
+        id: requirements
+        shell: pwsh
+        run: |
+          Import-Module ./scripts/BuildRequirements.psm1
+          $required = Get-TunesLinkBuildRequirements -Root $env:GITHUB_WORKSPACE
+          "java=$($required.JavaMajor)" >> $env:GITHUB_OUTPUT
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: ${{ steps.requirements.outputs.java }}
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+      - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+        with:
+          cache-provider: basic
+      - name: Build debug APK
+        working-directory: android
+        run: ./gradlew --no-daemon --warning-mode all --dependency-verification strict :app:assembleDebug
+      - name: Download the signed release APK under test
+        if: inputs.release-artifact != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ARTIFACT: ${{ inputs.release-artifact }}
+        run: >-
+          gh run download "$GITHUB_RUN_ID" --name "$RELEASE_ARTIFACT"
+          --repo "$GITHUB_REPOSITORY" --dir artifacts/device-release
+      - name: Enable KVM access
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' |
+            sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Exercise phone and tablet viewports
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
+        with:
+          api-level: ${{ matrix.api-level }}
+          target: ${{ matrix.target }}
+          arch: x86_64
+          profile: pixel_2
+          ram-size: 4096M
+          heap-size: 512M
+          # The smoke script exercises both enabled and disabled animation policies.
+          disable-animations: false
+          emulator-options: >-
+            -no-window -gpu swiftshader -noaudio -no-boot-anim
+            -camera-back none -camera-front none -no-snapshot-save
+          script: |
+            bash scripts/android-emulator-smoke.sh
+            [ "${{ matrix.run-integration }}" != "true" ] || bash scripts/android-emulator-integration.sh
+            [ -z "${{ inputs.release-artifact }}" ] || bash scripts/android-release-smoke.sh
+      - name: Verify Android visual baselines
+        if: matrix.api-level == 36
+        run: python3 scripts/android-visual-regression.py
+      - name: Verify repository hygiene
+        shell: pwsh
+        run: ./scripts/verify-repository.ps1 -RequireCleanWorktree
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: android-device-api-${{ matrix.api-level }}
+          path: |
+            android/app/build/reports/device-smoke
+            android/app/build/reports/device-integration
+            android/app/build/reports/device-release-smoke
+          if-no-files-found: warn

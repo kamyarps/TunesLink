@@ -109,8 +109,11 @@ public sealed partial class MainWindow : Microsoft.UI.Xaml.Window, IDisposable
             KeepRunningToggle.IsOn = runtime.Preferences.KeepRunningOnClose;
             try
             {
-                StartupRegistration.RepairEnabledPath();
-                OpenAtLoginToggle.IsOn = StartupRegistration.IsEnabled();
+                if (!launch.Demo)
+                {
+                    StartupRegistration.RepairEnabledPath();
+                    OpenAtLoginToggle.IsOn = StartupRegistration.IsEnabled();
+                }
             }
             catch (Exception exception)
             {
@@ -125,7 +128,9 @@ public sealed partial class MainWindow : Microsoft.UI.Xaml.Window, IDisposable
         }
         else
         {
-            SetHeroText(HeroPresentation.Create(0, false));
+            SetHeroText(new HeroPresentation(HeroMode.PairFirstPhone,
+                UiStrings.Get("HeroUnavailableTitle", "Bridge unavailable."),
+                UiStrings.Get("HeroUnavailableDetail", "Restart TunesLink Bridge to restore pairing and playback controls."), false));
             PairCodeText.Text = "— — —";
             AddressText.Text = UiStrings.Get("Unavailable", "Unavailable");
             CopyCodeButton.IsEnabled = false;
@@ -135,8 +140,7 @@ public sealed partial class MainWindow : Microsoft.UI.Xaml.Window, IDisposable
             BackdropRings.Visibility = Visibility.Collapsed;
             SetStatusChip(NetworkStatusIndicator, NetworkStatusText, healthy: false,
                 UiStrings.Get("BridgeNotRunning", "Bridge not running"));
-            SetStatusChip(ItunesStatusIndicator, ItunesStatusText, healthy: false,
-                UiStrings.Get("BridgeNotRunning", "Bridge not running"));
+            ItunesStatusChip.Visibility = Visibility.Collapsed;
         }
         ApplyRuntimeAvailability();
 
@@ -168,6 +172,7 @@ public sealed partial class MainWindow : Microsoft.UI.Xaml.Window, IDisposable
         try
         {
             uiSettings.AdvancedEffectsEnabledChanged += PresentationSettingsChanged;
+            uiSettings.TextScaleFactorChanged += PresentationSettingsChanged;
             advancedEffectsSubscribed = true;
         }
         catch (COMException) { }

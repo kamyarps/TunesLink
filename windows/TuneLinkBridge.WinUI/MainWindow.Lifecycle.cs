@@ -55,7 +55,7 @@ public sealed partial class MainWindow
 
     private void OpenAtLoginToggle_Toggled(object sender, RoutedEventArgs eventArgs)
     {
-        if (restoringPreferences) return;
+        if (restoringPreferences || launch.Demo) return;
         if (!TryGetRuntime("Open at login", out _))
         {
             restoringPreferences = true;
@@ -198,6 +198,7 @@ public sealed partial class MainWindow
         relativeTimer.Stop();
         if (advancedEffectsSubscribed)
             uiSettings.AdvancedEffectsEnabledChanged -= PresentationSettingsChanged;
+        uiSettings.TextScaleFactorChanged -= PresentationSettingsChanged;
         if (highContrastSubscribed)
             accessibilitySettings.HighContrastChanged -= AccessibilitySettingsChanged;
         if (systemEventsSubscribed)

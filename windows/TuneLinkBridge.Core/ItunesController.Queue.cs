@@ -21,8 +21,9 @@ internal sealed partial class ItunesController
     private void PlayManagedCollection(object appObject, string trackId, string kind,
         string collectionId, CancellationToken cancellationToken)
     {
-        if (!ItunesCollectionId.TryDecodeText(collectionId, kind, out string filter))
+        if (!ItunesCollectionId.IsValidText(collectionId, kind))
             throw new MediaNotFoundException("That collection is no longer available");
+        string filter = collectionId;
         long started = Stopwatch.GetTimestamp();
         QueueTrack[] tracks;
         try
@@ -117,16 +118,13 @@ internal sealed partial class ItunesController
                 position = Convert.ToDouble(app.PlayerPosition);
                 playing = Convert.ToInt32(app.PlayerState) == 1;
             }
-            bool muted = Convert.ToBoolean(app.Mute);
-            try
-            {
-                app.Mute = true;
-                playlist.PlayFirstTrack();
-                if (position > 0) app.PlayerPosition = position;
-                if (!playing) app.Pause();
-                SetProperty(playlist, "Shuffle", shuffle);
-            }
-            finally { app.Mute = muted; }
+            cancellationToken.ThrowIfCancellationRequested();
+            // Never change persistent, global mute while in a killable COM worker. A hung
+            // PlayFirstTrack call can prevent any finally block from restoring the user's setting.
+            playlist.PlayFirstTrack();
+            if (!playing) app.Pause();
+            if (position > 0) app.PlayerPosition = position;
+            SetProperty(playlist, "Shuffle", shuffle);
             activated = true;
             int playlistId = ReadInt((object)playlist, "PlaylistID");
             managedQueue = new(playlistId, name, kind, filter, tracks, order, indices);
@@ -183,8 +181,11 @@ internal sealed partial class ItunesController
     {
         if (!TryActiveQueue(appObject, out ManagedQueue active, out int index)) return false;
         (bool shuffle, string repeat) = ReadPlaybackModes(appObject);
+        bool originalShuffle = shuffle;
+        string originalRepeat = repeat;
         shuffle = requestedShuffle ?? shuffle;
         repeat = requestedRepeat is { } value ? value == 1 ? "one" : value == 2 ? "all" : "off" : repeat;
+        if (shuffle == originalShuffle && repeat == originalRepeat) return true;
         dynamic app = appObject;
         ActivateManagedQueue(appObject, active.Tracks, index, active.Kind, active.Filter,
             shuffle, repeat, Convert.ToDouble(app.PlayerPosition), Convert.ToInt32(app.PlayerState) == 1,

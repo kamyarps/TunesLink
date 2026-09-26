@@ -31,11 +31,17 @@ final class BridgeHttpClient {
         final int status;
         final byte[] body;
         final String contentType;
+        final int retryAfterSeconds;
 
         Response(int status, byte[] body, String contentType) {
+            this(status, body, contentType, 0);
+        }
+
+        Response(int status, byte[] body, String contentType, int retryAfterSeconds) {
             this.status = status;
             this.body = body;
             this.contentType = contentType;
+            this.retryAfterSeconds = retryAfterSeconds;
         }
     }
 
@@ -74,10 +80,19 @@ final class BridgeHttpClient {
                     : readLimited(stream, MAX_RESPONSE_BYTES);
             String contentType = connection.getContentType();
             reusable = true;
-            return new Response(status, response, contentType == null ? "" : contentType);
+            return new Response(status, response, contentType == null ? "" : contentType,
+                    status == 429 ? retryAfterSeconds(connection.getHeaderField("Retry-After")) : 0);
         } finally {
             if (cancellation != null) cancellation.detach(connection);
             if (!reusable) connection.disconnect();
+        }
+    }
+
+    static int retryAfterSeconds(String header) {
+        try {
+            return (int) Math.max(1, Math.min(3600, Long.parseLong(header)));
+        } catch (NumberFormatException invalid) {
+            return 60;
         }
     }
 
