@@ -332,7 +332,9 @@ clear_focused_edit_text() {
 }
 
 dismiss_ime_if_visible() {
-  if "$adb_command" shell dumpsys input_method | tr -d '\r' | grep -q 'mInputShown=true'; then
+  # Consume the full dump: grep -q can close the pipe early, causing tr to exit
+  # with SIGPIPE under pipefail and making a visible keyboard look hidden.
+  if "$adb_command" shell dumpsys input_method | tr -d '\r' | grep 'mInputShown=true' >/dev/null; then
     "$adb_command" shell input keyevent 4
     sleep 1
   fi
@@ -691,7 +693,8 @@ connect_manual_address "$bridge_address"
 if [[ -n "$bridge_pid" ]]; then
   replace_focused_edit_text "000000"
   "$adb_command" shell input keyevent KEYCODE_ENTER
-  dismiss_ime_if_visible
+  # Submission hides the keyboard. Sending Back during that asynchronous hide
+  # can reach the dialog instead and cancel pairing; wait for the result first.
   wait_node text "The pairing code was not accepted. Check the current code on your computer." >/dev/null
   for _ in $(seq 1 5); do
     tap_node text "Pair securely"
@@ -712,15 +715,17 @@ if [[ -n "$bridge_pid" ]]; then
     sleep 1
   done
   python3 "$workspace/scripts/android-pairing-cooldown-check.py" "$ui_xml" ready
-  tap_node text "Pair securely"
+  # Restore authoritative field focus after waiting for the cooldown. API 31
+  # can drop a synthetic button tap while the input window is settling.
+  wait_for_pairing_code_field
 else
-# connect_manual_address returns only after the pairing field is focused.
-replace_focused_edit_text "123456"
+  # connect_manual_address returns only after the pairing field is focused.
+  replace_focused_edit_text "123456"
+fi
 # Pairing exposes ImeAction.Done and maps it to the same guarded pair action as
 # the dialog button. Keep submission on the focused field so older emulators do
 # not lose a synthetic button tap during keyboard dismissal.
 "$adb_command" shell input keyevent KEYCODE_ENTER
-fi
 
 wait_node text "Midnight Drive" >/dev/null
 wait_node text "Browse Library" >/dev/null
@@ -733,6 +738,9 @@ capture "paired-library-categories"
 
 # Empty Search must return to Library after any keyboard/search-focus dismissal.
 open_search
+# Wait for navigation to finish before sending Back; API 31 can deliver the
+# preceding navigation tap after the next input command has already arrived.
+wait_node text "Search your music" >/dev/null
 dismiss_ime_if_visible
 "$adb_command" shell input keyevent 4
 dump_ui

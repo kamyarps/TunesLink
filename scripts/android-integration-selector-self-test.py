@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
-"""Regression checks for phone/tablet UI-tree selectors used by emulator CI."""
+"""Regression checks for Android emulator UI selectors and input handling."""
 
 from pathlib import Path
+import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -97,6 +99,72 @@ def classify_kind(xml: str, package: str) -> str:
     return result.stdout.strip()
 
 
+def check_input_helpers(source: str) -> None:
+    # Exercise the real shell helper with a dump larger than a pipe buffer.
+    # API 31 puts mInputShown near the start, so an early-exiting grep can make
+    # the preceding tr fail with SIGPIPE and skip dismissal under pipefail.
+    start = source.index("dismiss_ime_if_visible() {")
+    helper = source[start : source.index("\n}", start) + 2]
+    bash = shutil.which("bash")
+    if sys.platform == "win32":
+        git_bash = Path(os.environ.get("ProgramFiles", "C:/Program Files")) / "Git/bin/bash.exe"
+        if git_bash.is_file():
+            bash = str(git_bash)
+    if not bash:
+        raise AssertionError("Bash is required to test the Android integration helpers")
+    script = "set -euo pipefail\n" + helper + r"""
+adb_command=fake_adb
+back_count=0
+sleep() { :; }
+fake_adb() {
+  case "$*" in
+    'shell dumpsys input_method')
+      printf 'mInputShown=%s\r\n' "$shown"
+      printf '%1048576s\n' ''
+      ;;
+    'shell input keyevent 4') back_count=$((back_count + 1)) ;;
+    *) return 2 ;;
+  esac
+}
+shown=true
+dismiss_ime_if_visible
+[[ "$back_count" == 1 ]] || { echo 'Visible IME was not dismissed' >&2; exit 1; }
+shown=false
+dismiss_ime_if_visible
+[[ "$back_count" == 1 ]] || { echo 'Hidden IME caused an unintended Back action' >&2; exit 1; }
+"""
+    script += IME.read_text(encoding="utf-8") + r"""
+fake_adb() {
+  case "$*" in
+    'shell ime list -a -s'|'shell ime list -s') printf '%s\n' "$available_imes" ;;
+    'shell ime enable '*) : ;;
+    'shell ime set '*) selected_ime="$4" ;;
+    'shell ime disable '*) disabled_ime="$4" ;;
+    'shell am force-stop com.google.android.inputmethod.latin') : ;;
+    *) return 2 ;;
+  esac
+}
+gboard='com.google.android.inputmethod.latin/com.android.inputmethod.latin.LatinIME'
+aosp='com.android.inputmethod.latin/.LatinIME'
+voice='com.google.android.googlequicksearchbox/VoiceInputMethodService'
+selected_ime="$voice"
+disabled_ime=''
+available_imes="$voice"$'\n'"$gboard"
+android_emulator_suppress_gboard_first_run fake_adb
+[[ "$selected_ime" == "$gboard" && -z "$disabled_ime" ]] || {
+  echo 'Gboard-only image was left with voice input' >&2; exit 1;
+}
+available_imes="$available_imes"$'\n'"$aosp"
+android_emulator_suppress_gboard_first_run fake_adb
+[[ "$selected_ime" == "$aosp" && "$disabled_ime" == "$gboard" ]] || {
+  echo 'AOSP keyboard was not preferred over Gboard' >&2; exit 1;
+}
+"""
+    result = subprocess.run([bash, "-c", script], capture_output=True, text=True)
+    if result.returncode != 0:
+        raise AssertionError(f"Input helper regression: {result.stderr.strip()}")
+
+
 def main() -> None:
     # API 31 tablet workspaces expose an empty EditText and a separate Search
     # placeholder; they do not expose the phone-only Cancel or Library nodes.
@@ -113,6 +181,7 @@ def main() -> None:
     match(PHONE_SEARCH, "text", "Songs", None)
 
     source = INTEGRATION.read_text(encoding="utf-8")
+    check_input_helpers(source)
     required_contracts = (
         'node_center edit-text ""',
         'node_center text "Cancel"',
