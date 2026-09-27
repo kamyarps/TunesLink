@@ -103,6 +103,37 @@ internal sealed record HeroPresentation(
     }
 }
 
+/// <summary>
+/// Tracks whether the pairing code is disclosed. The first-run expansion is automatic; only an
+/// explicit "Pair another phone" opens it once a phone is paired, and any newly paired phone
+/// closes a disclosure the user had opened, so the code never lingers on screen.
+/// </summary>
+internal sealed class PairingDisclosure
+{
+    private int? lastDeviceCount;
+
+    public bool UserExpanded { get; private set; }
+
+    public void SetUserExpanded(bool expanded) => UserExpanded = expanded;
+
+    public HeroPresentation Update(int pairedPhoneCount)
+    {
+        if (lastDeviceCount is int previous && pairedPhoneCount > previous) UserExpanded = false;
+        lastDeviceCount = pairedPhoneCount;
+        return HeroPresentation.Create(pairedPhoneCount, UserExpanded);
+    }
+}
+
+internal static class PairingWindowPolicy
+{
+    /// <summary>
+    /// Phones may pair only while the six-digit code is actually in front of the user: the
+    /// window is shown and not minimized, and the pairing panel is expanded.
+    /// </summary>
+    public static bool AcceptsPairing(bool windowShown, bool minimized, bool pairingPanelVisible) =>
+        windowShown && !minimized && pairingPanelVisible;
+}
+
 internal sealed record RuntimeAvailabilityPresentation(
     bool RuntimeAvailable,
     bool CanRequestNewCode,
@@ -132,7 +163,8 @@ internal enum SecurityChangeCause
     UserRequestedNewCode,
     DevicePaired,
     DeviceForgotten,
-    AllDevicesForgotten
+    AllDevicesForgotten,
+    PairCodeReplacedAfterFailedAttempts
 }
 
 internal enum SecurityAnnouncementKind
@@ -142,7 +174,36 @@ internal enum SecurityAnnouncementKind
     NewPairingCodeGenerated,
     DevicePaired,
     DeviceForgotten,
-    AllDevicesForgotten
+    AllDevicesForgotten,
+    PairingCodeReplaced
+}
+
+/// <summary>What the window last showed of the pairing state.</summary>
+internal readonly record struct SecuritySnapshot(
+    int DeviceCount,
+    DateTimeOffset? NewestPairedAt,
+    string PairCode,
+    DateTimeOffset PairCodeExpiresAt);
+
+internal static class SecurityChangeInference
+{
+    /// <summary>
+    /// Explains a change the server raised on its own thread by comparing what the window last
+    /// showed with the current state: a new or re-paired phone, the ten-minute rotation, or a
+    /// replacement after too many wrong codes (the only other way the code changes early).
+    /// </summary>
+    public static SecurityChangeCause Infer(SecuritySnapshot previous, SecuritySnapshot current,
+                                           DateTimeOffset now)
+    {
+        if (current.DeviceCount > previous.DeviceCount
+            || current.NewestPairedAt > previous.NewestPairedAt)
+            return SecurityChangeCause.DevicePaired;
+        if (!string.Equals(current.PairCode, previous.PairCode, StringComparison.Ordinal))
+            return now >= previous.PairCodeExpiresAt
+                ? SecurityChangeCause.AutomaticPairCodeRotation
+                : SecurityChangeCause.PairCodeReplacedAfterFailedAttempts;
+        return SecurityChangeCause.InitialRefresh;
+    }
 }
 
 internal sealed record SecurityAnnouncementDecision(
@@ -157,6 +218,8 @@ internal sealed record SecurityAnnouncementDecision(
                                                       {
                                                           SecurityChangeCause.AutomaticPairCodeRotation when pairingPanelVisible =>
                                                               new(SecurityAnnouncementKind.PairingCodeRotated),
+                                                          SecurityChangeCause.PairCodeReplacedAfterFailedAttempts when pairingPanelVisible =>
+                                                              new(SecurityAnnouncementKind.PairingCodeReplaced),
                                                           SecurityChangeCause.UserRequestedNewCode =>
                                                               new(SecurityAnnouncementKind.NewPairingCodeGenerated),
                                                           SecurityChangeCause.DevicePaired =>
@@ -278,6 +341,105 @@ internal static class NetworkAddressPresentation
 {
     public static string Format(string address, int port) =>
         port > 0 ? $"{address}:{port}" : address;
+
+    /// <summary>Localized help for the address card; Core's diagnostic text stays in the log.</summary>
+    public static string Help(NetworkAddressSelection selection) => selection.Address is null
+        ? UiStrings.Get("PrivateAddressUnavailableHelp",
+            "No private IPv4 network is available. Check VPN, virtual adapters, and Windows Firewall private-network access.")
+        : UiStrings.Format("AddressAdapterHelp", "Using {0} ({1})",
+            selection.Adapter ?? "", selection.Address);
+}
+
+internal static class TimePhrases
+{
+    public static string RelativeLastUsed(TimeSpan elapsed)
+    {
+        if (elapsed < TimeSpan.FromMinutes(2)) return UiStrings.Get("UsedJustNow", "Used just now");
+        if (elapsed < TimeSpan.FromHours(1))
+            return UiStrings.Format("UsedMinutesAgo", "Used {0} minutes ago", (int)elapsed.TotalMinutes);
+        if (elapsed < TimeSpan.FromDays(1))
+        {
+            int hours = Math.Max(1, (int)elapsed.TotalHours);
+            return hours == 1
+                ? UiStrings.Get("UsedOneHourAgo", "Used 1 hour ago")
+                : UiStrings.Format("UsedHoursAgo", "Used {0} hours ago", hours);
+        }
+        int days = Math.Max(1, (int)elapsed.TotalDays);
+        return days == 1
+            ? UiStrings.Get("UsedOneDayAgo", "Used 1 day ago")
+            : UiStrings.Format("UsedDaysAgo", "Used {0} days ago", days);
+    }
+
+    public static string ExpiryAccessibleName(int totalSeconds)
+    {
+        int minutes = Math.Max(0, totalSeconds) / 60;
+        int seconds = Math.Max(0, totalSeconds) % 60;
+        string minutePart = minutes == 1
+            ? UiStrings.Get("DurationOneMinute", "1 minute")
+            : UiStrings.Format("DurationMinutes", "{0} minutes", minutes);
+        string secondPart = seconds == 1
+            ? UiStrings.Get("DurationOneSecond", "1 second")
+            : UiStrings.Format("DurationSeconds", "{0} seconds", seconds);
+        string duration = minutes == 0 ? secondPart
+            : seconds == 0 ? minutePart
+            : UiStrings.Format("DurationMinutesAndSeconds", "{0} and {1}", minutePart, secondPart);
+        return UiStrings.Format("PairingCodeExpiryAccessibleName", "Pairing code expires in {0}", duration);
+    }
+}
+
+internal enum StartupFailureKind
+{
+    PortInUse,
+    PortBlocked,
+    NetworkUnavailable,
+    SettingsAccessDenied,
+    SettingsUnavailable,
+    SecurityIdentity,
+    Unknown
+}
+
+internal static class StartupFailurePresentation
+{
+    public static StartupFailureKind Classify(Exception exception) => exception switch
+    {
+        System.Net.Sockets.SocketException
+        {
+            SocketErrorCode: System.Net.Sockets.SocketError.AddressAlreadyInUse
+        } => StartupFailureKind.PortInUse,
+        System.Net.Sockets.SocketException
+        {
+            SocketErrorCode: System.Net.Sockets.SocketError.AccessDenied
+        } => StartupFailureKind.PortBlocked,
+        System.Net.Sockets.SocketException => StartupFailureKind.NetworkUnavailable,
+        UnauthorizedAccessException => StartupFailureKind.SettingsAccessDenied,
+        System.Security.Cryptography.CryptographicException => StartupFailureKind.SecurityIdentity,
+        IOException => StartupFailureKind.SettingsUnavailable,
+        _ => StartupFailureKind.Unknown
+    };
+
+    /// <summary>A plain-language reason; raw exception messages are English and technical.</summary>
+    public static string Detail(StartupFailureKind kind, int port)
+    {
+        int shownPort = port > 0 ? port : BridgeProtocol.DefaultPort;
+        return kind switch
+        {
+            StartupFailureKind.PortInUse => UiStrings.Format("StartupFailurePortInUse",
+                "Another app is using TunesLink’s network port {0}. Close it, then try again.", shownPort),
+            StartupFailureKind.PortBlocked => UiStrings.Format("StartupFailurePortBlocked",
+                "Windows didn’t let TunesLink use network port {0}. Another app or a system port reservation may be holding it. Close other network apps or restart this PC, then try again.",
+                shownPort),
+            StartupFailureKind.NetworkUnavailable => UiStrings.Get("StartupFailureNetwork",
+                "TunesLink couldn’t start its network connection. Check that this PC is connected to a network, then try again."),
+            StartupFailureKind.SettingsAccessDenied => UiStrings.Get("StartupFailureAccessDenied",
+                "TunesLink doesn’t have permission to open its settings folder. Check that security software isn’t blocking it, then try again."),
+            StartupFailureKind.SettingsUnavailable => UiStrings.Get("StartupFailureSettings",
+                "TunesLink couldn’t read its settings. Another program may be using them. Try again in a moment."),
+            StartupFailureKind.SecurityIdentity => UiStrings.Get("StartupFailureIdentity",
+                "TunesLink couldn’t load its security certificate. Try again. If this keeps happening, restart this PC."),
+            _ => UiStrings.Get("StartupFailureUnknown",
+                "Something unexpected stopped TunesLink from starting. Try again.")
+        };
+    }
 }
 
 internal sealed class CopyFeedbackCoordinator : IDisposable

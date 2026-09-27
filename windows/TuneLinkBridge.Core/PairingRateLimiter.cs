@@ -4,29 +4,33 @@ namespace TunesLinkBridge;
 
 internal sealed class PairingRateLimiter
 {
+    // Times are monotonic offsets from construction, so a wall-clock change can neither lift a
+    // cooldown early nor extend it.
     private sealed class Attempts
     {
         public int Count;
-        public DateTimeOffset WindowStarted;
-        public DateTimeOffset BlockedUntil;
+        public TimeSpan WindowStarted;
+        public TimeSpan BlockedUntil;
     }
 
     private readonly object gate = new();
     private readonly Dictionary<string, Attempts> perAddress = [];
     private readonly Attempts global;
     private readonly TimeProvider timeProvider;
+    private readonly long origin;
 
     public PairingRateLimiter(TimeProvider? timeProvider = null)
     {
         this.timeProvider = timeProvider ?? TimeProvider.System;
-        global = new Attempts { WindowStarted = this.timeProvider.GetUtcNow() };
+        origin = this.timeProvider.GetTimestamp();
+        global = new Attempts { WindowStarted = Now() };
     }
 
     public bool CanAttempt(IPAddress address, out int retryAfter)
     {
         lock (gate)
         {
-            DateTimeOffset now = timeProvider.GetUtcNow();
+            TimeSpan now = Now();
             ResetWindowIfExpired(global, now);
             if (global.BlockedUntil > now)
             {
@@ -59,7 +63,7 @@ internal sealed class PairingRateLimiter
     {
         lock (gate)
         {
-            DateTimeOffset now = timeProvider.GetUtcNow();
+            TimeSpan now = Now();
             string key = address.ToString();
             if (!perAddress.TryGetValue(key, out Attempts? attempts))
             {
@@ -68,11 +72,11 @@ internal sealed class PairingRateLimiter
             }
             ResetWindowIfExpired(attempts, now);
             attempts.Count++;
-            if (attempts.Count >= 5) attempts.BlockedUntil = now.AddMinutes(1);
+            if (attempts.Count >= 5) attempts.BlockedUntil = now + TimeSpan.FromMinutes(1);
 
             ResetWindowIfExpired(global, now);
             global.Count++;
-            if (global.Count >= 20) global.BlockedUntil = now.AddMinutes(5);
+            if (global.Count >= 20) global.BlockedUntil = now + TimeSpan.FromMinutes(5);
         }
     }
 
@@ -81,7 +85,9 @@ internal sealed class PairingRateLimiter
         lock (gate) perAddress.Remove(address.ToString());
     }
 
-    private static void ResetWindowIfExpired(Attempts attempts, DateTimeOffset now)
+    private TimeSpan Now() => timeProvider.GetElapsedTime(origin);
+
+    private static void ResetWindowIfExpired(Attempts attempts, TimeSpan now)
     {
         if (now - attempts.WindowStarted < TimeSpan.FromMinutes(1)) return;
         attempts.Count = 0;
@@ -89,6 +95,6 @@ internal sealed class PairingRateLimiter
         if (attempts.BlockedUntil <= now) attempts.BlockedUntil = default;
     }
 
-    private static int RemainingSeconds(DateTimeOffset until, DateTimeOffset now) =>
+    private static int RemainingSeconds(TimeSpan until, TimeSpan now) =>
         Math.Max(1, (int)Math.Ceiling((until - now).TotalSeconds));
 }

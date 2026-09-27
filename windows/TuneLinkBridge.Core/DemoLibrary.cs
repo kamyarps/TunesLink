@@ -63,10 +63,8 @@ internal static class DemoLibrary
         if (!string.IsNullOrWhiteSpace(query))
         {
             string term = query.Trim();
-            matching = matching.Where(track =>
-                track.Title.Contains(term, StringComparison.OrdinalIgnoreCase)
-                || track.Artist.Contains(term, StringComparison.OrdinalIgnoreCase)
-                || track.Album.Contains(term, StringComparison.OrdinalIgnoreCase));
+            matching = matching.Where(track => LibraryGrouping.MatchesTrack(track.Title,
+                track.Artist, track.Album, track.GroupingArtist, term));
         }
         return PageTracks(matching, offset, limit, Revision(catalog));
     }
@@ -94,11 +92,14 @@ internal static class DemoLibrary
         string term = query.Trim();
         if (term.Length > 0)
         {
-            collections = collections.Where(item => item.Title.Contains(term,
-                StringComparison.OrdinalIgnoreCase));
+            collections = collections.Where(item => LibraryGrouping.Matches(item.Title, term)
+                || LibraryGrouping.Matches(item.Subtitle, term));
         }
-        LibraryCollection[] all = collections.OrderBy(item => item.Title,
-            StringComparer.OrdinalIgnoreCase).ToArray();
+        LibraryCollection[] all = collections
+            .OrderBy(item => item.Title,
+                kind == "playlists" ? LibraryGrouping.NameOrder : LibraryGrouping.TitleOrder)
+            .ThenBy(item => item.Subtitle, LibraryGrouping.TitleOrder)
+            .ThenBy(item => item.Id, StringComparer.Ordinal).ToArray();
         int safeOffset = Math.Clamp(offset, 0, all.Length);
         int safeLimit = Math.Clamp(limit, 1, 60);
         LibraryCollection[] page = all.Skip(safeOffset).Take(safeLimit).ToArray();
@@ -128,8 +129,8 @@ internal static class DemoLibrary
         string term = query.Trim();
         if (term.Length > 0)
         {
-            matching = matching.Where(track => track.Title.Contains(term,
-                StringComparison.OrdinalIgnoreCase));
+            matching = matching.Where(track => LibraryGrouping.MatchesTrack(track.Title,
+                track.Artist, track.Album, track.GroupingArtist, term));
         }
         page = PageTracks(matching, offset, limit, Revision(catalog));
         return true;

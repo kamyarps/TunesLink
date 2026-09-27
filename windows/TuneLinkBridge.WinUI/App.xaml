@@ -31,6 +31,16 @@
                     <Color x:Key="ScreenStartColor">#FFF0836A</Color>
                     <Color x:Key="ScreenMidColor">#FF9C57EE</Color>
                     <Color x:Key="ScreenEndColor">#FF3E6FF0</Color>
+                    <LinearGradientBrush x:Key="PrimaryFillBrush" StartPoint="0,0.5" EndPoint="1,0.5">
+                        <GradientStop Color="#FFD91E5B" Offset="0" />
+                        <GradientStop Color="#FF7A4BE8" Offset="0.55" />
+                        <GradientStop Color="#FF2E63D9" Offset="1" />
+                    </LinearGradientBrush>
+                    <Thickness x:Key="PrimaryBorderThickness">0</Thickness>
+                    <Thickness x:Key="DangerBorderThickness">0</Thickness>
+                    <SolidColorBrush x:Key="ButtonStateBorderPointerOverBrush" Color="{ThemeResource SeparatorColor}" />
+                    <x:Double x:Key="StateLayerHoverOpacity">0.08</x:Double>
+                    <x:Double x:Key="StateLayerPressedOpacity">0.14</x:Double>
                 </ResourceDictionary>
                 <ResourceDictionary x:Key="Light">
                     <Color x:Key="CanvasColor">#FFF6F6F9</Color>
@@ -58,6 +68,16 @@
                     <Color x:Key="ScreenStartColor">#FFFFD2BF</Color>
                     <Color x:Key="ScreenMidColor">#FFE0CDFF</Color>
                     <Color x:Key="ScreenEndColor">#FFBCDFFF</Color>
+                    <LinearGradientBrush x:Key="PrimaryFillBrush" StartPoint="0,0.5" EndPoint="1,0.5">
+                        <GradientStop Color="#FFD91E5B" Offset="0" />
+                        <GradientStop Color="#FF7A4BE8" Offset="0.55" />
+                        <GradientStop Color="#FF2E63D9" Offset="1" />
+                    </LinearGradientBrush>
+                    <Thickness x:Key="PrimaryBorderThickness">0</Thickness>
+                    <Thickness x:Key="DangerBorderThickness">0</Thickness>
+                    <SolidColorBrush x:Key="ButtonStateBorderPointerOverBrush" Color="{ThemeResource SeparatorColor}" />
+                    <x:Double x:Key="StateLayerHoverOpacity">0.06</x:Double>
+                    <x:Double x:Key="StateLayerPressedOpacity">0.11</x:Double>
                 </ResourceDictionary>
                 <ResourceDictionary x:Key="HighContrast">
                     <StaticResource x:Key="CanvasColor" ResourceKey="SystemColorWindowColor" />
@@ -85,6 +105,15 @@
                     <StaticResource x:Key="ScreenStartColor" ResourceKey="SystemColorWindowColor" />
                     <StaticResource x:Key="ScreenMidColor" ResourceKey="SystemColorWindowColor" />
                     <StaticResource x:Key="ScreenEndColor" ResourceKey="SystemColorWindowColor" />
+                    <!-- High contrast: the primary action uses the system highlight pair (never
+                         the brand gradient), states show as borders rather than translucent tints,
+                         and every button keeps a visible edge. -->
+                    <SolidColorBrush x:Key="PrimaryFillBrush" Color="{ThemeResource SystemColorHighlightColor}" />
+                    <Thickness x:Key="PrimaryBorderThickness">2</Thickness>
+                    <Thickness x:Key="DangerBorderThickness">1</Thickness>
+                    <SolidColorBrush x:Key="ButtonStateBorderPointerOverBrush" Color="{ThemeResource SystemColorHighlightColor}" />
+                    <x:Double x:Key="StateLayerHoverOpacity">0</x:Double>
+                    <x:Double x:Key="StateLayerPressedOpacity">0</x:Double>
                 </ResourceDictionary>
             </ResourceDictionary.ThemeDictionaries>
 
@@ -191,6 +220,53 @@
                 <Setter Property="Padding" Value="14,9" />
                 <Setter Property="VerticalAlignment" Value="Center" />
             </Style>
+            <!-- Tonal, icon, and danger buttons keep their own colors in every state. Hover and
+                 press lay a thin tint of the button's text color over its fill (the Android
+                 state layer), so a red Forget button stays red instead of turning Fluent grey. -->
+            <ControlTemplate x:Key="StateLayerButtonTemplate" TargetType="Button">
+                <Grid x:Name="RootGrid"
+                      Background="{TemplateBinding Background}"
+                      BorderBrush="{TemplateBinding BorderBrush}"
+                      BorderThickness="{TemplateBinding BorderThickness}"
+                      CornerRadius="{TemplateBinding CornerRadius}">
+                    <VisualStateManager.VisualStateGroups>
+                        <VisualStateGroup x:Name="CommonStates">
+                            <VisualState x:Name="Normal" />
+                            <VisualState x:Name="PointerOver">
+                                <VisualState.Setters>
+                                    <Setter Target="StateLayer.Opacity" Value="{ThemeResource StateLayerHoverOpacity}" />
+                                    <Setter Target="RootGrid.BorderBrush" Value="{ThemeResource ButtonStateBorderPointerOverBrush}" />
+                                </VisualState.Setters>
+                            </VisualState>
+                            <VisualState x:Name="Pressed">
+                                <VisualState.Setters>
+                                    <Setter Target="StateLayer.Opacity" Value="{ThemeResource StateLayerPressedOpacity}" />
+                                    <Setter Target="RootGrid.BorderBrush" Value="{ThemeResource ButtonStateBorderPointerOverBrush}" />
+                                </VisualState.Setters>
+                            </VisualState>
+                            <VisualState x:Name="Disabled">
+                                <VisualState.Setters>
+                                    <Setter Target="RootGrid.Background" Value="{ThemeResource ButtonBackgroundDisabled}" />
+                                    <Setter Target="RootGrid.BorderBrush" Value="{ThemeResource ButtonBorderBrushDisabled}" />
+                                    <Setter Target="ContentPresenter.Foreground" Value="{ThemeResource ButtonForegroundDisabled}" />
+                                </VisualState.Setters>
+                            </VisualState>
+                        </VisualStateGroup>
+                    </VisualStateManager.VisualStateGroups>
+                    <Border x:Name="StateLayer" Background="{TemplateBinding Foreground}"
+                            CornerRadius="{TemplateBinding CornerRadius}"
+                            Opacity="0" IsHitTestVisible="False" />
+                    <ContentPresenter x:Name="ContentPresenter"
+                                      Content="{TemplateBinding Content}"
+                                      ContentTemplate="{TemplateBinding ContentTemplate}"
+                                      ContentTransitions="{TemplateBinding ContentTransitions}"
+                                      Foreground="{TemplateBinding Foreground}"
+                                      Padding="{TemplateBinding Padding}"
+                                      HorizontalContentAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                      VerticalContentAlignment="{TemplateBinding VerticalContentAlignment}"
+                                      AutomationProperties.AccessibilityView="Raw" />
+                </Grid>
+            </ControlTemplate>
             <Style x:Key="TonalButtonStyle" TargetType="Button">
                 <Setter Property="MinHeight" Value="44" />
                 <Setter Property="CornerRadius" Value="12" />
@@ -199,6 +275,7 @@
                 <Setter Property="BorderBrush" Value="{ThemeResource SeparatorBrush}" />
                 <Setter Property="BorderThickness" Value="1" />
                 <Setter Property="Foreground" Value="{ThemeResource PrimaryTextBrush}" />
+                <Setter Property="Template" Value="{StaticResource StateLayerButtonTemplate}" />
             </Style>
             <Style x:Key="TonalToggleButtonStyle" TargetType="ToggleButton">
                 <Setter Property="MinHeight" Value="44" />
@@ -211,8 +288,8 @@
             </Style>
             <Style x:Key="PrimaryToggleButtonStyle" TargetType="ToggleButton"
                    BasedOn="{StaticResource TonalToggleButtonStyle}">
-                <Setter Property="Background" Value="{StaticResource BrandBrush}" />
-                <Setter Property="BorderThickness" Value="0" />
+                <Setter Property="Background" Value="{ThemeResource PrimaryFillBrush}" />
+                <Setter Property="BorderThickness" Value="{ThemeResource PrimaryBorderThickness}" />
                 <Setter Property="Foreground" Value="{ThemeResource OnBrandTextBrush}" />
                 <Setter Property="FontWeight" Value="SemiBold" />
                 <Setter Property="MinHeight" Value="52" />
@@ -235,7 +312,7 @@
             </Style>
             <Style x:Key="DangerButtonStyle" TargetType="Button" BasedOn="{StaticResource TonalButtonStyle}">
                 <Setter Property="Background" Value="{ThemeResource DangerTintBrush}" />
-                <Setter Property="BorderThickness" Value="0" />
+                <Setter Property="BorderThickness" Value="{ThemeResource DangerBorderThickness}" />
                 <Setter Property="Foreground" Value="{ThemeResource DangerBrush}" />
             </Style>
         </ResourceDictionary>

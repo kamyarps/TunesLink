@@ -53,11 +53,19 @@ internal fun TunesLinkViewModel.sendCommand(action: PlaybackAction, value: Doubl
     mutableState.update { it.copy(player = optimistic) }
     // Commands share an ordered transport lane with play selections. Reconciliation starts
     // after acceptance, so time spent behind a slow queue build is not reported as failure.
-    repository.command(
+    commandRequests[mutation.operationId] = repository.command(
         checkNotNull(action.wireCommand),
         value,
         commandResult(mutation, previous, R.string.playback_command_failed),
     )
+}
+
+/** Abandons queued and in-flight commands whose optimistic state has been discarded. */
+internal fun TunesLinkViewModel.cancelPendingCommands() {
+    val abandoned = commandRequests.values.toList()
+    commandRequests.clear()
+    abandoned.forEach(BridgeRepository.RequestHandle::cancel)
+    playTrackRequest.cancel()
 }
 
 internal fun TunesLinkViewModel.commandResult(
@@ -68,6 +76,7 @@ internal fun TunesLinkViewModel.commandResult(
 ) =
     object : BridgeClient.Result<Boolean> {
         override fun success(value: Boolean) {
+            commandRequests.remove(mutation.operationId)
             val player = mutableState.value.player
             if (player.pending(mutation.action)?.operationId != mutation.operationId) return
             val accepted = if (mutation.action == PlaybackAction.PlayTrack) {
@@ -85,7 +94,11 @@ internal fun TunesLinkViewModel.commandResult(
             scheduleMutationReconciliation(accepted)
         }
 
-        override fun failure(message: String, unauthorized: Boolean) {
+        override fun failure(message: String, unauthorized: Boolean) =
+            failure(message, unauthorized, BridgeClient.ErrorCode.NONE)
+
+        override fun failure(message: String, unauthorized: Boolean, code: BridgeClient.ErrorCode) {
+            commandRequests.remove(mutation.operationId)
             val current = mutableState.value.player
             if (current.pending(mutation.action)?.operationId != mutation.operationId) return
             mutationTimeoutJobs.remove(mutation.operationId)?.cancel()
@@ -112,9 +125,12 @@ internal fun TunesLinkViewModel.commandResult(
                 .forEach { settled ->
                     mutationTimeoutJobs.remove(settled.operationId)?.cancel()
                 }
+            // A typed bridge reason ("iTunes is showing a message…") says more than the generic
+            // copy; legacy bridges keep the action-specific message.
+            val reasonRes = playbackFailureRes(code)
             val failureCopy = getApplication<Application>().getString(
-                failureRes,
-                *failureArguments.toTypedArray(),
+                reasonRes ?: failureRes,
+                *(if (reasonRes == null) failureArguments else emptyList()).toTypedArray(),
             )
             mutableState.update {
                 it.copy(player = restored.copy(
@@ -123,7 +139,8 @@ internal fun TunesLinkViewModel.commandResult(
                 ))
             }
             if (mutation.action == PlaybackAction.PlayTrack) loadArtwork(restored.artworkId)
-            announce(failureRes, failureArguments, HapticIntent.Reject)
+            if (reasonRes != null) announce(reasonRes, haptic = HapticIntent.Reject)
+            else announce(failureRes, failureArguments, HapticIntent.Reject)
         }
     }
 
@@ -231,47 +248,69 @@ internal fun TunesLinkViewModel.announceMutationSuccess(action: PlaybackAction, 
     announce(resource, haptic = HapticIntent.Confirm)
 }
 
+/**
+ * Loads the current cover. The refresh clock only advances when a load settles; a failure
+ * retries with a short backoff while the same cover is still current.
+ */
 internal fun TunesLinkViewModel.loadArtwork(artworkId: String) {
-    artworkRefreshAt = System.currentTimeMillis()
     artworkRequest.cancel()
+    artworkRetryJob?.cancel()
+    artworkRetryJob = null
+    if (artworkId != artworkFailureId) {
+        artworkFailureId = artworkId
+        artworkFailures = 0
+    }
     if (artworkId.isBlank()) {
-        mutableState.update { it.copy(player = it.player.copy(artworkState = ArtworkLoadState.Missing)) }
+        artworkLoaded(artworkId, null)
         return
     }
     repository.cachedArtwork(artworkId, TunesLinkViewModel.ARTWORK_SIZE)?.let { bitmap ->
-        mutableState.update { it.copy(player = it.player.copy(artworkState = ArtworkLoadState.Ready(bitmap))) }
+        artworkLoaded(artworkId, bitmap)
         return
     }
+    // Not due again until this request settles.
+    artworkDueAt = Long.MAX_VALUE
     mutableState.update {
         it.copy(player = it.player.copy(artworkState = ArtworkLoadState.Loading(it.player.artwork)))
     }
     artworkRequest = repository.getArtwork(artworkId, TunesLinkViewModel.ARTWORK_SIZE, object : BridgeClient.Result<Bitmap> {
         override fun success(value: Bitmap?) {
-            if (mutableState.value.player.artworkId == artworkId) {
-                mutableState.update {
-                    it.copy(
-                        player = it.player.copy(
-                            artworkState = value?.let(ArtworkLoadState::Ready) ?: ArtworkLoadState.Missing,
-                        ),
-                    )
-                }
-            }
+            if (mutableState.value.player.artworkId == artworkId) artworkLoaded(artworkId, value)
         }
 
         override fun failure(message: String, unauthorized: Boolean) {
             Log.w(TunesLinkViewModel.TAG, "Artwork request failed: ${message.take(120)}")
-            if (mutableState.value.player.artworkId == artworkId) {
-                mutableState.update {
-                    it.copy(
-                        player = it.player.copy(
-                            artworkState = ArtworkLoadState.FailedRetainingPrevious(
-                                it.player.artwork,
-                                message.take(120),
-                            ),
-                        ),
-                    )
-                }
+            if (mutableState.value.player.artworkId != artworkId) return
+            mutableState.update { it.copy(player = it.player.withArtworkFailure(message.take(120))) }
+            val retryDelay = artworkRetryDelayMillis(++artworkFailures)
+            artworkDueAt = System.currentTimeMillis() + retryDelay
+            artworkRetryJob = viewModelScope.launch {
+                delay(retryDelay)
+                val current = mutableState.value
+                if (current.player.artworkId == artworkId &&
+                    current.connection is ConnectionState.Connected
+                ) loadArtwork(artworkId)
             }
         }
     })
+}
+
+private fun TunesLinkViewModel.artworkLoaded(artworkId: String, bitmap: Bitmap?) {
+    artworkFailures = 0
+    artworkDueAt = System.currentTimeMillis() + ArtworkDiskCache.MAX_AGE_MS
+    mutableState.update {
+        it.copy(
+            player = it.player.copy(
+                artworkState = bitmap?.let(ArtworkLoadState::Ready) ?: ArtworkLoadState.Missing,
+                artworkOwnerId = if (bitmap == null) "" else artworkId,
+            ),
+        )
+    }
+}
+
+/** Reloads when the cover changed, or when its refresh or retry time has come. */
+internal fun TunesLinkViewModel.refreshArtworkIfDue(previousArtworkId: String, artworkId: String) {
+    if (previousArtworkId != artworkId || System.currentTimeMillis() >= artworkDueAt) {
+        loadArtwork(artworkId)
+    }
 }

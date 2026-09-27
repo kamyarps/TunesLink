@@ -76,7 +76,7 @@ public sealed partial class MainWindow
         ContentStack.ChildrenTransitions = policy.ReflowMotionEnabled && !isolatedCapture
             ? contentReflowTransitions : null;
         ringPulseAllowedByPolicy = policy.SpatialMotionEnabled && !isolatedCapture && !heroRasterActive;
-        ApplyRingPulsePolicy(ringPulseAllowedByPolicy && heroReady);
+        ApplyRingPulsePolicy();
         RootGrid.Background = materialsEnabled
             ? new SolidColorBrush(Colors.Transparent)
             : (Brush)Microsoft.UI.Xaml.Application.Current.Resources["CanvasBrush"];
@@ -139,6 +139,19 @@ public sealed partial class MainWindow
         if (heroBounds.Top < settingsBounds.Bottom && heroBounds.Bottom > settingsBounds.Top
             && heroBounds.Left < settingsBounds.Right && heroBounds.Right > settingsBounds.Left)
             throw new InvalidOperationException($"The settings button overlaps the hero heading: {settingsBounds}; {heroBounds}.");
+        VerifyThemeResources();
+        if (runtime is not null
+            && runtime.Security.PairingOpen != (PairingPanel.Visibility == Visibility.Visible))
+            throw new InvalidOperationException("Pairing must be open exactly while the code is on screen.");
+        if (launch.UiState == "startup-failure")
+        {
+            await Task.WhenAny(startupDialogOpened.Task, Task.Delay(TimeSpan.FromSeconds(5)));
+            if (!startupDialogOpened.Task.IsCompleted)
+                throw new InvalidOperationException("The startup-failure dialog did not open.");
+            // Let the dialog's open transition finish so the capture shows its settled state.
+            await Task.Delay(1200);
+            VerifyOpenDialogTargets();
+        }
         if (launch.SnapshotPath is not null) await CaptureSnapshotAsync(launch.SnapshotPath);
         Environment.ExitCode = 0;
         RootGrid.Loaded -= RootGrid_Loaded;
@@ -154,14 +167,17 @@ public sealed partial class MainWindow
         verificationExitTimer.Start();
     }
 
-    private void ApplyRingPulsePolicy(bool pulseEnabled)
+    private void ApplyRingPulsePolicy()
     {
-        // The backdrop rings march outward while a phone is connected; without motion the
-        // static ring positions are shown instead (reduced motion, captures).
+        // The backdrop rings march outward while a phone is connected and the window is on
+        // screen; without motion the static ring positions are shown instead (reduced motion,
+        // captures), and a hidden or minimized window runs no compositor animation at all.
+        bool pulseWanted = ringPulseAllowedByPolicy && heroReady;
+        bool pulseEnabled = pulseWanted && uiActivityActive;
         ringPulseRunning = pulseEnabled;
         if (pulseEnabled) EnsureBackdropWave();
-        if (backdropWave is not null) backdropWave.IsVisible = pulseEnabled;
-        BackdropRings.Visibility = heroReady && !pulseEnabled ? Visibility.Visible : Visibility.Collapsed;
+        else RemoveBackdropWave();
+        BackdropRings.Visibility = heroReady && !pulseWanted ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private static Task WaitForImageReadyAsync(Image image)
@@ -203,6 +219,43 @@ public sealed partial class MainWindow
         }
     }
 
+    private void VerifyThemeResources()
+    {
+        // The high-contrast dictionaries are only resolved when high contrast is on, which a
+        // capture cannot switch; touching every entry still catches a broken key or brush.
+        foreach (ResourceDictionary resources in new[]
+                 {
+                     Microsoft.UI.Xaml.Application.Current.Resources, PairAnotherButton.Resources
+                 })
+        {
+            foreach (object theme in resources.ThemeDictionaries.Values)
+            {
+                if (theme is not ResourceDictionary dictionary) continue;
+                foreach (KeyValuePair<object, object> entry in dictionary)
+                    if (entry.Value is null)
+                        throw new InvalidOperationException($"Theme resource {entry.Key} is empty.");
+            }
+        }
+    }
+
+    private void VerifyOpenDialogTargets()
+    {
+        IReadOnlyList<Microsoft.UI.Xaml.Controls.Primitives.Popup> popups =
+            VisualTreeHelper.GetOpenPopupsForXamlRoot(RootGrid.XamlRoot);
+        if (popups.Count == 0)
+            throw new InvalidOperationException("The startup-failure dialog is not open.");
+        foreach (Microsoft.UI.Xaml.Controls.Primitives.Popup popup in popups)
+        {
+            if (popup.Child is null) continue;
+            foreach (Button button in Descendants(popup.Child).OfType<Button>())
+            {
+                if (button.Visibility == Visibility.Visible && button.ActualWidth > 0
+                    && button.ActualHeight < 44)
+                    throw new InvalidOperationException($"Dialog target is shorter than 44 DIPs: {button.Content}.");
+            }
+        }
+    }
+
     private static IEnumerable<DependencyObject> Descendants(DependencyObject root)
     {
         int count = VisualTreeHelper.GetChildrenCount(root);
@@ -218,7 +271,27 @@ public sealed partial class MainWindow
     {
         RenderTargetBitmap render = new();
         await render.RenderAsync(RootGrid);
-        IBuffer pixels = await render.GetPixelsAsync();
+        byte[] pixels = (await render.GetPixelsAsync()).ToArray();
+        // Rendering the page leaves out popups, so an open dialog is rendered on its own and
+        // composited over the page (both premultiplied BGRA of the same window size). The
+        // list is topmost first, so it is painted in reverse.
+        foreach (Microsoft.UI.Xaml.Controls.Primitives.Popup popup in
+                 VisualTreeHelper.GetOpenPopupsForXamlRoot(RootGrid.XamlRoot).Reverse())
+        {
+            if (popup.Child is not UIElement child) continue;
+            RenderTargetBitmap overlay = new();
+            await overlay.RenderAsync(child);
+            byte[] layer = (await overlay.GetPixelsAsync()).ToArray();
+            if (overlay.PixelWidth != render.PixelWidth || overlay.PixelHeight != render.PixelHeight)
+                throw new InvalidOperationException("A dialog could not be composited into the snapshot.");
+            for (int index = 0; index + 3 < pixels.Length; index += 4)
+            {
+                int inverseAlpha = 255 - layer[index + 3];
+                for (int channel = 0; channel < 4; channel++)
+                    pixels[index + channel] = (byte)Math.Min(255,
+                        layer[index + channel] + (pixels[index + channel] * inverseAlpha + 127) / 255);
+            }
+        }
         string fullPath = Path.GetFullPath(path);
         Directory.CreateDirectory(Path.GetDirectoryName(fullPath)
             ?? throw new InvalidOperationException("Snapshot path has no directory."));
@@ -232,7 +305,7 @@ public sealed partial class MainWindow
             (uint)render.PixelHeight,
             96,
             96,
-            pixels.ToArray());
+            pixels);
         await encoder.FlushAsync();
     }
 
@@ -305,10 +378,7 @@ public sealed partial class MainWindow
         int seconds = Math.Max(0, (int)Math.Ceiling(remaining.TotalSeconds));
         PairExpiryText.Text = UiStrings.Format("PairingCodeExpiry", "Expires in {0}:{1:D2}",
             seconds / 60, seconds % 60);
-        AutomationProperties.SetName(PairExpiryText,
-            UiStrings.Format("PairingCodeExpiryAccessibleName",
-                "Pairing code expires in {0} minutes and {1} seconds",
-                seconds / 60, seconds % 60));
+        AutomationProperties.SetName(PairExpiryText, TimePhrases.ExpiryAccessibleName(seconds));
     }
 
     private void RefreshAddress()
@@ -326,7 +396,7 @@ public sealed partial class MainWindow
                 UiStrings.Get("PrivateAddressUnavailable", "Private address unavailable"),
                 forcedUnavailable
                     ? UiStrings.Get("PrivateAddressUnavailableDetail", "Connect this PC to a private local network.")
-                    : selection.Diagnostic));
+                    : NetworkAddressPresentation.Help(selection)));
         }
         else
         {
@@ -338,7 +408,16 @@ public sealed partial class MainWindow
                 UiStrings.Get("LocalNetworkReady", "Local network ready"));
             ClearProblem(BridgeProblemKind.NetworkUnavailable);
         }
-        AutomationProperties.SetHelpText(AddressText, selection.Diagnostic);
+        // Without discovery a phone cannot find the bridge on its own; say so quietly on the
+        // card that holds the address it must type instead. A preview's disabled port does
+        // not count as a failure.
+        bool discoveryUnavailable = copyableAddress is not null
+            && (launch.UiState == "discovery-unavailable"
+                || (runtime.Options.DiscoveryPort > 0 && !runtime.Server.DiscoveryAvailable));
+        AddressNoteText.Text = UiStrings.Get("DiscoveryUnavailable",
+            "Automatic discovery is unavailable. Enter this address on your phone.");
+        AddressNoteText.Visibility = discoveryUnavailable ? Visibility.Visible : Visibility.Collapsed;
+        AutomationProperties.SetHelpText(AddressText, NetworkAddressPresentation.Help(selection));
         ApplyRuntimeAvailability();
     }
 
@@ -356,7 +435,8 @@ public sealed partial class MainWindow
         {
             BridgeSecurity.PairedDevice device = devices[targetIndex];
             string detail = UiStrings.Format("DevicePairingDetail", "Paired {0:d} · {1}",
-                device.PairedAt.ToLocalTime(), RelativeLastUsed(device.LastSeenAt));
+                device.PairedAt.ToLocalTime(),
+                TimePhrases.RelativeLastUsed(DateTimeOffset.UtcNow - device.LastSeenAt));
             PairedPhonePresentation? existing = pairedPhones.FirstOrDefault(item => item.TokenHash == device.TokenHash);
             if (existing is null)
             {
@@ -371,23 +451,8 @@ public sealed partial class MainWindow
             }
         }
         ForgetAllButton.Visibility = devices.Count >= 2 ? Visibility.Visible : Visibility.Collapsed;
-        lastKnownDeviceCount = devices.Count;
         ApplyHero(devices.Count);
         ApplyRuntimeAvailability();
-    }
-
-    private static string RelativeLastUsed(DateTimeOffset timestamp)
-    {
-        TimeSpan elapsed = DateTimeOffset.UtcNow - timestamp;
-        if (elapsed < TimeSpan.FromMinutes(2)) return UiStrings.Get("UsedJustNow", "Used just now");
-        if (elapsed < TimeSpan.FromHours(1))
-            return UiStrings.Format("UsedMinutesAgo", "Used {0} minutes ago", (int)elapsed.TotalMinutes);
-        if (elapsed < TimeSpan.FromDays(1))
-            return UiStrings.Format("UsedHoursAgo", "Used {0} hours ago", (int)elapsed.TotalHours);
-        int days = Math.Max(1, (int)elapsed.TotalDays);
-        return days == 1
-            ? UiStrings.Get("UsedOneDayAgo", "Used 1 day ago")
-            : UiStrings.Format("UsedDaysAgo", "Used {0} days ago", days);
     }
 
     private async Task RefreshStatusAsync()
@@ -430,13 +495,12 @@ public sealed partial class MainWindow
 
     private void ApplyHero(int pairedPhoneCount)
     {
-        HeroPresentation hero = HeroPresentation.Create(pairedPhoneCount, pairingExpanded);
-        pairingExpanded = hero.PairingExpanded;
+        HeroPresentation hero = pairingDisclosure.Update(pairedPhoneCount);
         SetHeroText(hero);
         // The signal rings exist only while a phone is connected: static rings behind the devices,
         // and the outward pulse on top of them.
         heroReady = hero.Mode == HeroMode.Paired;
-        ApplyRingPulsePolicy(ringPulseAllowedByPolicy && heroReady);
+        ApplyRingPulsePolicy();
         PhoneCheckMark.Visibility = !heroRasterActive && heroReady
             ? Visibility.Visible : Visibility.Collapsed;
         PairingPanel.Visibility = hero.PairingExpanded ? Visibility.Visible : Visibility.Collapsed;
@@ -448,9 +512,9 @@ public sealed partial class MainWindow
             ? UiStrings.Get("HidePairingCode", "Hide pairing code")
             : UiStrings.Get("PairAnotherPhone", "Pair another phone");
         PairAnotherGlyph.Glyph = hero.PairingExpanded ? "\uE70E" : "\uE8FA";
-        AutomationProperties.SetName(PairAnotherButton, hero.PairingExpanded
-            ? UiStrings.Get("HidePairingCode", "Hide pairing code")
-            : UiStrings.Get("ShowPairingCode", "Show pairing code"));
+        // The accessible name matches the visible label so voice control can target it.
+        AutomationProperties.SetName(PairAnotherButton, PairAnotherLabel.Text);
+        UpdatePairingOpen();
     }
 
     private void SetHeroText(HeroPresentation hero)

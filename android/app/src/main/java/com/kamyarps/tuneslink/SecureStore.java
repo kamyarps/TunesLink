@@ -107,6 +107,8 @@ final class SecureStore {
     private final Backend backend;
     private final Crypto crypto;
     private boolean unreadableRecord;
+    /** Pending-revocation count from the last successful read or write; -1 when unknown. */
+    private int pendingCount = -1;
 
     SecureStore(Context context) {
         this(new SharedPreferencesBackend(
@@ -223,8 +225,9 @@ final class SecureStore {
         return removed;
     }
 
+    /** Answered from memory after the first read; every write refreshes it. */
     synchronized int pendingRevocationCount() {
-        return pendingRevocations().size();
+        return pendingCount >= 0 ? pendingCount : pendingRevocations().size();
     }
 
     private State readStateForMutation() throws Exception {
@@ -241,11 +244,14 @@ final class SecureStore {
             }
             byte[] plaintext = crypto.decrypt(Base64.getDecoder().decode(encrypted),
                     Base64.getDecoder().decode(iv));
-            return decode(plaintext);
+            State state = decode(plaintext);
+            pendingCount = state.pending.size();
+            return state;
         }
         SavedBridge legacy = loadLegacy();
         State state = new State(legacy, Collections.emptyList());
         if (legacy != null && migrateLegacy) writeState(state, true);
+        pendingCount = 0;
         return state;
     }
 
@@ -258,7 +264,7 @@ final class SecureStore {
                     Base64.getDecoder().decode(iv)), StandardCharsets.UTF_8);
             return validated(new SavedBridge(
                     backend.getString("id", ""),
-                    backend.getString("name", "My computer"),
+                    backend.getString("name", ""),
                     backend.getString("host", ""),
                     backend.getInt("port", BridgeClient.DEFAULT_PORT),
                     backend.getString("tlsFingerprint", ""), token));
@@ -276,8 +282,10 @@ final class SecureStore {
         values.put(RECORD_IV, Base64.getEncoder().encodeToString(envelope.iv));
         Set<String> removals = removeLegacy ? LEGACY_KEYS : Collections.emptySet();
         if (!backend.commit(values, removals)) {
+            pendingCount = -1;
             throw new IllegalStateException("Could not commit secure pairing");
         }
+        pendingCount = state.pending.size();
     }
 
     private static byte[] encode(State state) throws Exception {

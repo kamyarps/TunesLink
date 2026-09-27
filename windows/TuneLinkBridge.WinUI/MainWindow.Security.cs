@@ -28,33 +28,52 @@ public sealed partial class MainWindow
     private void PairAnother_Click(object sender, RoutedEventArgs eventArgs)
     {
         if (!TryGetRuntime("Pairing", out BridgeRuntime availableRuntime)) return;
-        pairingExpanded = PairAnotherButton.IsChecked == true;
+        pairingDisclosure.SetUserExpanded(PairAnotherButton.IsChecked == true);
         ApplyHero(availableRuntime.Security.Devices.Count);
-        if (pairingExpanded) PairingPanel.StartBringIntoView();
+        if (pairingDisclosure.UserExpanded) PairingPanel.StartBringIntoView();
     }
 
     private void SecurityChanged()
     {
-        SecurityChangeCause cause = pendingSecurityChange;
-        string? deviceName = pendingSecurityDeviceName;
-        pendingSecurityChange = SecurityChangeCause.InitialRefresh;
-        pendingSecurityDeviceName = null;
-        if (runtime is not null && cause == SecurityChangeCause.InitialRefresh)
+        // Changes the UI makes itself are raised synchronously on the UI thread, with their cause
+        // already recorded. The server raises the rest (a phone pairing, a code replaced after
+        // wrong guesses) on its own threads, where no window state may be read; their cause is
+        // inferred on the UI thread instead.
+        if (uiQueue.HasThreadAccess)
         {
-            IReadOnlyList<BridgeSecurity.PairedDevice> devices = runtime.Security.Devices;
-            if (devices.Count > lastKnownDeviceCount)
-            {
-                cause = SecurityChangeCause.DevicePaired;
-                deviceName = devices.OrderByDescending(device => device.PairedAt).FirstOrDefault()?.Name;
-            }
+            SecurityChangeCause cause = pendingSecurityChange;
+            string? deviceName = pendingSecurityDeviceName;
+            pendingSecurityChange = SecurityChangeCause.InitialRefresh;
+            pendingSecurityDeviceName = null;
+            uiQueue.TryEnqueue(() => ApplySecurityChange(cause, deviceName));
+            return;
         }
-        DispatcherQueue.TryEnqueue(() =>
+        uiQueue.TryEnqueue(() => ApplySecurityChange(SecurityChangeCause.InitialRefresh, null));
+    }
+
+    private void ApplySecurityChange(SecurityChangeCause cause, string? deviceName)
+    {
+        if (runtime is null || disposed) return;
+        SecuritySnapshot current = CaptureSecuritySnapshot(runtime);
+        if (cause == SecurityChangeCause.InitialRefresh)
         {
-            RefreshPairing();
-            RefreshDevices();
-            AnnounceSecurityChange(SecurityAnnouncementDecision.Create(cause,
-                PairingPanel.Visibility == Visibility.Visible, deviceName));
-        });
+            cause = SecurityChangeInference.Infer(shownSecurity, current, DateTimeOffset.UtcNow);
+            if (cause == SecurityChangeCause.DevicePaired)
+                deviceName = runtime.Security.Devices.MaxBy(device => device.PairedAt)?.Name;
+        }
+        RefreshPairing();
+        RefreshDevices();
+        shownSecurity = CaptureSecuritySnapshot(runtime);
+        AnnounceSecurityChange(SecurityAnnouncementDecision.Create(cause,
+            PairingPanel.Visibility == Visibility.Visible, deviceName));
+    }
+
+    private static SecuritySnapshot CaptureSecuritySnapshot(BridgeRuntime source)
+    {
+        IReadOnlyList<BridgeSecurity.PairedDevice> devices = source.Security.Devices;
+        return new SecuritySnapshot(devices.Count,
+            devices.Count == 0 ? null : devices.Max(device => device.PairedAt),
+            source.Security.PairCode, source.Security.PairCodeExpiresAt);
     }
 
     private void AnnounceSecurityChange(SecurityAnnouncementDecision decision)
@@ -63,6 +82,9 @@ public sealed partial class MainWindow
         {
             SecurityAnnouncementKind.PairingCodeRotated =>
                 UiStrings.Get("PairingCodeRotated", "Pairing code rotated"),
+            SecurityAnnouncementKind.PairingCodeReplaced =>
+                UiStrings.Get("PairingCodeReplaced",
+                    "Too many incorrect codes were entered, so the pairing code changed. Enter the new code on your phone."),
             SecurityAnnouncementKind.NewPairingCodeGenerated =>
                 UiStrings.Get("NewPairingCodeGenerated", "New pairing code generated"),
             SecurityAnnouncementKind.DevicePaired =>
@@ -79,7 +101,10 @@ public sealed partial class MainWindow
             Announce(message, AutomationNotificationKind.ActionCompleted);
     }
 
-    private void AddressChanged() => DispatcherQueue.TryEnqueue(RefreshAddress);
+    private void AddressChanged() => uiQueue.TryEnqueue(() =>
+    {
+        if (!disposed) RefreshAddress();
+    });
 
     private async void CopyPairCode_Click(object sender, RoutedEventArgs eventArgs)
     {
@@ -110,6 +135,13 @@ public sealed partial class MainWindow
             DataPackage package = new();
             package.SetText(value);
             Clipboard.SetContent(package);
+            // Without a flush the clipboard only holds a promise from this process, and the
+            // copied value vanishes when TunesLink exits.
+            try { Clipboard.Flush(); }
+            catch (Exception exception)
+            {
+                BridgeDiagnostics.Record("clipboard.flush", exception);
+            }
             await SwapCopyContentAsync(content, icon, label,
                 UiStrings.Get("Copied", "Copied"), "\uE73E", token);
             Announce(UiStrings.Format("ValueCopiedAnnouncement", "{0} copied", name),
@@ -317,8 +349,11 @@ public sealed partial class MainWindow
         string? close,
         bool destructive,
         Control? restoreFocus = null,
-        bool restoreFocusAfterPrimary = true)
+        bool restoreFocusAfterPrimary = true,
+        bool initialFocusOnPrimary = false,
+        Action? opened = null)
     {
+        await WhenRootLoadedAsync();
         Control? previous = FocusManager.GetFocusedElement(RootGrid.XamlRoot) as Control;
         ContentDialog dialog = new()
         {
@@ -340,10 +375,12 @@ public sealed partial class MainWindow
         dialog.CloseButtonStyle = (Style)Microsoft.UI.Xaml.Application.Current.Resources["TonalButtonStyle"];
         dialog.Opened += (_, _) => DispatcherQueue.TryEnqueue(() =>
         {
-            Button? initial = FindButton(dialog, close ?? primary);
+            Button? initial = FindButton(dialog,
+                initialFocusOnPrimary ? primary : close ?? primary);
             // Pointer-state focus makes Enter/Space act on the default action without painting
             // the keyboard focus rectangle; Tab navigation still shows it.
             initial?.Focus(FocusState.Pointer);
+            opened?.Invoke();
         });
         ContentDialogResult result = await dialog.ShowAsync();
         if (result != ContentDialogResult.Primary || restoreFocusAfterPrimary)

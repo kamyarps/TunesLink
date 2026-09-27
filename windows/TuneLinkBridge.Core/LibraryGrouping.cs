@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace TunesLinkBridge;
 
 /// <summary>
@@ -12,6 +14,48 @@ internal static class LibraryGrouping
     internal const string UnknownGenre = "Unknown Genre";
     internal const string CompilationArtist = "Various Artists";
     internal const char KeySeparator = '\u001f';
+
+    // What a listener types or scans for: "beyonce" finds "Beyoncé", and full-width or kana
+    // variants match their ordinary forms.
+    private const CompareOptions ListenerOptions = CompareOptions.IgnoreCase
+        | CompareOptions.IgnoreNonSpace | CompareOptions.IgnoreWidth | CompareOptions.IgnoreKanaType;
+    private static readonly CompareInfo Collation = CultureInfo.InvariantCulture.CompareInfo;
+
+    /// <summary>
+    /// Orders artist, album, and genre titles as a listener expects: linguistically, accents
+    /// alongside their base letters, and a leading "The " ignored. Titles equal under that rule
+    /// fall back to a case-insensitive ordinal comparison, so the order is deterministic and
+    /// never interleaves two titles that group separately.
+    /// </summary>
+    internal static readonly IComparer<string> TitleOrder = Comparer<string>.Create((left, right) =>
+    {
+        int result = Collation.Compare(WithoutLeadingArticle(left), WithoutLeadingArticle(right),
+            ListenerOptions);
+        return result != 0 ? result : StringComparer.OrdinalIgnoreCase.Compare(left, right);
+    });
+
+    /// <summary>Orders names the user chose, such as playlists, linguistically as written.</summary>
+    internal static readonly IComparer<string> NameOrder = Comparer<string>.Create((left, right) =>
+    {
+        int result = Collation.Compare(left, right, ListenerOptions);
+        return result != 0 ? result : StringComparer.OrdinalIgnoreCase.Compare(left, right);
+    });
+
+    internal static bool Matches(string text, string term) =>
+        term.Length == 0 || Collation.IndexOf(text, term, ListenerOptions) >= 0;
+
+    /// <summary>The fields a song search looks in, shared by every search path.</summary>
+    internal static bool MatchesTrack(string title, string artist, string album,
+        string albumArtist, string term) =>
+        Matches(title, term) || Matches(artist, term) || Matches(album, term)
+        || Matches(albumArtist, term);
+
+    private static string WithoutLeadingArticle(string? value)
+    {
+        value ??= "";
+        return value.Length > 4 && value.StartsWith("The ", StringComparison.OrdinalIgnoreCase)
+            ? value[4..].TrimStart() : value;
+    }
 
     internal static string DisplayArtist(string artist) =>
         string.IsNullOrWhiteSpace(artist) ? UnknownArtist : artist.Trim();
@@ -56,8 +100,8 @@ internal static class LibraryGrouping
     internal static IEnumerable<T> InCollectionOrder<T>(IEnumerable<T> tracks,
         Func<T, string> album, Func<T, string> albumArtist, Func<T, int> discNumber,
         Func<T, int> trackNumber, Func<T, int> libraryIndex) => tracks
-        .OrderBy(album, StringComparer.OrdinalIgnoreCase)
-        .ThenBy(albumArtist, StringComparer.OrdinalIgnoreCase)
+        .OrderBy(album, TitleOrder)
+        .ThenBy(albumArtist, TitleOrder)
         .ThenBy(track => discNumber(track) > 0 ? discNumber(track) : int.MaxValue)
         .ThenBy(track => trackNumber(track) > 0 ? trackNumber(track) : int.MaxValue)
         .ThenBy(libraryIndex);

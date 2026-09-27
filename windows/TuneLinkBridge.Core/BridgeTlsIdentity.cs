@@ -46,10 +46,14 @@ internal sealed class BridgeTlsIdentity : IDisposable
                     ? WindowsDataProtection.Unprotect(
                         stored.AsSpan(ProtectedHeader.Length).ToArray(), ProtectionEntropy)
                     : stored;
+                // A legacy plaintext identity is re-exported for protection, which requires an
+                // exportable key. Protected identities keep their key non-exportable.
+                bool migrate = OperatingSystem.IsWindows() && !protectedAtRest;
                 X509Certificate2 loaded;
                 try
                 {
-                    loaded = X509CertificateLoader.LoadPkcs12(loadedPfx, null, storageFlags);
+                    loaded = X509CertificateLoader.LoadPkcs12(loadedPfx, null,
+                        migrate ? storageFlags | X509KeyStorageFlags.Exportable : storageFlags);
                 }
                 finally
                 {
@@ -60,10 +64,17 @@ internal sealed class BridgeTlsIdentity : IDisposable
                 if (loaded.HasPrivateKey && loaded.NotAfter.ToUniversalTime()
                         > DateTime.UtcNow.AddDays(30))
                 {
-                    if (OperatingSystem.IsWindows() && !protectedAtRest)
+                    if (migrate)
                     {
                         byte[] migratedPfx = loaded.Export(X509ContentType.Pfx);
-                        try { ProtectAndWrite(path, migratedPfx); }
+                        try
+                        {
+                            ProtectAndWrite(path, migratedPfx);
+                            X509Certificate2 protectedIdentity =
+                                X509CertificateLoader.LoadPkcs12(migratedPfx, null, storageFlags);
+                            loaded.Dispose();
+                            loaded = protectedIdentity;
+                        }
                         catch
                         {
                             loaded.Dispose();
@@ -131,7 +142,12 @@ internal sealed class BridgeTlsIdentity : IDisposable
     private static void WriteAtomically(string path, byte[] contents)
     {
         string temporary = path + ".tmp";
-        File.WriteAllBytes(temporary, contents);
+        using (FileStream stream = new(temporary, FileMode.Create, FileAccess.Write,
+                   FileShare.None, 4096, FileOptions.WriteThrough))
+        {
+            stream.Write(contents);
+            stream.Flush(flushToDisk: true);
+        }
         File.Move(temporary, path, true);
     }
 

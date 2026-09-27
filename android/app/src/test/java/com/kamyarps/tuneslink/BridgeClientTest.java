@@ -71,7 +71,8 @@ public final class BridgeClientTest {
         assertFalse(BridgeClient.isValidBridgeId("x".repeat(129)));
         assertTrue(BridgeClient.isValidPort(45832));
         assertFalse(BridgeClient.isValidPort(0));
-        assertEquals("My computer", BridgeClient.safeBridgeName("\n\t"));
+        // Blank names stay blank on the wire model; the UI shows a localized default.
+        assertEquals("", BridgeClient.safeBridgeName("\n\t"));
         assertEquals(80, BridgeClient.safeBridgeName("x".repeat(100)).length());
     }
 

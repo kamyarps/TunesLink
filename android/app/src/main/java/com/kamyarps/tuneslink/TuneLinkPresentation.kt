@@ -55,7 +55,9 @@ internal data class PendingMutation(
 ) {
     fun matches(state: BridgeClient.PlayerState): Boolean = state.iTunesAvailable && when (action) {
         PlaybackAction.PlayPause -> state.playing == expectedBoolean
-        PlaybackAction.Position -> kotlin.math.abs(state.position - (expectedNumber ?: state.position)) <= 3.0
+        // Seeking to the very end makes iTunes advance; the next song settles the seek.
+        PlaybackAction.Position -> (previousTrackId != null && state.trackId != previousTrackId) ||
+            kotlin.math.abs(state.position - (expectedNumber ?: state.position)) <= 3.0
         PlaybackAction.Volume -> kotlin.math.abs(
             state.volume.toDouble() - (expectedNumber ?: state.volume.toDouble()),
         ) <= 1.0
@@ -72,9 +74,12 @@ internal data class PendingMutation(
 
 internal data class PairingUiState(
     val code: String = "",
+    /** The code itself was rejected (or a legacy bridge gave no reason). */
     val codeError: String? = null,
     val phase: PairingPhase = PairingPhase.Editing,
     val retryAfterSeconds: Int = 0,
+    /** Pairing failed for a reason other than the code, such as pairing not being open. */
+    val message: String? = null,
 ) {
     val canSubmit: Boolean
         get() = code.length == 6 && code.all { it in '0'..'9' } &&
@@ -91,6 +96,25 @@ internal fun TunesLinkUiState.afterTransientCancellation(): TunesLinkUiState = c
     } else pairing,
     manualResolutionBusy = false,
 )
+
+/** Discovery stopped because a dialog took over; the Welcome actions must not stay busy. */
+internal fun TunesLinkUiState.afterDiscoveryCancelled(): TunesLinkUiState =
+    if (connection == ConnectionState.Discovering) copy(connection = ConnectionState.Unpaired) else this
+
+/**
+ * An artwork request failed. A refresh of the same cover keeps it; after a track change the
+ * previous song's cover is not current, so the placeholder shows instead.
+ */
+internal fun PlayerUiState.withArtworkFailure(diagnostic: String): PlayerUiState = copy(
+    artworkState = ArtworkLoadState.FailedRetainingPrevious(
+        if (artworkIsCurrent) artwork else null,
+        diagnostic,
+    ),
+)
+
+/** Short, bounded backoff for retrying a failed cover: 2, 4, 8, 16, 32, then 60 seconds. */
+internal fun artworkRetryDelayMillis(failures: Int): Long =
+    (2_000L shl (failures - 1).coerceIn(0, 5)).coerceAtMost(60_000L)
 
 internal sealed interface ArtworkLoadState {
     val visibleBitmap: Bitmap?
@@ -363,3 +387,65 @@ internal fun mergePlaybackState(
         pendingMutations = remaining,
     )
 }
+
+/** Localized copy for a typed bridge failure; null when the code is absent or context-specific. */
+internal fun bridgeErrorRes(code: BridgeClient.ErrorCode): Int? = when (code) {
+    BridgeClient.ErrorCode.PAIRING_CLOSED -> R.string.error_pairing_closed
+    BridgeClient.ErrorCode.PAIRING_CODE_INCORRECT -> R.string.error_pairing_code
+    BridgeClient.ErrorCode.PAIRING_DEVICE_LIMIT -> R.string.error_device_limit
+    BridgeClient.ErrorCode.PAIRING_SAVE_FAILED -> R.string.error_pairing_save_failed
+    BridgeClient.ErrorCode.PAIRING_RATE_LIMITED -> R.string.pairing_rate_limited
+    BridgeClient.ErrorCode.BUSY -> R.string.error_bridge_busy
+    BridgeClient.ErrorCode.ITUNES_BUSY -> R.string.error_itunes_busy
+    BridgeClient.ErrorCode.ITUNES_UNAVAILABLE -> R.string.error_itunes_unavailable
+    BridgeClient.ErrorCode.NOT_FOUND -> R.string.error_item_not_found
+    else -> null
+}
+
+/** Playback failures that deserve their reason instead of "Couldn't update playback". */
+internal fun playbackFailureRes(code: BridgeClient.ErrorCode): Int? = when (code) {
+    BridgeClient.ErrorCode.BUSY, BridgeClient.ErrorCode.ITUNES_BUSY,
+    BridgeClient.ErrorCode.ITUNES_UNAVAILABLE, BridgeClient.ErrorCode.NOT_FOUND,
+    -> bridgeErrorRes(code)
+    else -> null
+}
+
+/** True when a pairing failure is about the code itself, so it belongs under the code field. */
+internal fun isPairingCodeFailure(code: BridgeClient.ErrorCode, messageRes: Int): Boolean =
+    code == BridgeClient.ErrorCode.PAIRING_CODE_INCORRECT ||
+        (code == BridgeClient.ErrorCode.NONE && messageRes == R.string.error_pairing_code)
+
+/**
+ * Legacy bridges and local failures carry English diagnostics only. Their categories are matched
+ * conservatively; storage is checked before identity so "could not save its pairing identity" is
+ * not reported as a changed computer.
+ */
+internal fun legacyFailureRes(diagnostic: String, fallbackRes: Int): Int {
+    val normalized = diagnostic.lowercase()
+    return when {
+        "update tuneslink bridge" in normalized -> R.string.error_bridge_update_required
+        "already being paired" in normalized -> R.string.error_operation_in_progress
+        "two paired phones" in normalized || "device limit" in normalized ->
+            R.string.error_device_limit
+        "no saved computer" in normalized -> R.string.error_no_saved_computer
+        "could not find the paired computer" in normalized -> R.string.error_computer_not_found
+        "this phone could not save" in normalized || "secure storage" in normalized ||
+            "commit secure pairing" in normalized -> R.string.error_pairing_storage
+        "pairing could not be saved" in normalized -> R.string.error_pairing_save_failed
+        "local network" in normalized || "private ipv4" in normalized ->
+            R.string.error_local_network_only
+        "not a tuneslink bridge" in normalized -> R.string.error_not_TunesLink_bridge
+        "identity" in normalized || "security" in normalized || "invalid token" in normalized ->
+            R.string.error_bridge_identity
+        "pairing" in normalized && ("failed" in normalized || "code" in normalized) ->
+            R.string.error_pairing_code
+        "queue" in normalized && "revocation" in normalized -> R.string.error_revocation_queue_full
+        "revoke" in normalized || "revocation" in normalized || "still authorized" in normalized ->
+            R.string.error_revocation_pending
+        "library" in normalized || "itunes" in normalized -> R.string.error_library_unavailable
+        else -> fallbackRes
+    }
+}
+
+internal fun failureMessageRes(diagnostic: String, fallbackRes: Int, code: BridgeClient.ErrorCode): Int =
+    bridgeErrorRes(code) ?: legacyFailureRes(diagnostic, fallbackRes)

@@ -87,6 +87,46 @@
                     </Rectangle>
                     <Grid x:Name="BackdropWaveHost" Background="Transparent" />
                 </Grid>
+                <!-- Declared before the content so it comes first in Tab order, matching its
+                     top-right position; the z-index keeps it drawn above the illustration. -->
+                <Button x:Name="SettingsButton" Grid.Row="1" x:Uid="SettingsButton"
+                        Style="{StaticResource IconButtonStyle}"
+                        HorizontalAlignment="Right" VerticalAlignment="Top"
+                        Margin="0,6,0,0" Canvas.ZIndex="1"
+                        AutomationProperties.Name="Settings">
+                    <Button.Flyout>
+                        <Flyout x:Name="SettingsFlyout" Placement="BottomEdgeAlignedRight"
+                                FlyoutPresenterStyle="{StaticResource SettingsFlyoutPresenterStyle}"
+                                Opening="SettingsFlyout_Opening"
+                                Opened="SettingsFlyout_Opened">
+                            <StackPanel Width="320" Spacing="16">
+                                <StackPanel Spacing="4">
+                                    <TextBlock x:Uid="SettingsHeading" Text="Settings"
+                                               Style="{StaticResource SectionTitleStyle}" />
+                                    <TextBlock x:Uid="SettingsIntro"
+                                               Text="Choose how TunesLink Bridge behaves in the background."
+                                               Style="{StaticResource SecondaryStyle}" />
+                                </StackPanel>
+                                <StackPanel Spacing="6">
+                                    <ToggleSwitch x:Name="KeepRunningToggle" x:Uid="KeepRunning"
+                                                  Header="Keep TunesLink running when the window closes"
+                                                  AutomationProperties.HelpText="The bridge stays available from the notification area."
+                                                  Toggled="KeepRunningToggle_Toggled" />
+                                    <TextBlock x:Uid="KeepRunningDetail"
+                                               Text="The bridge stays available from the notification area."
+                                               Style="{StaticResource SecondaryStyle}" Margin="0,-4,0,0"
+                                               AutomationProperties.AccessibilityView="Raw" />
+                                </StackPanel>
+                                <Rectangle Height="1" Fill="{ThemeResource SeparatorBrush}" />
+                                <ToggleSwitch x:Name="OpenAtLoginToggle" x:Uid="OpenAtLogin"
+                                              Header="Open at login"
+                                              Toggled="OpenAtLoginToggle_Toggled" />
+                            </StackPanel>
+                        </Flyout>
+                    </Button.Flyout>
+                    <FontIcon Glyph="&#xE713;" FontSize="17" />
+                </Button>
+
                 <StackPanel x:Name="ContentStack" Grid.Row="1" Spacing="16" MaxWidth="400"
                             HorizontalAlignment="Stretch">
                     <StackPanel.ChildrenTransitions>
@@ -191,16 +231,54 @@
                                   HorizontalAlignment="Center" Visibility="Collapsed"
                                   Click="PairAnother_Click">
                         <ToggleButton.Resources>
-                            <StaticResource x:Key="ToggleButtonBackgroundPointerOver" ResourceKey="BrandBrush" />
-                            <StaticResource x:Key="ToggleButtonBackgroundPressed" ResourceKey="BrandBrush" />
-                            <StaticResource x:Key="ToggleButtonBackgroundChecked" ResourceKey="BrandBrush" />
-                            <StaticResource x:Key="ToggleButtonBackgroundCheckedPointerOver" ResourceKey="BrandBrush" />
-                            <StaticResource x:Key="ToggleButtonBackgroundCheckedPressed" ResourceKey="BrandBrush" />
-                            <StaticResource x:Key="ToggleButtonForegroundPointerOver" ResourceKey="OnBrandTextBrush" />
-                            <StaticResource x:Key="ToggleButtonForegroundPressed" ResourceKey="OnBrandTextBrush" />
-                            <StaticResource x:Key="ToggleButtonForegroundChecked" ResourceKey="OnBrandTextBrush" />
-                            <StaticResource x:Key="ToggleButtonForegroundCheckedPointerOver" ResourceKey="OnBrandTextBrush" />
-                            <StaticResource x:Key="ToggleButtonForegroundCheckedPressed" ResourceKey="OnBrandTextBrush" />
+                            <ResourceDictionary>
+                                <!-- Light and dark keep the brand gradient in every state. High
+                                     contrast uses the system highlight pair instead: white text on
+                                     the gradient is unreadable against user-chosen colors. -->
+                                <ResourceDictionary.ThemeDictionaries>
+                                    <ResourceDictionary x:Key="Default">
+                                        <StaticResource x:Key="ToggleButtonBackgroundPointerOver" ResourceKey="BrandBrush" />
+                                        <StaticResource x:Key="ToggleButtonBackgroundPressed" ResourceKey="BrandBrush" />
+                                        <StaticResource x:Key="ToggleButtonBackgroundChecked" ResourceKey="BrandBrush" />
+                                        <StaticResource x:Key="ToggleButtonBackgroundCheckedPointerOver" ResourceKey="BrandBrush" />
+                                        <StaticResource x:Key="ToggleButtonBackgroundCheckedPressed" ResourceKey="BrandBrush" />
+                                        <SolidColorBrush x:Key="ToggleButtonForegroundPointerOver" Color="#FFFFFFFF" />
+                                        <SolidColorBrush x:Key="ToggleButtonForegroundPressed" Color="#FFFFFFFF" />
+                                        <SolidColorBrush x:Key="ToggleButtonForegroundChecked" Color="#FFFFFFFF" />
+                                        <SolidColorBrush x:Key="ToggleButtonForegroundCheckedPointerOver" Color="#FFFFFFFF" />
+                                        <SolidColorBrush x:Key="ToggleButtonForegroundCheckedPressed" Color="#FFFFFFFF" />
+                                    </ResourceDictionary>
+                                    <ResourceDictionary x:Key="Light">
+                                        <StaticResource x:Key="ToggleButtonBackgroundPointerOver" ResourceKey="BrandBrush" />
+                                        <StaticResource x:Key="ToggleButtonBackgroundPressed" ResourceKey="BrandBrush" />
+                                        <StaticResource x:Key="ToggleButtonBackgroundChecked" ResourceKey="BrandBrush" />
+                                        <StaticResource x:Key="ToggleButtonBackgroundCheckedPointerOver" ResourceKey="BrandBrush" />
+                                        <StaticResource x:Key="ToggleButtonBackgroundCheckedPressed" ResourceKey="BrandBrush" />
+                                        <SolidColorBrush x:Key="ToggleButtonForegroundPointerOver" Color="#FFFFFFFF" />
+                                        <SolidColorBrush x:Key="ToggleButtonForegroundPressed" Color="#FFFFFFFF" />
+                                        <SolidColorBrush x:Key="ToggleButtonForegroundChecked" Color="#FFFFFFFF" />
+                                        <SolidColorBrush x:Key="ToggleButtonForegroundCheckedPointerOver" Color="#FFFFFFFF" />
+                                        <SolidColorBrush x:Key="ToggleButtonForegroundCheckedPressed" Color="#FFFFFFFF" />
+                                    </ResourceDictionary>
+                                    <ResourceDictionary x:Key="HighContrast">
+                                        <SolidColorBrush x:Key="ToggleButtonBackgroundPointerOver" Color="{ThemeResource SystemColorHighlightTextColor}" />
+                                        <SolidColorBrush x:Key="ToggleButtonBackgroundPressed" Color="{ThemeResource SystemColorHighlightColor}" />
+                                        <SolidColorBrush x:Key="ToggleButtonBackgroundChecked" Color="{ThemeResource SystemColorHighlightColor}" />
+                                        <SolidColorBrush x:Key="ToggleButtonBackgroundCheckedPointerOver" Color="{ThemeResource SystemColorHighlightTextColor}" />
+                                        <SolidColorBrush x:Key="ToggleButtonBackgroundCheckedPressed" Color="{ThemeResource SystemColorHighlightColor}" />
+                                        <SolidColorBrush x:Key="ToggleButtonForegroundPointerOver" Color="{ThemeResource SystemColorHighlightColor}" />
+                                        <SolidColorBrush x:Key="ToggleButtonForegroundPressed" Color="{ThemeResource SystemColorHighlightTextColor}" />
+                                        <SolidColorBrush x:Key="ToggleButtonForegroundChecked" Color="{ThemeResource SystemColorHighlightTextColor}" />
+                                        <SolidColorBrush x:Key="ToggleButtonForegroundCheckedPointerOver" Color="{ThemeResource SystemColorHighlightColor}" />
+                                        <SolidColorBrush x:Key="ToggleButtonForegroundCheckedPressed" Color="{ThemeResource SystemColorHighlightTextColor}" />
+                                        <SolidColorBrush x:Key="ToggleButtonBorderBrushPointerOver" Color="{ThemeResource SystemColorHighlightColor}" />
+                                        <SolidColorBrush x:Key="ToggleButtonBorderBrushPressed" Color="{ThemeResource SystemColorHighlightTextColor}" />
+                                        <SolidColorBrush x:Key="ToggleButtonBorderBrushChecked" Color="{ThemeResource SystemColorHighlightColor}" />
+                                        <SolidColorBrush x:Key="ToggleButtonBorderBrushCheckedPointerOver" Color="{ThemeResource SystemColorHighlightColor}" />
+                                        <SolidColorBrush x:Key="ToggleButtonBorderBrushCheckedPressed" Color="{ThemeResource SystemColorHighlightTextColor}" />
+                                    </ResourceDictionary>
+                                </ResourceDictionary.ThemeDictionaries>
+                            </ResourceDictionary>
                         </ToggleButton.Resources>
                         <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
                             <FontIcon x:Name="PairAnotherGlyph" Glyph="&#xE8FA;" FontSize="18"
@@ -228,7 +306,7 @@
                                        Style="{StaticResource SecondaryStyle}"
                                        Text="Expires in 10:00" TextAlignment="Center"
                                        HorizontalAlignment="Center" />
-                            <StackPanel Orientation="Horizontal" Spacing="10"
+                            <StackPanel x:Name="PairCodeActions" Orientation="Horizontal" Spacing="10"
                                         HorizontalAlignment="Center" Margin="0,6,0,2">
                                 <Button x:Name="CopyCodeButton" x:Uid="CopyCode" MinWidth="96"
                                         Style="{StaticResource TonalButtonStyle}"
@@ -244,9 +322,10 @@
                                         Content="New code"
                                         Style="{StaticResource TonalButtonStyle}"
                                         Click="NewCode_Click"
-                                        AutomationProperties.Name="Generate a new pairing code" />
+                                        AutomationProperties.Name="New code"
+                                        AutomationProperties.HelpText="Generate a new pairing code" />
                             </StackPanel>
-                            <TextBlock x:Uid="CodeDetail"
+                            <TextBlock x:Name="CodeDetailText" x:Uid="CodeDetail"
                                        Text="Enter this code in TunesLink on your phone."
                                        Style="{StaticResource SecondaryStyle}"
                                        TextAlignment="Center" HorizontalAlignment="Center" />
@@ -265,6 +344,9 @@
                                 <TextBlock x:Name="AddressText" x:Uid="AddressValue"
                                            Text="Unavailable" Style="{StaticResource ValueStyle}"
                                            TextTrimming="CharacterEllipsis" />
+                                <TextBlock x:Name="AddressNoteText"
+                                           Style="{StaticResource SecondaryStyle}"
+                                           Visibility="Collapsed" Margin="0,2,0,0" />
                             </StackPanel>
                             <Button x:Name="CopyAddressButton" x:Uid="CopyAddress"
                                     Grid.Column="1" MinWidth="96"
@@ -344,44 +426,6 @@
                         </Border>
                     </StackPanel>
                 </StackPanel>
-
-                <Button x:Name="SettingsButton" Grid.Row="1" x:Uid="SettingsButton"
-                        Style="{StaticResource IconButtonStyle}"
-                        HorizontalAlignment="Right" VerticalAlignment="Top"
-                        Margin="0,6,0,0"
-                        ToolTipService.ToolTip="Settings"
-                        AutomationProperties.Name="Settings">
-                    <Button.Flyout>
-                        <Flyout x:Name="SettingsFlyout" Placement="BottomEdgeAlignedRight"
-                                FlyoutPresenterStyle="{StaticResource SettingsFlyoutPresenterStyle}"
-                                Opened="SettingsFlyout_Opened">
-                            <StackPanel Width="320" Spacing="16">
-                                <StackPanel Spacing="4">
-                                    <TextBlock x:Uid="SettingsHeading" Text="Settings"
-                                               Style="{StaticResource SectionTitleStyle}" />
-                                    <TextBlock x:Uid="SettingsIntro"
-                                               Text="Choose how TunesLink Bridge behaves in the background."
-                                               Style="{StaticResource SecondaryStyle}" />
-                                </StackPanel>
-                                <StackPanel Spacing="6">
-                                    <ToggleSwitch x:Name="KeepRunningToggle" x:Uid="KeepRunning"
-                                                  Header="Keep TunesLink running when the window closes"
-                                                  AutomationProperties.HelpText="The bridge stays available from the notification area."
-                                                  Toggled="KeepRunningToggle_Toggled" />
-                                    <TextBlock x:Uid="KeepRunningDetail"
-                                               Text="The bridge stays available from the notification area."
-                                               Style="{StaticResource SecondaryStyle}" Margin="0,-4,0,0"
-                                               AutomationProperties.AccessibilityView="Raw" />
-                                </StackPanel>
-                                <Rectangle Height="1" Fill="{ThemeResource SeparatorBrush}" />
-                                <ToggleSwitch x:Name="OpenAtLoginToggle" x:Uid="OpenAtLogin"
-                                              Header="Open at login"
-                                              Toggled="OpenAtLoginToggle_Toggled" />
-                            </StackPanel>
-                        </Flyout>
-                    </Button.Flyout>
-                    <FontIcon Glyph="&#xE713;" FontSize="17" />
-                </Button>
             </Grid>
         </ScrollViewer>
 

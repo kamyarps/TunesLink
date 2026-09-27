@@ -19,8 +19,9 @@ internal readonly record struct LibraryIndexFileStamp(
 internal sealed class LibraryIndexStore
 {
     // Version 4 moved the album artist onto each track so the wire model and the queue share it.
+    // Version 6 leaves out videos, podcasts, and audiobooks and orders collections linguistically.
     // An older index is discarded rather than reused so a stale grouping never survives an update.
-    internal const int SchemaVersion = 5;
+    internal const int SchemaVersion = 6;
     internal const int MaxFileBytes = 128 * 1024 * 1024;
     internal const int MaxItems = 1_000_000;
 

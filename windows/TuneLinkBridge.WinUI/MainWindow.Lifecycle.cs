@@ -25,8 +25,28 @@ namespace TunesLinkBridge;
 
 public sealed partial class MainWindow
 {
+    private void SettingsFlyout_Opening(object sender, object args) => ReadOpenAtLogin();
+
     private void SettingsFlyout_Opened(object sender, object args) =>
         DispatcherQueue.TryEnqueue(() => KeepRunningToggle.Focus(FocusState.Programmatic));
+
+    private void ReadOpenAtLogin()
+    {
+        // Task Manager and Settings can disable the entry while TunesLink runs, so the toggle is
+        // re-read whenever settings open. Previews never touch the real startup registry.
+        if (runtime is null || launch.Demo) return;
+        bool enabled;
+        try { enabled = StartupRegistration.IsEnabled(); }
+        catch (Exception exception)
+        {
+            BridgeDiagnostics.Record("startup.read", exception);
+            return;
+        }
+        if (OpenAtLoginToggle.IsOn == enabled) return;
+        restoringPreferences = true;
+        OpenAtLoginToggle.IsOn = enabled;
+        restoringPreferences = false;
+    }
     private void KeepRunningToggle_Toggled(object sender, RoutedEventArgs eventArgs)
     {
         if (restoringPreferences) return;
@@ -78,7 +98,10 @@ public sealed partial class MainWindow
 
     private void AppWindow_Closing(AppWindow sender, AppWindowClosingEventArgs args)
     {
-        if (explicitExit || runtime is null || !runtime.Preferences.KeepRunningOnClose) return;
+        // Without a notification-area icon (isolated previews) a hidden window could never
+        // come back, so closing always exits there.
+        if (explicitExit || runtime is null || tray is null
+            || !runtime.Preferences.KeepRunningOnClose) return;
         args.Cancel = true;
         AppWindow.Hide();
         StopUiActivity();
@@ -89,10 +112,10 @@ public sealed partial class MainWindow
         }
     }
 
-    private void AppWindow_Changed(AppWindow sender, AppWindowChangedEventArgs args)
-    {
-        if (args.DidVisibilityChange) UpdateUiActivity();
-    }
+    // Minimize and restore surface as presenter, position, and size changes rather than as a
+    // visibility change, so every change re-evaluates; the evaluation is cheap and idempotent.
+    private void AppWindow_Changed(AppWindow sender, AppWindowChangedEventArgs args) =>
+        UpdateUiActivity();
 
     private void ResizeWindowToRequestedSize()
     {
@@ -139,57 +162,100 @@ public sealed partial class MainWindow
         AppWindow.ResizeClient(target);
     }
 
+    private bool IsMinimized()
+    {
+        if (AppWindow.Presenter is OverlappedPresenter { State: OverlappedPresenterState.Minimized })
+            return true;
+        return IsIconic(WinRT.Interop.WindowNative.GetWindowHandle(this));
+    }
+
     private void UpdateUiActivity()
     {
-        if (suppressVisibilityLifecycle) return;
-        if (AppWindow.IsVisible) StartUiActivity();
+        if (suppressVisibilityLifecycle || disposed) return;
+        // A minimized window is still "visible" to AppWindow, but nobody can see it: timers,
+        // status polls, and the compositor wave pause until it is restored.
+        if (AppWindow.IsVisible && !IsMinimized()) StartUiActivity();
         else StopUiActivity();
     }
 
     private void StartUiActivity()
     {
-        if (uiActivityActive || runtime is null) return;
+        if (uiActivityActive || runtime is null)
+        {
+            UpdatePairingOpen();
+            return;
+        }
         uiActivityActive = true;
         RefreshAll();
         pairTimer.Start();
         statusTimer.Start();
         relativeTimer.Start();
-        runtime.AddressSelector.Refresh();
+        runtime.AddressSelector.RequestRefresh();
+        ApplyRingPulsePolicy();
+        UpdatePairingOpen();
         _ = RefreshStatusAsync();
     }
 
     private void StopUiActivity()
     {
-        if (!uiActivityActive) return;
-        uiActivityActive = false;
-        pairTimer.Stop();
-        statusTimer.Stop();
-        relativeTimer.Stop();
+        if (uiActivityActive)
+        {
+            uiActivityActive = false;
+            pairTimer.Stop();
+            statusTimer.Stop();
+            relativeTimer.Stop();
+            ApplyRingPulsePolicy();
+        }
+        UpdatePairingOpen();
     }
 
-    private void ShowFromExternalInstance()
+    /// <summary>
+    /// Opens pairing only while the six-digit code is actually on screen. Every transition that
+    /// can hide or show it (visibility, minimize and restore, the panel expanding or collapsing,
+    /// the device count changing) ends here.
+    /// </summary>
+    private void UpdatePairingOpen()
     {
-        DispatcherQueue.TryEnqueue(() =>
+        if (runtime is null) return;
+        bool shown = uiActivityActive && !disposed;
+        runtime.Security.PairingOpen = PairingWindowPolicy.AcceptsPairing(
+            shown, shown && IsMinimized(), PairingPanel.Visibility == Visibility.Visible);
+    }
+
+    internal void ShowFromExternalInstance()
+    {
+        uiQueue.TryEnqueue(() =>
         {
+            if (disposed) return;
             AppWindow.Show();
+            // Show does not restore a minimized window, and a window restored from the
+            // taskbar's minimized state must also come to the front.
+            if (AppWindow.Presenter is OverlappedPresenter presenter
+                && (presenter.State == OverlappedPresenterState.Minimized || IsMinimized()))
+                presenter.Restore(true);
             Activate();
-            StartUiActivity();
+            _ = SetForegroundWindow(WinRT.Interop.WindowNative.GetWindowHandle(this));
+            UpdateUiActivity();
         });
     }
 
-    private void ExitApplication()
+    internal void ExitApplication()
     {
-        DispatcherQueue.TryEnqueue(() =>
+        uiQueue.TryEnqueue(() =>
         {
             explicitExit = true;
             Close();
         });
     }
 
+    /// <summary>Closes a startup-failure window that Retry has replaced.</summary>
+    internal void CloseReplaced() => ExitApplication();
+
     private void Window_Closed(object sender, WindowEventArgs args)
     {
         if (runtime is not null)
         {
+            runtime.Security.PairingOpen = false;
             runtime.Security.Changed -= SecurityChanged;
             runtime.AddressSelector.Changed -= AddressChanged;
         }
@@ -233,6 +299,14 @@ public sealed partial class MainWindow
     [DllImport("user32.dll")]
     private static extern uint GetDpiForWindow(nint window);
 
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool IsIconic(nint window);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetForegroundWindow(nint window);
+
     [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
     private static extern nint GetWindowLongPtr(nint window, int index);
 
@@ -248,7 +322,7 @@ public sealed partial class MainWindow
     {
         if (disposed) return;
         disposed = true;
-        tray.Dispose();
+        tray?.Dispose();
         GC.SuppressFinalize(this);
     }
 }

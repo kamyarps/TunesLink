@@ -29,6 +29,26 @@ internal static partial class BridgeSelfTest
             PlaybackStateUpdate recovered = await subscription.Reader.ReadAsync(timeout.Token);
             Ensure(recovered.State.ITunesAvailable && recovered.Sequence > failed.Sequence,
                 "worker recovery reaches SSE subscribers");
+
+            // A busy worker is not a closed iTunes: phones keep the last good state until the
+            // failures persist.
+            media.Failure = () => new ItunesWorkerException(ItunesWorkerFailureCategory.ItunesBusy,
+                "Injected busy iTunes");
+            int failuresBefore = media.StateFailures;
+            media.FailState = true;
+            hub.Wake();
+            await Task.Delay(250, timeout.Token);
+            Ensure(media.StateFailures > failuresBefore && !subscription.Reader.TryRead(out _)
+                && hub.Current?.ITunesAvailable == true,
+                "a transient state failure keeps the last good state");
+            PlaybackStateUpdate persistent = await subscription.Reader.ReadAsync(timeout.Token);
+            Ensure(!persistent.State.ITunesAvailable
+                && media.StateFailures - failuresBefore >= 3,
+                "repeated state failures report iTunes unavailable");
+            media.FailState = false;
+            media.Failure = () => new MediaUnavailableException("Injected backend failure");
+            hub.Wake();
+            _ = await subscription.Reader.ReadAsync(timeout.Token);
         }
 
         media.FailState = true;
@@ -201,11 +221,18 @@ internal static partial class BridgeSelfTest
     private sealed class ReleaseProbeMedia : IMediaController
     {
         public volatile bool FailState;
+        public Func<Exception> Failure = () => new MediaUnavailableException("Injected backend failure");
+        private int stateFailures;
+        public int StateFailures => Volatile.Read(ref stateFailures);
         public int LastOffset { get; private set; }
 
         public Task<PlaybackState> GetStateAsync(CancellationToken cancellationToken = default)
         {
-            if (FailState) throw new IOException("Injected backend failure");
+            if (FailState)
+            {
+                Interlocked.Increment(ref stateFailures);
+                throw Failure();
+            }
             return Task.FromResult(new PlaybackState(true, true, "Song", "Artist", "Album",
                 180, 30, 50, "", "track-001", false, "off"));
         }

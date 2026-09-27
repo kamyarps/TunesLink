@@ -1,3 +1,5 @@
+using System.Buffers.Binary;
+using System.Collections;
 using System.Collections.Concurrent;
 using System.Drawing.Imaging;
 using System.Globalization;
@@ -15,11 +17,44 @@ internal sealed partial class ItunesController : IMediaController
     internal const int MaxArtworkCacheBytes = 24 * 1024 * 1024;
     internal static readonly TimeSpan LibrarySnapshotLifetime = TimeSpan.FromMinutes(5);
     internal static readonly TimeSpan ArtworkLifetime = TimeSpan.FromMinutes(5);
+    // Previous restarts a song that has played longer than this, as music players do.
+    internal const double PreviousRestartSeconds = 3;
     private const int MaxArtworkDimension = 4096;
     private const long MaxArtworkPixels = 16_000_000;
     private const string DefaultManagedQueuePrefix =
         "TunesLink Playback Queue [managed-7f4d6b21]-";
     private readonly string managedQueuePrefix;
+
+    // IITUserPlaylist.SpecialKind values. Only playlists a listener made (and Purchased) are
+    // browsable; the media kinds below also hold the library's videos, podcasts, and audiobooks.
+    private const int SpecialKindNone = 0;
+    private const int SpecialKindPurchased = 1;
+    private const int SpecialKindPodcasts = 3;
+    private const int SpecialKindMovies = 7;
+    private const int SpecialKindTvShows = 8;
+    private const int SpecialKindAudiobooks = 9;
+
+    // _IiTunesEvents, verified against iTunes 12.13 with IConnectionPointContainer.
+    private static readonly Guid ItunesEventsId = new("5846EB78-317E-4B6F-B0C3-11EE8C8FEEF2");
+    private const int QuittingEventId = 8;
+    private const int AboutToPromptUserToQuitEventId = 9;
+    // After iTunes announces it is quitting, the bridge waits for that process to exit (plus a
+    // grace period) before connecting again, so a request cannot relaunch a closing iTunes. If
+    // iTunes is still running long after, the quit was canceled and the bridge reconnects.
+    private static readonly TimeSpan QuitGrace = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan QuitWaitLimit = TimeSpan.FromSeconds(30);
+
+    // A playlist's revision costs an enumeration of the playlist, so consecutive pages share it.
+    private static readonly TimeSpan PlaylistRevisionLifetime = TimeSpan.FromSeconds(5);
+    private const int MaxPlaylistRevisions = 64;
+
+    internal readonly record struct ItunesProcess(int Id, DateTime StartedAt);
+
+    private sealed record ExcludedMedia(string LibraryStamp, HashSet<int> DatabaseIds,
+        int[]? LibraryIndices);
+
+    private sealed record PlaylistRevision(int Count, string Revision, long ComputedAt);
+
     private sealed class WorkItem
     {
         public required Func<object?> Action { get; init; }
@@ -74,15 +109,25 @@ internal sealed partial class ItunesController : IMediaController
     private readonly LibraryIndexStore libraryIndexStore;
     private LibraryIndexFileStamp? libraryIndexStamp;
     private readonly TimeProvider timeProvider;
+    private readonly Func<ItunesProcess[]> listItunesProcesses;
+    private readonly Dictionary<ItunesPlaylistLocator, PlaylistRevision> playlistRevisions = [];
+    private ExcludedMedia? excludedMedia;
+    private Action? quitHandler;
+    private ItunesProcess[]? quittingProcesses;
+    private long quitObservedAt;
+    private long? quitExitedAt;
+    private int workDepth;
     private dynamic? itunes;
     private bool disposed;
 
     public ItunesController(string? configDirectory = null,
                             IAtomicFilePersistence? persistence = null, TimeProvider? timeProvider = null,
-                            string managedQueuePrefix = DefaultManagedQueuePrefix)
+                            string managedQueuePrefix = DefaultManagedQueuePrefix,
+                            Func<ItunesProcess[]>? itunesProcesses = null)
     {
         this.managedQueuePrefix = managedQueuePrefix;
         this.timeProvider = timeProvider ?? TimeProvider.System;
+        listItunesProcesses = itunesProcesses ?? RunningItunesProcesses;
         string directory = configDirectory ?? BrandPaths.UserConfigDirectory();
         queueStatePath = Path.Combine(directory, "Cache", "managed-queue-v1.json");
         queuePersistence = persistence ?? AtomicFilePersistence.Instance;
@@ -140,6 +185,12 @@ internal sealed partial class ItunesController : IMediaController
                 ReleaseCom(track);
             }
         }
+        catch (COMException exception) when (ItunesWorkerProtocol.ClassifyComFailure(
+            exception.HResult) == ItunesWorkerFailureCategory.ItunesBusy)
+        {
+            // A dialog in iTunes, not a closed iTunes: keep the connection and report busy.
+            throw;
+        }
         catch
         {
             ReleaseITunes();
@@ -153,21 +204,25 @@ internal sealed partial class ItunesController : IMediaController
         LibrarySnapshot? snapshot = CurrentLibrarySnapshot();
         if (snapshot is not null) return PageSnapshotTracks(snapshot, query, offset, limit);
         dynamic app = GetITunes();
-        if (ValidatePersistedLibrarySnapshot((object)app, cancellationToken) is { } persisted)
+        if (UsableLibrarySnapshot((object)app, cancellationToken) is { } persisted)
             return PageSnapshotTracks(persisted, query, offset, limit);
         dynamic? playlist = null;
         dynamic? tracks = null;
         try
         {
             playlist = app.LibraryPlaylist;
-            if (string.IsNullOrWhiteSpace(query))
+            bool browsing = string.IsNullOrWhiteSpace(query);
+            ExcludedMedia excluded = ExcludedMediaFor((object)app, (object)playlist,
+                withLibraryIndices: browsing, cancellationToken);
+            if (browsing)
             {
                 tracks = playlist.Tracks;
-                return ReadTrackPage((object?)tracks, offset, limit, cancellationToken);
+                return ReadTrackPage((object?)tracks, offset, limit, cancellationToken,
+                    excluded: excluded);
             }
             tracks = playlist.Search(query.Trim(), SearchAllFields);
             return ReadSearchPage((object?)tracks, query.Trim(), offset, limit,
-                cancellationToken);
+                excluded.DatabaseIds, cancellationToken);
         }
         finally
         {
@@ -195,8 +250,7 @@ internal sealed partial class ItunesController : IMediaController
         CollectionAlbums.Validate(kind, id);
         string filter = id;
         object app = GetITunes();
-        LibrarySnapshot snapshot = CurrentLibrarySnapshot()
-            ?? ValidatePersistedLibrarySnapshot(app, cancellationToken)
+        LibrarySnapshot snapshot = UsableLibrarySnapshot(app, cancellationToken)
             ?? BuildAndPersistLibrarySnapshot(app, cancellationToken);
         HashSet<string> albumKeys = new(StringComparer.OrdinalIgnoreCase);
         for (int index = 0; index < snapshot.Tracks.Length; index++)
@@ -214,8 +268,7 @@ internal sealed partial class ItunesController : IMediaController
         int offset, int limit, CancellationToken cancellationToken = default) => Invoke<LibraryPage>(() =>
     {
         dynamic app = GetITunes();
-        LibrarySnapshot? snapshot = CurrentLibrarySnapshot();
-        snapshot ??= ValidatePersistedLibrarySnapshot((object)app, cancellationToken);
+        LibrarySnapshot? snapshot = UsableLibrarySnapshot((object)app, cancellationToken);
         if (snapshot is not null
             && kind is "artists" or "albums" or "genres"
             && ItunesCollectionId.IsValidText(id, kind))
@@ -227,6 +280,7 @@ internal sealed partial class ItunesController : IMediaController
         try
         {
             string filter = id;
+            string revision = "";
             switch (kind)
             {
                 case "artists":
@@ -267,6 +321,7 @@ internal sealed partial class ItunesController : IMediaController
                         throw new MediaNotFoundException("That playlist is no longer available");
                     playlist = ResolvePlaylist((object)app, locator)
                         ?? throw new MediaNotFoundException("That playlist is no longer available");
+                    revision = ReadPlaylistRevision((object)playlist, locator, cancellationToken);
                     tracks = string.IsNullOrWhiteSpace(query)
                         ? playlist.Tracks
                         : playlist.Search(query.Trim(), SearchAllFields);
@@ -274,7 +329,12 @@ internal sealed partial class ItunesController : IMediaController
                 default:
                     throw new ArgumentException("Unknown library collection");
             }
-            return ReadTrackPage((object?)tracks, offset, limit, cancellationToken, kind, filter);
+            ExcludedMedia? excluded = RequiresTrackFilter(kind)
+                ? ExcludedMediaFor((object)app, (object)playlist, withLibraryIndices: false,
+                    cancellationToken)
+                : null;
+            return ReadTrackPage((object?)tracks, offset, limit, cancellationToken, kind, filter,
+                excluded, revision);
         }
         finally
         {
@@ -293,6 +353,7 @@ internal sealed partial class ItunesController : IMediaController
             if (kind.Length == 0 && collectionId.Length == 0)
             {
                 PlayLibraryTrack((object)app, selection.TrackId, cancellationToken);
+                AbandonQueueBuild();
                 managedQueue = null;
                 ClearQueueState();
                 CleanupManagedQueues((object)app);
@@ -329,8 +390,9 @@ internal sealed partial class ItunesController : IMediaController
     private List<QueueTrack> SelectCollectionTracks(object appObject, string kind, string filter,
         CancellationToken cancellationToken)
     {
-        LibrarySnapshot? snapshot = CurrentLibrarySnapshot()
-            ?? ValidatePersistedLibrarySnapshot(appObject, cancellationToken);
+        // Playback uses an expired index as it is; browsing starts its replacement.
+        LibrarySnapshot? snapshot = UsableLibrarySnapshot(appObject, cancellationToken,
+            refresh: false);
         List<QueueTrack> selected = [];
         if (snapshot is not null)
         {
@@ -352,6 +414,8 @@ internal sealed partial class ItunesController : IMediaController
         try
         {
             library = app.LibraryPlaylist;
+            HashSet<int> excluded = ExcludedMediaFor(appObject, (object)library,
+                withLibraryIndices: false, cancellationToken).DatabaseIds;
             // The album search has the same exact-match filter below as browsing. It avoids
             // walking the entire library when the index has not been built yet.
             tracks = kind == "albums"
@@ -361,14 +425,15 @@ internal sealed partial class ItunesController : IMediaController
                     : library.Tracks;
             if (tracks is null) return selected;
             int originalIndex = 0;
-            foreach (object trackObject in tracks)
+            foreach (object trackObject in ComItems((object?)tracks))
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 originalIndex++;
                 dynamic track = trackObject;
                 try
                 {
-                    if (!MatchesCollection(track, kind, filter)) continue;
+                    if (IsExcluded(trackObject, excluded)
+                        || !MatchesCollection(track, kind, filter)) continue;
                     selected.Add(new QueueTrack(
                         RegisterTrack(track),
                         LibraryGrouping.DisplayAlbum(ReadString(track, "Album")),
@@ -436,7 +501,11 @@ internal sealed partial class ItunesController : IMediaController
             case "playPause": app.PlayPause(); break;
             case "next": app.NextTrack(); break;
             case "previous":
-                if (!TryManagedPrevious((object)app, cancellationToken)) app.PreviousTrack();
+                // A song a few seconds in restarts; phones reconcile Previous that way.
+                if (Convert.ToDouble(app.PlayerPosition) > PreviousRestartSeconds)
+                    app.PlayerPosition = 0;
+                else if (!TryManagedPrevious((object)app, cancellationToken))
+                    app.PreviousTrack();
                 break;
             case "shuffle":
                 if (command.Value is null) throw new ArgumentException("Shuffle requires a value");
@@ -504,6 +573,10 @@ internal sealed partial class ItunesController : IMediaController
             CacheArtwork(cacheKey, normalized);
             return normalized;
         }
+        catch (Exception exception) when (IsTrackArtworkFailure(exception))
+        {
+            return RecordMissingArtwork(id);
+        }
         finally
         {
             if (temporary is not null) try { File.Delete(temporary); } catch { }
@@ -512,6 +585,17 @@ internal sealed partial class ItunesController : IMediaController
             ReleaseCom(track);
         }
     }, cancellationToken);
+
+    // One track's artwork failing to save or read is that track's problem. A busy or closed
+    // iTunes is not, and must not hide every requested cover for the missing-artwork lifetime.
+    private static bool IsTrackArtworkFailure(Exception exception) => exception switch
+    {
+        COMException com => ItunesWorkerProtocol.ClassifyComFailure(com.HResult)
+            == ItunesWorkerFailureCategory.ComFailure,
+        IOException or UnauthorizedAccessException or InvalidCastException
+            or Microsoft.CSharp.RuntimeBinder.RuntimeBinderException => true,
+        _ => false,
+    };
 
     private ArtworkData? RecordMissingArtwork(string id)
     {
@@ -530,24 +614,36 @@ internal sealed partial class ItunesController : IMediaController
 
     private dynamic GetITunes()
     {
+        if (ItunesQuitting())
+            throw new MediaUnavailableException("Open iTunes on this computer to continue");
         if (itunes is not null) return itunes;
         Type? type = Type.GetTypeFromProgID("iTunes.Application", throwOnError: false);
         if (type is null)
             throw new MediaUnavailableException("iTunes Legacy is not installed on this computer");
-        if (!ItunesProcessRunning())
+        if (listItunesProcesses().Length == 0)
             throw new MediaUnavailableException("Open iTunes on this computer to continue");
         itunes = Activator.CreateInstance(type)
                  ?? throw new MediaUnavailableException("iTunes did not respond");
+        AdviseQuitEvents((object)itunes);
         return itunes;
     }
 
-    private static bool ItunesProcessRunning()
+    private static ItunesProcess[] RunningItunesProcesses()
     {
         System.Diagnostics.Process[] processes =
             System.Diagnostics.Process.GetProcessesByName("iTunes");
         try
         {
-            return processes.Length > 0;
+            return [.. processes.Select(process =>
+            {
+                // The start time tells a relaunched iTunes apart from one reusing a process ID.
+                try { return new ItunesProcess(process.Id, process.StartTime); }
+                catch (Exception exception) when (exception is InvalidOperationException
+                                                      or System.ComponentModel.Win32Exception)
+                {
+                    return new ItunesProcess(process.Id, default);
+                }
+            })];
         }
         finally
         {
@@ -555,9 +651,93 @@ internal sealed partial class ItunesController : IMediaController
         }
     }
 
+    // Without these events, quitting iTunes while a worker holds it shows iTunes' "applications
+    // are using the scripting interface" prompt. Events are delivered on this STA thread.
+    private void AdviseQuitEvents(object app)
+    {
+        if (!Marshal.IsComObject(app)) return;
+        Action handler = OnItunesQuitting;
+        quitHandler = handler;
+        try
+        {
+            ComEventsHelper.Combine(app, ItunesEventsId, QuittingEventId, handler);
+            ComEventsHelper.Combine(app, ItunesEventsId, AboutToPromptUserToQuitEventId, handler);
+        }
+        catch (Exception exception)
+        {
+            // Playback still works without the events; iTunes may just ask before quitting.
+            BridgeDiagnostics.Record("itunes.events.advise", exception);
+        }
+    }
+
+    private void UnadviseQuitEvents(object app)
+    {
+        if (quitHandler is not { } handler) return;
+        quitHandler = null;
+        try
+        {
+            ComEventsHelper.Remove(app, ItunesEventsId, QuittingEventId, handler);
+            ComEventsHelper.Remove(app, ItunesEventsId, AboutToPromptUserToQuitEventId, handler);
+        }
+        catch (Exception exception)
+        {
+            BridgeDiagnostics.Record("itunes.events.unadvise", exception);
+        }
+    }
+
+    internal void OnItunesQuitting()
+    {
+        if (Thread.CurrentThread != staThread)
+        {
+            EnqueueInternal(ReleaseForQuit);
+            return;
+        }
+        NoteItunesQuitting();
+        // Inside a running request its COM objects are still in use; release once it returns.
+        if (workDepth > 0) EnqueueInternal(ReleaseITunes);
+        else ReleaseITunes();
+    }
+
+    private void ReleaseForQuit()
+    {
+        NoteItunesQuitting();
+        ReleaseITunes();
+    }
+
+    private void NoteItunesQuitting()
+    {
+        if (quittingProcesses is not null) return;
+        quittingProcesses = listItunesProcesses();
+        quitObservedAt = timeProvider.GetTimestamp();
+        quitExitedAt = null;
+    }
+
+    private bool ItunesQuitting()
+    {
+        if (quittingProcesses is not { } quitting) return false;
+        ItunesProcess[] running = listItunesProcesses();
+        if (quitting.Any(running.Contains))
+        {
+            if (timeProvider.GetElapsedTime(quitObservedAt) < QuitWaitLimit) return true;
+        }
+        else
+        {
+            quitExitedAt ??= timeProvider.GetTimestamp();
+            if (timeProvider.GetElapsedTime(quitExitedAt.Value) < QuitGrace) return true;
+        }
+        quittingProcesses = null;
+        quitExitedAt = null;
+        return false;
+    }
+
     private void ReleaseITunes()
     {
+        AbandonQueueBuild();
+        AbandonLibraryRefresh();
+        playlistRevisions.Clear();
+        excludedMedia = null;
         if (itunes is null) return;
+        UnadviseQuitEvents((object)itunes);
         try { Marshal.FinalReleaseComObject(itunes); } catch { }
         itunes = null;
         artworkCache.Clear();
@@ -590,8 +770,10 @@ internal sealed partial class ItunesController : IMediaController
                     item.Completion.TrySetCanceled(item.CancellationToken);
                     continue;
                 }
+                workDepth++;
                 try { item.Completion.TrySetResult(item.Action()); }
                 catch (Exception exception) { item.Completion.TrySetException(exception); }
+                finally { workDepth--; }
             }
         }
         finally
@@ -628,7 +810,9 @@ internal sealed partial class ItunesController : IMediaController
     {
         private const int ServerCallRetryLater = 2;
         private const int RetryDelayMilliseconds = 150;
-        private const int MaxRetryMilliseconds = 20_000;
+        // Under the 6 s state timeout: a dialog open in iTunes then fails the call as busy,
+        // which keeps the worker, instead of timing out, which recycles it.
+        private const int MaxRetryMilliseconds = 4_000;
 
         public int HandleInComingCall(int callType, IntPtr taskCaller, int tickCount,
             IntPtr interfaceInfo) => 0;
@@ -666,18 +850,63 @@ internal sealed partial class ItunesController : IMediaController
         return AwaitTyped<T>(completion.Task);
     }
 
+    /// <summary>Queues the controller's own follow-up work behind requests already waiting.</summary>
+    private void EnqueueInternal(Action action)
+    {
+        try
+        {
+            queue.Add(new WorkItem
+            {
+                Action = () =>
+                {
+                    action();
+                    return null;
+                },
+                Completion = new TaskCompletionSource<object?>(
+                    TaskCreationOptions.RunContinuationsAsynchronously),
+                CancellationToken = CancellationToken.None
+            });
+        }
+        // Disposing (including ObjectDisposedException): nothing more will run.
+        catch (InvalidOperationException) { }
+    }
+
+    /// <summary>
+    /// Enumerates a COM collection and releases its enumerator as soon as the walk ends, instead
+    /// of leaving the reference to the finalizer.
+    /// </summary>
+    private static IEnumerable<object> ComItems(object? collection)
+    {
+        if (collection is null) yield break;
+        IEnumerator enumerator = ((IEnumerable)collection).GetEnumerator();
+        try
+        {
+            while (enumerator.MoveNext())
+                if (enumerator.Current is { } item) yield return item;
+        }
+        finally
+        {
+            if (enumerator is ICustomAdapter adapter) ReleaseCom(adapter.GetUnderlyingObject());
+            (enumerator as IDisposable)?.Dispose();
+        }
+    }
+
     private static async Task<T> AwaitTyped<T>(Task<object?> task) => (T)(await task.ConfigureAwait(false))!;
 
     private static PlaybackState EmptyState(bool available, bool playing, int volume) =>
         new(available, playing, "", "", "", 0, 0, volume, "", "", false, "off");
 
     private LibraryPage ReadTrackPage(object? trackCollection, int offset, int limit,
-        CancellationToken cancellationToken, string collectionKind = "", string collectionValue = "")
+        CancellationToken cancellationToken, string collectionKind = "", string collectionValue = "",
+        ExcludedMedia? excluded = null, string revision = "")
     {
         int safeLimit = Math.Clamp(limit, 1, 60);
-        if (trackCollection is null) return new LibraryPage([], 0, safeLimit, 0, false);
+        if (trackCollection is null) return new LibraryPage([], 0, safeLimit, 0, false, revision);
         dynamic tracks = trackCollection;
         int available = Math.Max(0, Convert.ToInt32(tracks.Count));
+        if (!RequiresTrackFilter(collectionKind) && excluded is { DatabaseIds.Count: > 0 })
+            return ReadLibraryPageWithout((object)tracks, available, excluded.LibraryIndices ?? [],
+                excluded.DatabaseIds, offset, safeLimit, cancellationToken);
         if (!RequiresTrackFilter(collectionKind))
         {
             int safeOffset = Math.Clamp(offset, 0, available);
@@ -694,19 +923,21 @@ internal sealed partial class ItunesController : IMediaController
                 }
                 finally { ReleaseCom(track); }
             }
-            return new LibraryPage(page, safeOffset, safeLimit, available, end < available);
+            return new LibraryPage(page, safeOffset, safeLimit, available, end < available,
+                revision);
         }
 
         // A collection has to be ordered as a whole before it can be paged, so this fallback
         // materializes every match. It only runs when no library snapshot is available.
         List<LibraryTrack> matches = [];
-        foreach (object trackObject in tracks)
+        foreach (object trackObject in ComItems((object)tracks))
         {
             cancellationToken.ThrowIfCancellationRequested();
             dynamic track = trackObject;
             try
             {
-                if (MatchesCollection(track, collectionKind, collectionValue))
+                if (!IsExcluded(trackObject, excluded?.DatabaseIds)
+                    && MatchesCollection(track, collectionKind, collectionValue))
                     matches.Add(ReadLibraryTrack(track));
             }
             finally { ReleaseCom(trackObject); }
@@ -715,22 +946,61 @@ internal sealed partial class ItunesController : IMediaController
         int safeFilteredOffset = Math.Clamp(Math.Max(0, offset), 0, ordered.Length);
         LibraryTrack[] items = ordered.Skip(safeFilteredOffset).Take(safeLimit).ToArray();
         return new LibraryPage(items, safeFilteredOffset, safeLimit, ordered.Length,
-            safeFilteredOffset + items.Length < ordered.Length);
+            safeFilteredOffset + items.Length < ordered.Length, revision);
+    }
+
+    /// <summary>
+    /// Pages the library by position while leaving out its videos, podcasts, and audiobooks.
+    /// Their library positions are known, so each page still reads only its own songs.
+    /// </summary>
+    private LibraryPage ReadLibraryPageWithout(object trackCollection, int available,
+        int[] hiddenPositions, HashSet<int> hiddenIds, int offset, int limit,
+        CancellationToken cancellationToken)
+    {
+        dynamic tracks = trackCollection;
+        int[] hidden = [.. hiddenPositions.Where(position => position <= available).Distinct().Order()];
+        HashSet<int> skipped = [.. hidden];
+        int total = available - hidden.Length;
+        int safeOffset = Math.Clamp(offset, 0, total);
+        // Every hidden position at or before the requested song moves it one further along.
+        int position = safeOffset + 1;
+        foreach (int hiddenPosition in hidden)
+        {
+            if (hiddenPosition > position) break;
+            position++;
+        }
+        List<LibraryTrack> page = new(limit);
+        for (; position <= available && page.Count < limit; position++)
+        {
+            if (skipped.Contains(position)) continue;
+            cancellationToken.ThrowIfCancellationRequested();
+            dynamic? track = null;
+            try
+            {
+                track = tracks.Item(position);
+                // Guards against positions that moved since they were read: a hidden item is
+                // never shown, at worst a page comes back short.
+                if (track is not null && !IsExcluded((object)track, hiddenIds))
+                    page.Add(ReadLibraryTrack(track));
+            }
+            finally { ReleaseCom(track); }
+        }
+        return new LibraryPage(page, safeOffset, limit, total, safeOffset + page.Count < total);
     }
 
     private LibraryPage ReadSearchPage(object? trackCollection, string term, int offset,
-        int limit, CancellationToken cancellationToken)
+        int limit, HashSet<int> excluded, CancellationToken cancellationToken)
     {
         int safeLimit = Math.Clamp(limit, 1, 60);
         if (trackCollection is null) return new LibraryPage([], 0, safeLimit, 0, false);
-        dynamic tracks = trackCollection;
         List<LibraryTrack> matches = [];
-        foreach (object trackObject in tracks)
+        foreach (object trackObject in ComItems(trackCollection))
         {
             cancellationToken.ThrowIfCancellationRequested();
             dynamic track = trackObject;
             try
             {
+                if (IsExcluded(trackObject, excluded)) continue;
                 LibraryTrack candidate = ReadLibraryTrack(track);
                 if (MatchesTerm(candidate, term)) matches.Add(candidate);
             }
@@ -787,8 +1057,7 @@ internal sealed partial class ItunesController : IMediaController
     private LibraryCollectionPage ReadGroupedCollections(object appObject, string kind, string query,
         int offset, int limit, CancellationToken cancellationToken)
     {
-        LibrarySnapshot snapshot = CurrentLibrarySnapshot()
-            ?? ValidatePersistedLibrarySnapshot(appObject, cancellationToken)
+        LibrarySnapshot snapshot = UsableLibrarySnapshot(appObject, cancellationToken)
             ?? BuildAndPersistLibrarySnapshot(appObject, cancellationToken);
         IEnumerable<LibraryCollection> filtered = kind switch
         {
@@ -798,76 +1067,17 @@ internal sealed partial class ItunesController : IMediaController
         };
         string term = query.Trim();
         if (term.Length > 0)
-            filtered = filtered.Where(item => item.Title.Contains(term,
-                    StringComparison.OrdinalIgnoreCase)
-                || item.Subtitle.Contains(term, StringComparison.OrdinalIgnoreCase));
+            filtered = filtered.Where(item => LibraryGrouping.Matches(item.Title, term)
+                || LibraryGrouping.Matches(item.Subtitle, term));
         return PageCollections(filtered.ToArray(), offset, limit, snapshot.Revision);
     }
 
     private LibrarySnapshot BuildLibrarySnapshot(object appObject,
         CancellationToken cancellationToken)
     {
-        dynamic app = appObject;
-        dynamic? playlist = null;
-        dynamic? tracks = null;
-        try
-        {
-            playlist = app.LibraryPlaylist;
-            tracks = playlist.Tracks;
-            Dictionary<string, CollectionAccumulator> artists =
-                new(StringComparer.OrdinalIgnoreCase);
-            Dictionary<string, CollectionAccumulator> albums =
-                new(StringComparer.OrdinalIgnoreCase);
-            Dictionary<string, CollectionAccumulator> genres =
-                new(StringComparer.OrdinalIgnoreCase);
-            int expectedTracks = Math.Max(0, Convert.ToInt32(tracks.Count));
-            List<LibraryTrack> libraryTracks = new(expectedTracks);
-            List<string> libraryGenres = new(expectedTracks);
-            foreach (object trackObject in tracks)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                dynamic track = trackObject;
-                try
-                {
-                    string artist = LibraryGrouping.DisplayArtist(ReadString(track, "Artist"));
-                    string album = LibraryGrouping.DisplayAlbum(ReadString(track, "Album"));
-                    string albumArtist = LibraryGrouping.AlbumArtist(artist,
-                        ReadString(track, "AlbumArtist"), ReadBool(track, "Compilation"));
-                    string albumKey = LibraryGrouping.AlbumKey(albumArtist, album);
-                    string genre = LibraryGrouping.DisplayGenre(ReadString(track, "Genre"));
-                    LibraryTrack libraryTrack = ReadLibraryTrack(track, artist, album,
-                        albumArtist);
-                    libraryTracks.Add(libraryTrack);
-                    libraryGenres.Add(genre);
-                    string artworkId =
-                        !artists.ContainsKey(albumArtist) || !albums.ContainsKey(albumKey)
-                            ? libraryTrack.ArtworkId : "";
-                    AddCollection(artists, albumArtist, albumArtist, "", artworkId);
-                    AddCollection(albums, albumKey, album, albumArtist, artworkId);
-                    AddCollection(genres, genre, genre, "", libraryTrack.ArtworkId);
-                }
-                finally { ReleaseCom(trackObject); }
-            }
-            LibraryTrack[] materializedTracks = libraryTracks.ToArray();
-            string[] materializedGenres = libraryGenres.ToArray();
-            string sourceSignature = ComputeLibrarySourceSignature(appObject, (object)playlist,
-                (object)tracks);
-            return new LibrarySnapshot(
-                materializedTracks,
-                materializedGenres,
-                MaterializeCollections("artists", artists),
-                MaterializeCollections("albums", albums),
-                MaterializeCollections("genres", genres),
-                ComputeLibraryRevision(materializedTracks, materializedGenres),
-                sourceSignature,
-                timeProvider.GetUtcNow(),
-                timeProvider.GetUtcNow());
-        }
-        finally
-        {
-            ReleaseCom(tracks);
-            ReleaseCom(playlist);
-        }
+        using LibrarySnapshotBuilder builder = new(this, appObject, cancellationToken);
+        while (!builder.Read(int.MaxValue, cancellationToken)) { }
+        return builder.Complete();
     }
 
     private static void AddCollection(Dictionary<string, CollectionAccumulator> groups,
@@ -883,8 +1093,9 @@ internal sealed partial class ItunesController : IMediaController
 
     private static LibraryCollection[] MaterializeCollections(string kind,
         Dictionary<string, CollectionAccumulator> groups) => groups
-        .OrderBy(item => item.Value.Title, StringComparer.OrdinalIgnoreCase)
-        .ThenBy(item => item.Value.Subtitle, StringComparer.OrdinalIgnoreCase)
+        .OrderBy(item => item.Value.Title, LibraryGrouping.TitleOrder)
+        .ThenBy(item => item.Value.Subtitle, LibraryGrouping.TitleOrder)
+        .ThenBy(item => item.Key, StringComparer.Ordinal)
         .Select(item => new LibraryCollection(
             ItunesCollectionId.EncodeText(kind, item.Key),
             item.Value.Title,
@@ -916,10 +1127,13 @@ internal sealed partial class ItunesController : IMediaController
                     playlist = playlists.Item(index);
                     object? playlistObject = playlist;
                     if (playlistObject is null || ReadInt(playlistObject, "Kind") != 2) continue;
+                    // iTunes' own lists (Music, Movies, Podcasts, Genius, folders, ...) repeat the
+                    // library views or hold no songs.
+                    if (ReadInt(playlistObject, "SpecialKind")
+                        is not (SpecialKindNone or SpecialKindPurchased)) continue;
                     string title = ReadString(playlistObject, "Name").Trim();
                     if (title.StartsWith(managedQueuePrefix, StringComparison.Ordinal)) continue;
-                    if (title.Length == 0 || !title.Contains(query.Trim(),
-                            StringComparison.OrdinalIgnoreCase)) continue;
+                    if (title.Length == 0 || !LibraryGrouping.Matches(title, query.Trim())) continue;
                     int sourceId = ReadInt(playlistObject, "SourceID");
                     int playlistId = ReadInt(playlistObject, "PlaylistID");
                     if (sourceId == 0 || playlistId == 0) continue;
@@ -947,8 +1161,10 @@ internal sealed partial class ItunesController : IMediaController
                     ReleaseCom(playlist);
                 }
             }
-            return PageCollections(items.OrderBy(item => item.Title,
-                StringComparer.OrdinalIgnoreCase).ToArray(), offset, limit);
+            LibraryCollection[] ordered = [.. items
+                .OrderBy(item => item.Title, LibraryGrouping.NameOrder)
+                .ThenBy(item => item.Id, StringComparer.Ordinal)];
+            return PageCollections(ordered, offset, limit, CollectionRevision(ordered));
         }
         finally
         {
@@ -956,6 +1172,164 @@ internal sealed partial class ItunesController : IMediaController
             ReleaseCom(source);
         }
     }
+
+    /// <summary>
+    /// Identifies one version of a list of collections, so a phone replaces its pages when the
+    /// list changes instead of merging pages from two versions.
+    /// </summary>
+    private static string CollectionRevision(IEnumerable<LibraryCollection> collections)
+    {
+        using IncrementalHash hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        foreach (LibraryCollection collection in collections)
+            hash.AppendData(Encoding.UTF8.GetBytes(string.Join('\u001f', collection.Id,
+                collection.Title, collection.TrackCount.ToString(CultureInfo.InvariantCulture))
+                + "\u001e"));
+        return Convert.ToHexString(hash.GetHashAndReset(), 0, 8).ToLowerInvariant();
+    }
+
+    /// <summary>
+    /// A playlist's revision: a short hash of its songs in order. Smart playlists such as Recently
+    /// Played reorder as songs finish, and without a revision a phone would merge pages from
+    /// before and after the change and show the same song twice.
+    /// </summary>
+    private string ReadPlaylistRevision(object playlistObject, ItunesPlaylistLocator locator,
+        CancellationToken cancellationToken)
+    {
+        dynamic playlist = playlistObject;
+        dynamic? tracks = null;
+        try
+        {
+            tracks = playlist.Tracks;
+            if (tracks is null) return "";
+            int count = Math.Max(0, Convert.ToInt32(tracks.Count));
+            if (playlistRevisions.TryGetValue(locator, out PlaylistRevision? cached)
+                && cached.Count == count
+                && timeProvider.GetElapsedTime(cached.ComputedAt) < PlaylistRevisionLifetime)
+                return cached.Revision;
+            using IncrementalHash hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+            byte[] entry = new byte[8];
+            foreach (object track in ComItems((object)tracks))
+            {
+                try
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    BinaryPrimitives.WriteInt32LittleEndian(entry, ReadInt(track, "TrackID"));
+                    BinaryPrimitives.WriteInt32LittleEndian(entry.AsSpan(4),
+                        ReadInt(track, "TrackDatabaseID"));
+                    hash.AppendData(entry);
+                }
+                finally { ReleaseCom(track); }
+            }
+            string revision = Convert.ToHexString(hash.GetHashAndReset(), 0, 8).ToLowerInvariant();
+            if (playlistRevisions.Count >= MaxPlaylistRevisions) playlistRevisions.Clear();
+            playlistRevisions[locator] = new PlaylistRevision(count, revision,
+                timeProvider.GetTimestamp());
+            return revision;
+        }
+        finally { ReleaseCom(tracks); }
+    }
+
+    /// <summary>
+    /// The library's videos, podcasts, and audiobooks, which live in iTunes' media playlists.
+    /// Those playlists are usually small, and the set is reused until the library changes.
+    /// </summary>
+    private ExcludedMedia ExcludedMediaFor(object appObject, object libraryObject,
+        bool withLibraryIndices, CancellationToken cancellationToken)
+    {
+        dynamic app = appObject;
+        dynamic library = libraryObject;
+        dynamic? libraryTracks = null;
+        dynamic? source = null;
+        dynamic? playlists = null;
+        try
+        {
+            libraryTracks = library.Tracks;
+            string stamp = string.Join(':',
+                Math.Max(0, Convert.ToInt32(libraryTracks.Count)).ToString(CultureInfo.InvariantCulture),
+                ReadDouble(libraryObject, "Duration").ToString("R", CultureInfo.InvariantCulture),
+                ReadDouble(libraryObject, "Size").ToString("R", CultureInfo.InvariantCulture));
+            if (excludedMedia is { } cached && cached.LibraryStamp == stamp
+                && (!withLibraryIndices || cached.LibraryIndices is not null))
+                return cached;
+            HashSet<int> ids = [];
+            List<int> positions = [];
+            try
+            {
+                source = app.LibrarySource;
+                playlists = source.Playlists;
+                int count = Math.Max(0, Convert.ToInt32(playlists.Count));
+                for (int index = 1; index <= count; index++)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    dynamic? playlist = null;
+                    dynamic? tracks = null;
+                    try
+                    {
+                        playlist = playlists.Item(index);
+                        object? playlistObject = playlist;
+                        if (playlistObject is null || ReadInt(playlistObject, "Kind") != 2
+                            || ReadInt(playlistObject, "SpecialKind") is not (SpecialKindPodcasts
+                                or SpecialKindMovies or SpecialKindTvShows or SpecialKindAudiobooks))
+                            continue;
+                        tracks = playlist.Tracks;
+                        foreach (object track in ComItems((object?)tracks))
+                        {
+                            try
+                            {
+                                cancellationToken.ThrowIfCancellationRequested();
+                                int databaseId = ReadInt(track, "TrackDatabaseID");
+                                if (databaseId == 0 || !ids.Add(databaseId) || !withLibraryIndices)
+                                    continue;
+                                int position = LibraryPosition(appObject, (object)libraryTracks, track);
+                                if (position > 0) positions.Add(position);
+                            }
+                            finally { ReleaseCom(track); }
+                        }
+                    }
+                    finally
+                    {
+                        ReleaseCom(tracks);
+                        ReleaseCom(playlist);
+                    }
+                }
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                // Unreadable media playlists leave the library shown whole rather than not at
+                // all. The failure is not cached, so the next request tries again.
+                BridgeDiagnostics.Record("library.media", exception);
+                return new ExcludedMedia(stamp, [], withLibraryIndices ? [] : null);
+            }
+            excludedMedia = new ExcludedMedia(stamp, ids,
+                withLibraryIndices ? [.. positions.Order()] : null);
+            return excludedMedia;
+        }
+        finally
+        {
+            ReleaseCom(playlists);
+            ReleaseCom(source);
+            ReleaseCom(libraryTracks);
+        }
+    }
+
+    /// <summary>Where a track from another playlist sits in the library playlist, or zero.</summary>
+    private static int LibraryPosition(object appObject, object libraryTracksObject, object track)
+    {
+        dynamic libraryTracks = libraryTracksObject;
+        dynamic? copy = null;
+        try
+        {
+            copy = libraryTracks.ItemByPersistentID(
+                ReadParameterizedInt(appObject, "ITObjectPersistentIDHigh", track),
+                ReadParameterizedInt(appObject, "ITObjectPersistentIDLow", track));
+            return copy is null ? 0 : ReadInt((object)copy, "Index");
+        }
+        catch { return 0; }
+        finally { ReleaseCom(copy); }
+    }
+
+    private static bool IsExcluded(object track, HashSet<int>? excluded) =>
+        excluded is { Count: > 0 } && excluded.Contains(ReadInt(track, "TrackDatabaseID"));
 
     private static LibraryCollectionPage PageCollections(
         LibraryCollection[] collections, int offset, int limit, string revision = "")
@@ -980,6 +1354,12 @@ internal sealed partial class ItunesController : IMediaController
         CancellationToken cancellationToken)
     {
         LibrarySnapshot snapshot = BuildLibrarySnapshot(appObject, cancellationToken);
+        PersistLibrarySnapshot(snapshot);
+        return snapshot;
+    }
+
+    private void PersistLibrarySnapshot(LibrarySnapshot snapshot)
+    {
         librarySnapshot = snapshot;
         try
         {
@@ -999,7 +1379,6 @@ internal sealed partial class ItunesController : IMediaController
         {
             BridgeDiagnostics.Record("library.cache.write", exception);
         }
-        return snapshot;
     }
 
     private LibrarySnapshot? ValidatePersistedLibrarySnapshot(object appObject,
@@ -1021,6 +1400,7 @@ internal sealed partial class ItunesController : IMediaController
         // Aggregate counts cannot detect tag-only edits. Never renew the original fetch time.
         if (!IsFresh(snapshot.CreatedAt, now, LibrarySnapshotLifetime))
         {
+            staleLibrarySnapshot = snapshot;
             librarySnapshot = null;
             return null;
         }
@@ -1038,6 +1418,7 @@ internal sealed partial class ItunesController : IMediaController
                     Encoding.UTF8.GetBytes(signature),
                     Encoding.UTF8.GetBytes(snapshot.SourceSignature)))
             {
+                staleLibrarySnapshot = snapshot;
                 librarySnapshot = null;
                 return null;
             }
@@ -1119,9 +1500,8 @@ internal sealed partial class ItunesController : IMediaController
     }
 
     private static bool MatchesTerm(LibraryTrack track, string term) =>
-        track.Title.Contains(term, StringComparison.OrdinalIgnoreCase)
-        || track.Artist.Contains(term, StringComparison.OrdinalIgnoreCase)
-        || track.Album.Contains(term, StringComparison.OrdinalIgnoreCase);
+        LibraryGrouping.MatchesTrack(track.Title, track.Artist, track.Album, track.AlbumArtist,
+            term);
 
     private static bool MatchesCollection(LibraryTrack track, string genre,
         string kind, string value)
@@ -1327,6 +1707,8 @@ internal sealed partial class ItunesController : IMediaController
                 "TrackNumber" => Convert.ToInt32(value.TrackNumber),
                 "DiscNumber" => Convert.ToInt32(value.DiscNumber),
                 "Kind" => Convert.ToInt32(value.Kind),
+                "SpecialKind" => Convert.ToInt32(value.SpecialKind),
+                "Index" => Convert.ToInt32(value.Index),
                 "SongRepeat" => Convert.ToInt32(value.SongRepeat),
                 _ => throw new ArgumentException("Unknown integer property"),
             };

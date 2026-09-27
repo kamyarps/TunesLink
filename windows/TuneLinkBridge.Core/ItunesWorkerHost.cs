@@ -94,6 +94,9 @@ internal static class ItunesWorkerHost
                         && exception is OperationCanceledException
                             ? ItunesWorkerFailureCategory.Cancelled
                             : ClassifyFailure(exception);
+                    // The HRESULT does not survive the process boundary, so it is logged here.
+                    if (exception.GetBaseException() is COMException)
+                        BridgeDiagnostics.Record("itunes.worker.com", exception.GetBaseException());
                     await WriteFailureAsync(requestId, exception, category).ConfigureAwait(false);
                     if (!ItunesWorkerProtocol.CanReuseWorker(category)) return 1;
                     continue;
@@ -204,13 +207,6 @@ internal static class ItunesWorkerHost
         };
     }
 
-    internal static ItunesWorkerFailureCategory ClassifyComFailure(int hresult) => hresult switch
-    {
-        unchecked((int)0x80010007) => ItunesWorkerFailureCategory.ItunesTerminated,
-        unchecked((int)0x80010012) => ItunesWorkerFailureCategory.ItunesTerminated,
-        unchecked((int)0x800706BA) => ItunesWorkerFailureCategory.ItunesTerminated,
-        unchecked((int)0x80010108) => ItunesWorkerFailureCategory.ComDisconnected,
-        unchecked((int)0x800401FD) => ItunesWorkerFailureCategory.ComDisconnected,
-        _ => ItunesWorkerFailureCategory.ComDisconnected
-    };
+    internal static ItunesWorkerFailureCategory ClassifyComFailure(int hresult) =>
+        ItunesWorkerProtocol.ClassifyComFailure(hresult);
 }

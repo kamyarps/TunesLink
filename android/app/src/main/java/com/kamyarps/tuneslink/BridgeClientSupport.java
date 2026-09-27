@@ -93,8 +93,8 @@ class BridgeClientSupport {
     }
 
     static String safeBridgeName(String name) {
+        // Blank stays blank; the presentation layer shows a localized default name.
         String safe = name == null ? "" : name.replaceAll("\\p{Cntrl}", "").trim();
-        if (safe.isBlank()) return "My computer";
         return safe.substring(0, Math.min(80, safe.length()));
     }
 
@@ -159,14 +159,25 @@ class BridgeClientSupport {
         LinkedHashSet<InetAddress> addresses = new LinkedHashSet<>();
         try {
             addresses.add(InetAddress.getByName("255.255.255.255"));
-            Enumeration<NetworkInterface> interfaces = NetworkInterface.getNetworkInterfaces();
-            for (NetworkInterface network : Collections.list(interfaces)) {
+        } catch (Exception ignored) {
+        }
+        List<NetworkInterface> interfaces;
+        try {
+            Enumeration<NetworkInterface> found = NetworkInterface.getNetworkInterfaces();
+            interfaces = found == null ? Collections.emptyList() : Collections.list(found);
+        } catch (Exception unavailable) {
+            return addresses;
+        }
+        for (NetworkInterface network : interfaces) {
+            // One failing interface must not hide the subnet broadcasts of the others.
+            try {
                 if (!network.isUp() || network.isLoopback()) continue;
                 for (InterfaceAddress address : network.getInterfaceAddresses()) {
-                    if (address.getBroadcast() != null) addresses.add(address.getBroadcast());
+                    if (address != null && address.getBroadcast() != null)
+                        addresses.add(address.getBroadcast());
                 }
+            } catch (Exception ignoredOnOneInterface) {
             }
-        } catch (Exception ignored) {
         }
         return addresses;
     }

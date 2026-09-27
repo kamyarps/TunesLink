@@ -97,7 +97,12 @@ internal sealed class DemoController : IMediaController
             {
                 case "playPause": playing = !playing; break;
                 case "next": index = (index + 1) % tracks.Length; position = 0; break;
-                case "previous": index = (index + tracks.Length - 1) % tracks.Length; position = 0; break;
+                case "previous":
+                    // Like the iTunes bridge: a song that has played a few seconds restarts.
+                    if (position <= ItunesController.PreviousRestartSeconds)
+                        index = (index + tracks.Length - 1) % tracks.Length;
+                    position = 0;
+                    break;
                 case "shuffle":
                     if (command.Value is null) throw new ArgumentException("Shuffle requires a value");
                     shuffleEnabled = command.Value.Value >= 0.5;

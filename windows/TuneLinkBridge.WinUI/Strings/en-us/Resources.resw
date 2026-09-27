@@ -18,14 +18,13 @@
   <data name="PairCode.AutomationProperties.Name" xml:space="preserve"><value>Pairing code</value></data>
   <data name="PairExpiry.Text" xml:space="preserve"><value>Expires in 10:00</value></data>
   <data name="NewCode.Content" xml:space="preserve"><value>New code</value></data>
-  <data name="NewCode.AutomationProperties.Name" xml:space="preserve"><value>Generate a new pairing code</value></data>
+  <data name="NewCode.AutomationProperties.Name" xml:space="preserve"><value>New code</value></data>
   <data name="AddressLabel.Text" xml:space="preserve"><value>Connection address</value></data>
   <data name="AddressValue.Text" xml:space="preserve"><value>Unavailable</value></data>
   <data name="CopyAddress.AutomationProperties.Name" xml:space="preserve"><value>Copy address</value></data>
   <data name="PairedPhones.Text" xml:space="preserve"><value>Paired phones</value></data>
   <data name="ForgetAll.Content" xml:space="preserve"><value>Forget all</value></data>
   <data name="ForgetLabel.Text" xml:space="preserve"><value>Forget</value></data>
-  <data name="PreferencesHeading.Text" xml:space="preserve"><value>Preferences</value></data>
   <data name="KeepRunning.Header" xml:space="preserve"><value>Keep TunesLink running when the window closes</value></data>
   <data name="KeepRunning.AutomationProperties.HelpText" xml:space="preserve"><value>The bridge stays available from the notification area.</value></data>
   <data name="KeepRunningDetail.Text" xml:space="preserve"><value>The bridge stays available from the notification area.</value></data>
@@ -65,7 +64,6 @@
   <data name="HidePairingCode" xml:space="preserve"><value>Hide pairing code</value></data>
   <data name="ItunesReady" xml:space="preserve"><value>iTunes ready</value></data>
   <data name="ItunesUnavailableDetail" xml:space="preserve"><value>Open iTunes on this PC to begin playback.</value></data>
-  <data name="ItunesUnavailableStatus" xml:space="preserve"><value>iTunes unavailable</value></data>
   <data name="ItunesUnavailableTitle" xml:space="preserve"><value>iTunes is unavailable</value></data>
   <data name="KeepRunningChangeFailed" xml:space="preserve"><value>Keep running could not be changed</value></data>
   <data name="LocalNetworkReady" xml:space="preserve"><value>Local network ready</value></data>
@@ -78,13 +76,12 @@
   <data name="PairingCode" xml:space="preserve"><value>Pairing code</value></data>
   <data name="PairingCodeAccessibleName" xml:space="preserve"><value>Pairing code {0}</value></data>
   <data name="PairingCodeExpiry" xml:space="preserve"><value>Expires in {0}:{1:D2}</value></data>
-  <data name="PairingCodeExpiryAccessibleName" xml:space="preserve"><value>Pairing code expires in {0} minutes and {1} seconds</value></data>
+  <data name="PairingCodeExpiryAccessibleName" xml:space="preserve"><value>Pairing code expires in {0}</value></data>
   <data name="PairingCodeRotated" xml:space="preserve"><value>Pairing code rotated</value></data>
   <data name="Phone" xml:space="preserve"><value>Phone</value></data>
   <data name="PrivateAddressUnavailable" xml:space="preserve"><value>Private address unavailable</value></data>
   <data name="PrivateAddressUnavailableDetail" xml:space="preserve"><value>Connect this PC to a private local network.</value></data>
   <data name="RuntimeActionUnavailable" xml:space="preserve"><value>This action is unavailable because TunesLink did not start.</value></data>
-  <data name="ShowPairingCode" xml:space="preserve"><value>Show pairing code</value></data>
   <data name="StartupFailureTitle" xml:space="preserve"><value>TunesLink couldn’t start</value></data>
   <data name="TrayExit" xml:space="preserve"><value>Exit</value></data>
   <data name="TrayOpen" xml:space="preserve"><value>Open TunesLink Bridge</value></data>
@@ -98,4 +95,26 @@
   <data name="UsedMinutesAgo" xml:space="preserve"><value>Used {0} minutes ago</value></data>
   <data name="UsedOneDayAgo" xml:space="preserve"><value>Used 1 day ago</value></data>
   <data name="ValueCopiedAnnouncement" xml:space="preserve"><value>{0} copied</value></data>
+  <data name="NewCode.AutomationProperties.HelpText" xml:space="preserve"><value>Generate a new pairing code</value></data>
+  <data name="SettingsToolTip" xml:space="preserve"><value>Settings</value></data>
+  <data name="PairingCodeUnavailable" xml:space="preserve"><value>— — —</value></data>
+  <data name="PairingCodeUnavailableAccessibleName" xml:space="preserve"><value>Pairing code unavailable</value></data>
+  <data name="PairingCodeReplaced" xml:space="preserve"><value>Too many incorrect codes were entered, so the pairing code changed. Enter the new code on your phone.</value></data>
+  <data name="DiscoveryUnavailable" xml:space="preserve"><value>Automatic discovery is unavailable. Enter this address on your phone.</value></data>
+  <data name="PrivateAddressUnavailableHelp" xml:space="preserve"><value>No private IPv4 network is available. Check VPN, virtual adapters, and Windows Firewall private-network access.</value></data>
+  <data name="AddressAdapterHelp" xml:space="preserve"><value>Using {0} ({1})</value></data>
+  <data name="UsedOneHourAgo" xml:space="preserve"><value>Used 1 hour ago</value></data>
+  <data name="DurationOneMinute" xml:space="preserve"><value>1 minute</value></data>
+  <data name="DurationMinutes" xml:space="preserve"><value>{0} minutes</value></data>
+  <data name="DurationOneSecond" xml:space="preserve"><value>1 second</value></data>
+  <data name="DurationSeconds" xml:space="preserve"><value>{0} seconds</value></data>
+  <data name="DurationMinutesAndSeconds" xml:space="preserve"><value>{0} and {1}</value></data>
+  <data name="TryAgain" xml:space="preserve"><value>Try again</value></data>
+  <data name="StartupFailurePortInUse" xml:space="preserve"><value>Another app is using TunesLink’s network port {0}. Close it, then try again.</value></data>
+  <data name="StartupFailurePortBlocked" xml:space="preserve"><value>Windows didn’t let TunesLink use network port {0}. Another app or a system port reservation may be holding it. Close other network apps or restart this PC, then try again.</value></data>
+  <data name="StartupFailureNetwork" xml:space="preserve"><value>TunesLink couldn’t start its network connection. Check that this PC is connected to a network, then try again.</value></data>
+  <data name="StartupFailureAccessDenied" xml:space="preserve"><value>TunesLink doesn’t have permission to open its settings folder. Check that security software isn’t blocking it, then try again.</value></data>
+  <data name="StartupFailureSettings" xml:space="preserve"><value>TunesLink couldn’t read its settings. Another program may be using them. Try again in a moment.</value></data>
+  <data name="StartupFailureIdentity" xml:space="preserve"><value>TunesLink couldn’t load its security certificate. Try again. If this keeps happening, restart this PC.</value></data>
+  <data name="StartupFailureUnknown" xml:space="preserve"><value>Something unexpected stopped TunesLink from starting. Try again.</value></data>
 </root>

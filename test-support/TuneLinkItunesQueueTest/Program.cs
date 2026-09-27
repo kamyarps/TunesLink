@@ -19,7 +19,9 @@ internal static class Program
         dynamic app = Activator.CreateInstance(Type.GetTypeFromProgID("iTunes.Application", true)!)!;
         dynamic? originalTrack = app.CurrentTrack;
         dynamic? originalPlaylist = app.CurrentPlaylist;
-        int position = app.PlayerPosition;
+        // iTunes refuses to report a position when no song is current.
+        int position = 0;
+        try { position = originalTrack is null ? 0 : app.PlayerPosition; } catch (COMException) { }
         int volume = app.SoundVolume;
         bool muted = app.Mute;
         bool playing = Convert.ToInt32(app.PlayerState) == 1;
@@ -62,8 +64,11 @@ internal static class Program
                     LibraryCollectionPage albums = media.GetCollectionAlbumsAsync(kind, collection.Id, "", 0, 60).GetAwaiter().GetResult();
                     Require(albums.Total == 1 && albums.Items[0].TrackCount == 6, kind + " album drill-down");
                 }
-                app.CurrentPlaylist.Shuffle = false;
-                app.CurrentPlaylist.SongRepeat = 0;
+                if (app.CurrentPlaylist is { } currentPlaylist)
+                {
+                    currentPlaylist.Shuffle = false;
+                    currentPlaylist.SongRepeat = 0;
+                }
                 media.PlayTrackAsync(new(tracks[2].Id, kind, collection.Id)).GetAwaiter().GetResult();
                 AssertTrack(media, tracks[2], kind + " starts at track 3");
                 media.ExecuteAsync(new("previous", null)).GetAwaiter().GetResult();

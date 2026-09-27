@@ -1,7 +1,7 @@
 package com.kamyarps.tuneslink
 
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.focusable
+import androidx.compose.ui.focus.focusTarget
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -10,6 +10,9 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -59,6 +62,7 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
@@ -110,9 +114,10 @@ internal fun LibraryBrowseScreen(
                 style = MaterialTheme.typography.headlineLarge,
                 color = TunesLinkTheme.colors.primaryText,
                 modifier = Modifier.weight(1f).semantics { heading() },
-                maxLines = 1,
+                maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
+            Spacer(Modifier.width(TunesLinkSpacing.small))
             ComputerConnectionAction(state.bridgeName, state.connection, viewModel::showConnectionDetails)
         }
 
@@ -129,7 +134,7 @@ internal fun LibraryBrowseScreen(
                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
                     )
                 }
-                items(LibraryBrowseKind.entries.size) { index ->
+                items(LibraryBrowseKind.entries.size, contentType = { "category" }) { index ->
                     val kind = LibraryBrowseKind.entries[index]
                     LibraryCategoryRow(kind, onClick = { viewModel.openLibraryKind(kind) })
                 }
@@ -147,29 +152,41 @@ internal fun LibraryBrowseScreen(
                 onRetry = { viewModel.retryBrowse(browse.visibleTarget) },
                 modifier = Modifier.fillMaxSize(),
             )
-            !showingTracks && browse.albumParent != null && browse.collections.isEmpty() -> ContentState(
-                stringResource(R.string.no_albums),
-                stringResource(R.string.no_albums_detail),
-                modifier = Modifier.fillMaxSize(),
-            )
-            showingTracks && browse.tracks.isEmpty() -> ContentState(
-                stringResource(R.string.no_songs),
-                stringResource(R.string.no_songs_detail),
-                modifier = Modifier.fillMaxSize(),
-            )
+            !showingTracks && browse.collections.isEmpty() -> {
+                val empty = if (browse.albumParent != null) {
+                    LibraryEmptyCopy(R.string.no_albums, R.string.no_albums_detail)
+                } else {
+                    browse.kind.emptyCopy()
+                }
+                ContentState(
+                    stringResource(empty.title),
+                    stringResource(empty.detail),
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+            showingTracks && browse.tracks.isEmpty() -> {
+                val empty = if (browse.selectedCollection == null) {
+                    LibraryBrowseKind.Songs.emptyCopy()
+                } else {
+                    LibraryEmptyCopy(R.string.no_songs, R.string.no_songs_detail)
+                }
+                ContentState(
+                    stringResource(empty.title),
+                    stringResource(empty.detail),
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
             else -> LazyColumn(
                 state = listState,
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
             ) {
-                if (browse.visibleCursor.windowStart == 0) item {
+                if (browse.visibleCursor.windowStart == 0) item(contentType = "count") {
                     Text(
                         if (showingTracks) {
                             pluralStringResource(R.plurals.song_count, browse.total, browse.total)
-                        } else if (browse.kind == LibraryBrowseKind.Albums) {
-                            pluralStringResource(R.plurals.album_count, browse.total, browse.total)
                         } else {
-                            pluralStringResource(R.plurals.result_count, browse.total, browse.total)
+                            libraryCountLabel(browse.kind, browse.total)
                         },
                         style = MaterialTheme.typography.labelMedium,
                         color = TunesLinkTheme.colors.secondaryText,
@@ -177,15 +194,19 @@ internal fun LibraryBrowseScreen(
                     )
                 }
                 if (browse.isLoadingPrevious) {
-                    item { LibraryPageProgress() }
+                    item(contentType = "progress") { LibraryPageProgress() }
                 }
                 if (browse.visibleCursor.hasPrevious && browseError != null) {
-                    item(key = "browse-previous-error") {
+                    item(key = "browse-previous-error", contentType = "error") {
                         LibraryPageError(browseError) { viewModel.retryBrowse(browse.visibleTarget) }
                     }
                 }
                 if (showingTracks && groupTracksByAlbum) {
-                    items(trackRows, key = LibraryBrowseRow::key) { row ->
+                    items(
+                        trackRows,
+                        key = LibraryBrowseRow::key,
+                        contentType = { row -> if (row is LibraryBrowseRow.AlbumHeading) "album-heading" else "track" },
+                    ) { row ->
                         when (row) {
                             is LibraryBrowseRow.AlbumHeading ->
                                 LibraryAlbumHeading(row, viewModel)
@@ -202,7 +223,11 @@ internal fun LibraryBrowseScreen(
                         }
                     }
                 } else if (showingTracks) {
-                    itemsIndexed(browse.tracks, key = { _, track -> track.id }) { _, track ->
+                    itemsIndexed(
+                        browse.tracks,
+                        key = { _, track -> track.id },
+                        contentType = { _, _ -> "track" },
+                    ) { _, track ->
                         TrackRow(
                             track,
                             viewModel,
@@ -215,18 +240,22 @@ internal fun LibraryBrowseScreen(
                         )
                     }
                 } else {
-                    itemsIndexed(browse.collections, key = { _, collection -> collection.id }) { _, collection ->
+                    itemsIndexed(
+                        browse.collections,
+                        key = { _, collection -> collection.id },
+                        contentType = { _, _ -> "collection" },
+                    ) { _, collection ->
                         LibraryCollectionRow(collection, viewModel) {
                             viewModel.openPhoneLibraryCollection(collection,
                                 listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset)
                         }
                     }
                 }
-                item(key = "browse-page-error") {
+                item(key = "browse-page-error", contentType = "error") {
                     LibraryPageError(browseError) { viewModel.retryBrowse(browse.visibleTarget) }
                 }
                 if (browse.isLoadingMore) {
-                    item { LibraryPageProgress() }
+                    item(contentType = "progress") { LibraryPageProgress() }
                 }
             }
         }
@@ -296,16 +325,13 @@ private fun LibraryCollectionRow(
 
 @Composable
 private fun CollectionArtwork(collection: LibraryCollectionUiState, viewModel: TunesLinkViewModel) =
-    BrowseArtwork(collection.artworkId, collection.title, viewModel)
+    BrowseArtwork(collection.artworkId, viewModel)
 
 @Composable
-private fun BrowseArtwork(artworkId: String, title: String, viewModel: TunesLinkViewModel) {
+private fun BrowseArtwork(artworkId: String, viewModel: TunesLinkViewModel) {
     val artwork = rememberLibraryArtwork(artworkId, 128, viewModel)
-    ArtworkSurface(
-        artwork,
-        if (artwork != null) stringResource(R.string.artwork_for, title) else null,
-        Modifier.size(TunesLinkSizes.compactArtwork),
-    )
+    // Row artwork is decorative: the row already speaks its title.
+    ArtworkSurface(artwork, description = null, Modifier.size(TunesLinkSizes.compactArtwork))
 }
 
 @Composable
@@ -320,7 +346,7 @@ private fun LibraryAlbumHeading(
             .semantics(mergeDescendants = true) { heading() },
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        BrowseArtwork(heading.artworkId, heading.album, viewModel)
+        BrowseArtwork(heading.artworkId, viewModel)
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             Text(
@@ -349,6 +375,30 @@ private fun LibraryBrowseKind.displayName(): String = when (this) {
     LibraryBrowseKind.Genres -> stringResource(R.string.genres)
 }
 
+internal data class LibraryEmptyCopy(val title: Int, val detail: Int)
+
+/** Empty state for a whole library category (not a single collection). */
+internal fun LibraryBrowseKind?.emptyCopy(): LibraryEmptyCopy = when (this) {
+    LibraryBrowseKind.Playlists -> LibraryEmptyCopy(R.string.no_playlists, R.string.no_playlists_detail)
+    LibraryBrowseKind.Artists -> LibraryEmptyCopy(R.string.no_artists, R.string.no_artists_detail)
+    LibraryBrowseKind.Albums, null -> LibraryEmptyCopy(R.string.no_albums, R.string.no_albums_library_detail)
+    LibraryBrowseKind.Songs -> LibraryEmptyCopy(R.string.no_songs, R.string.no_songs_library_detail)
+    LibraryBrowseKind.Genres -> LibraryEmptyCopy(R.string.no_genres, R.string.no_genres_detail)
+}
+
+internal fun LibraryBrowseKind?.countPlural(): Int = when (this) {
+    LibraryBrowseKind.Playlists -> R.plurals.playlist_count
+    LibraryBrowseKind.Artists -> R.plurals.artist_count
+    LibraryBrowseKind.Albums -> R.plurals.album_count
+    LibraryBrowseKind.Songs -> R.plurals.song_count
+    LibraryBrowseKind.Genres -> R.plurals.genre_count
+    null -> R.plurals.result_count
+}
+
+@Composable
+internal fun libraryCountLabel(kind: LibraryBrowseKind?, total: Int): String =
+    pluralStringResource(kind.countPlural(), total, total)
+
 private fun LibraryBrowseKind.icon() = when (this) {
     LibraryBrowseKind.Playlists -> Icons.AutoMirrored.Rounded.PlaylistPlay
     LibraryBrowseKind.Artists -> Icons.Rounded.Person
@@ -374,7 +424,9 @@ internal fun SearchScreen(state: TunesLinkUiState, viewModel: TunesLinkViewModel
     LibraryPagination(listState, library.pageCursor(),
         onPrevious = viewModel::loadPrevious, onNext = viewModel::loadMore)
 
-    Column(modifier.focusRequester(searchFocusRequester).focusable()) {
+    // The container is a focus parking spot (see dismissSearchFocus), not an accessibility stop.
+    // imePadding keeps the last results scrollable above the keyboard under edge-to-edge.
+    Column(modifier.focusRequester(searchFocusRequester).focusTarget().imePadding()) {
         Row(
             Modifier.fillMaxWidth().padding(start = 24.dp, end = 12.dp, top = 12.dp, bottom = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -418,16 +470,30 @@ internal fun SearchScreen(state: TunesLinkUiState, viewModel: TunesLinkViewModel
         )
         Spacer(Modifier.height(8.dp))
         when {
-            library.isRefreshing && library.items.isEmpty() -> ContentState(
-                stringResource(R.string.loading_library),
-                stringResource(R.string.songs_from_itunes_detail),
-                loading = true,
+            library.isRefreshing && library.items.isEmpty() -> if (library.editingQuery.isBlank()) {
+                ContentState(
+                    stringResource(R.string.loading_library),
+                    stringResource(R.string.songs_from_itunes_detail),
+                    loading = true,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            } else {
+                ContentState(
+                    stringResource(R.string.searching),
+                    stringResource(R.string.searching_detail),
+                    loading = true,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+            library.awaitingConnection -> ContentState(
+                stringResource(R.string.search_waiting_title),
+                stringResource(R.string.search_waiting_detail),
                 modifier = Modifier.fillMaxSize(),
             )
             library.error != null && library.items.isEmpty() -> ContentState(
                 stringResource(R.string.library_unavailable),
                 library.error,
-                onRetry = viewModel::refreshLibrary,
+                onRetry = viewModel::retrySearch,
                 modifier = Modifier.fillMaxSize(),
             )
             library.loadedQuery != null && library.items.isEmpty() -> ContentState(
@@ -448,7 +514,7 @@ internal fun SearchScreen(state: TunesLinkUiState, viewModel: TunesLinkViewModel
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
             ) {
-                if (library.windowStart == 0) item {
+                if (library.windowStart == 0) item(contentType = "count") {
                     Text(
                         pluralStringResource(R.plurals.result_count, library.total, library.total),
                         style = MaterialTheme.typography.labelMedium,
@@ -457,14 +523,18 @@ internal fun SearchScreen(state: TunesLinkUiState, viewModel: TunesLinkViewModel
                     )
                 }
                 if (library.isLoadingPrevious) {
-                    item { LibraryPageProgress() }
+                    item(contentType = "progress") { LibraryPageProgress() }
                 }
-                if (library.hasPrevious && library.error != null) {
-                    item(key = "search-previous-error") {
-                        LibraryPageError(library.error, viewModel::refreshLibrary)
+                if (library.error != null && library.errorDirection == PageDirection.Previous) {
+                    item(key = "search-previous-error", contentType = "error") {
+                        LibraryPageError(library.error, viewModel::retrySearch)
                     }
                 }
-                itemsIndexed(library.items, key = { _, track -> track.id }) { _, track ->
+                itemsIndexed(
+                    library.items,
+                    key = { _, track -> track.id },
+                    contentType = { _, _ -> "track" },
+                ) { _, track ->
                     TrackRow(
                         track,
                         viewModel = viewModel,
@@ -476,11 +546,13 @@ internal fun SearchScreen(state: TunesLinkUiState, viewModel: TunesLinkViewModel
                         onClick = { viewModel.playTrack(track) },
                     )
                 }
-                item(key = "search-page-error") {
-                    LibraryPageError(library.error, viewModel::refreshLibrary)
+                if (library.errorDirection != PageDirection.Previous) {
+                    item(key = "search-page-error", contentType = "error") {
+                        LibraryPageError(library.error, viewModel::retrySearch)
+                    }
                 }
                 if (library.isLoadingMore) {
-                    item { LibraryPageProgress() }
+                    item(contentType = "progress") { LibraryPageProgress() }
                 }
             }
         }
@@ -519,19 +591,22 @@ internal fun ComputerConnectionAction(
         computerLabel,
         statusLabel,
     )
+    val showDetails = stringResource(R.string.show_connection_details)
     Row(
         modifier = Modifier
+            // Long PC names ("DESKTOP-7Q2M4KD") ellipsize instead of starving the page title.
+            .widthIn(max = TunesLinkSizes.connectionChipMaxWidth)
             .clip(RoundedCornerShape(TunesLinkShapes.control))
             .clickable(
                 role = Role.Button,
-                onClickLabel = accessibleName,
+                onClickLabel = showDetails,
                 onClick = onClick,
             )
             .semantics(mergeDescendants = true) {
                 contentDescription = accessibleName
             }
-            .height(TunesLinkSizes.minimumTarget)
-            .padding(horizontal = TunesLinkSpacing.small),
+            .heightIn(min = TunesLinkSizes.minimumTarget)
+            .padding(horizontal = TunesLinkSpacing.small, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(
@@ -541,7 +616,7 @@ internal fun ComputerConnectionAction(
             modifier = Modifier.size(16.dp),
         )
         Spacer(Modifier.width(TunesLinkSpacing.small))
-        Column {
+        Column(Modifier.weight(1f, fill = false)) {
             Text(
                 computerLabel,
                 style = MaterialTheme.typography.bodyMedium,
@@ -555,6 +630,7 @@ internal fun ComputerConnectionAction(
                     style = MaterialTheme.typography.labelSmall,
                     color = statusColor,
                     maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
         }
@@ -564,7 +640,7 @@ internal fun ComputerConnectionAction(
 
 @Composable
 private fun TrackArtwork(track: TrackUiState, viewModel: TunesLinkViewModel) =
-    BrowseArtwork(track.artworkId, track.title, viewModel)
+    BrowseArtwork(track.artworkId, viewModel)
 
 @Composable
 private fun trailingChevronIcon(): ImageVector =
@@ -585,6 +661,7 @@ private fun TrackRow(
     onClick: () -> Unit,
 ) {
     val startingPlaybackDescription = stringResource(R.string.starting_playback)
+    val emphasis = if (enabled) 1f else DISABLED_ROW_TEXT_ALPHA
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -605,14 +682,15 @@ private fun TrackRow(
             Text(
                 track.title,
                 style = MaterialTheme.typography.bodyLarge,
-                color = if (current) TunesLinkTheme.colors.accentText else TunesLinkTheme.colors.primaryText,
+                color = (if (current) TunesLinkTheme.colors.accentText else TunesLinkTheme.colors.primaryText)
+                    .copy(alpha = emphasis),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
                 listOf(track.artist, track.album).filter(String::isNotBlank).joinToString(" · "),
                 style = MaterialTheme.typography.bodyMedium,
-                color = TunesLinkTheme.colors.secondaryText,
+                color = TunesLinkTheme.colors.secondaryText.copy(alpha = emphasis),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -626,19 +704,22 @@ private fun TrackRow(
                     .semantics { contentDescription = startingPlaybackDescription },
             )
         } else if (current) {
-            Icon(
-                Icons.Rounded.Equalizer,
-                contentDescription = stringResource(
+            NowPlayingIndicator(
+                playing = playing,
+                description = stringResource(
                     if (playing) R.string.now_playing else R.string.current_track,
                 ),
-                tint = TunesLinkTheme.colors.accentText,
-                modifier = Modifier.size(24.dp),
+                tint = TunesLinkTheme.colors.accentText.copy(alpha = emphasis),
+                modifier = Modifier.size(20.dp),
             )
         } else {
+            val spoken = spokenDuration(track.duration)
             Text(
                 formatTime(track.duration),
-                style = MaterialTheme.typography.labelMedium,
-                color = TunesLinkTheme.colors.secondaryText,
+                style = MaterialTheme.typography.labelMedium.tabularNumerals(),
+                color = TunesLinkTheme.colors.secondaryText.copy(alpha = emphasis),
+                textAlign = TextAlign.End,
+                modifier = Modifier.semantics { contentDescription = spoken },
             )
         }
     }

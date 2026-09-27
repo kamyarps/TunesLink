@@ -28,6 +28,7 @@ internal sealed class NetworkAddressSelector : IDisposable
 
     private readonly TimeProvider timeProvider;
     private readonly object gate = new();
+    private readonly object refreshGate = new();
     private readonly System.Threading.Timer debounce;
     private IPAddress? recentRouteAddress;
     private DateTimeOffset recentRouteExpiresAt;
@@ -72,20 +73,34 @@ internal sealed class NetworkAddressSelector : IDisposable
     public void Refresh()
     {
         if (disposed) return;
-        IPAddress? routeHint;
-        lock (gate)
-        {
-            if (recentRouteExpiresAt <= timeProvider.GetUtcNow()) recentRouteAddress = null;
-            routeHint = recentRouteAddress;
-        }
-        NetworkAddressSelection selected = Select(EnumerateCandidates(), routeHint);
         bool changed;
-        lock (gate)
+        // Refreshes run one at a time, so an enumeration that started earlier can never publish
+        // its older view over a newer one.
+        lock (refreshGate)
         {
-            changed = current != selected;
-            current = selected;
+            if (disposed) return;
+            IPAddress? routeHint;
+            lock (gate)
+            {
+                if (recentRouteExpiresAt <= timeProvider.GetUtcNow()) recentRouteAddress = null;
+                routeHint = recentRouteAddress;
+            }
+            NetworkAddressSelection selected = Select(EnumerateCandidates(), routeHint);
+            lock (gate)
+            {
+                changed = current != selected;
+                current = selected;
+            }
         }
         if (changed) Changed?.Invoke();
+    }
+
+    /// <summary>Refreshes on a pool thread, so callers never wait on adapter enumeration.</summary>
+    public void RequestRefresh()
+    {
+        if (disposed) return;
+        try { debounce.Change(0, Timeout.Infinite); }
+        catch (ObjectDisposedException) { }
     }
 
     internal static NetworkAddressSelection Select(

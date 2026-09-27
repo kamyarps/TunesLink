@@ -14,6 +14,16 @@ internal static partial class BridgeSelfTest
         Ensure(ItunesWorkerHost.ClassifyComFailure(unchecked((int)0x80010007))
                == ItunesWorkerFailureCategory.ItunesTerminated,
             "worker iTunes termination classification");
+        Ensure(ItunesWorkerHost.ClassifyComFailure(unchecked((int)0x80010001))
+               == ItunesWorkerFailureCategory.ItunesBusy
+               && ItunesWorkerHost.ClassifyComFailure(unchecked((int)0x8001010A))
+               == ItunesWorkerFailureCategory.ItunesBusy,
+            "a rejected COM call means iTunes is busy, not gone");
+        Ensure(ItunesWorkerHost.ClassifyComFailure(unchecked((int)0x80004005))
+               == ItunesWorkerFailureCategory.ComFailure
+               && ItunesWorkerHost.ClassifyFailure(System.Runtime.InteropServices.Marshal
+                   .GetExceptionForHR(unchecked((int)0x80004005))!) == ItunesWorkerFailureCategory.ComFailure,
+            "an unknown COM failure is a failure of one call");
         Ensure(ItunesWorkerHost.ClassifyFailure(new TimeoutException("timeout"))
                == ItunesWorkerFailureCategory.Timeout, "worker timeout classification");
         Ensure(ItunesWorkerHost.ClassifyFailure(new MediaUnavailableException("closed"))
@@ -24,7 +34,9 @@ internal static partial class BridgeSelfTest
         Ensure(ItunesWorkerProtocol.CanReuseWorker(ItunesWorkerFailureCategory.Validation)
                && ItunesWorkerProtocol.CanReuseWorker(ItunesWorkerFailureCategory.NotFound)
                && ItunesWorkerProtocol.CanReuseWorker(ItunesWorkerFailureCategory.Cancelled)
-               && ItunesWorkerProtocol.CanReuseWorker(ItunesWorkerFailureCategory.Unavailable),
+               && ItunesWorkerProtocol.CanReuseWorker(ItunesWorkerFailureCategory.Unavailable)
+               && ItunesWorkerProtocol.CanReuseWorker(ItunesWorkerFailureCategory.ItunesBusy)
+               && ItunesWorkerProtocol.CanReuseWorker(ItunesWorkerFailureCategory.ComFailure),
             "recoverable failures preserve worker");
         Ensure(!ItunesWorkerProtocol.CanReuseWorker(ItunesWorkerFailureCategory.ComDisconnected)
                && !ItunesWorkerProtocol.CanReuseWorker(ItunesWorkerFailureCategory.ItunesTerminated)

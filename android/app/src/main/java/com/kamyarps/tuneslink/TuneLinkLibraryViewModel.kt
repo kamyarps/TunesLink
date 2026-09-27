@@ -19,18 +19,36 @@ internal fun TunesLinkViewModel.updateSearchQuery(value: String) {
     mutableState.update { it.copy(library = it.library.copy(editingQuery = value)) }
 }
 
-internal fun TunesLinkViewModel.refreshLibrary() = loadLibrary(refresh = true)
+/** The search retry action; kept for existing callers. */
+internal fun TunesLinkViewModel.refreshLibrary() = retrySearch()
+
+/**
+ * Retries what failed: the page that could not load (keeping the visible window), or the whole
+ * search when nothing is shown yet. The result count is not announced again for the same query.
+ */
+internal fun TunesLinkViewModel.retrySearch() {
+    val library = mutableState.value.library
+    when {
+        library.items.isEmpty() || library.loadedQuery == null -> commitSearch(library.editingQuery)
+        library.errorDirection == PageDirection.Next -> loadMore()
+        library.errorDirection == PageDirection.Previous -> loadPrevious()
+        else -> commitSearch(library.editingQuery)
+    }
+}
 
 internal fun TunesLinkViewModel.loadMore() {
     val library = mutableState.value.library
     if (!library.hasMore || library.isLoadingMore || library.isLoadingPrevious || library.isRefreshing) return
     val query = library.loadedQuery ?: return
     val generation = libraryGeneration
-    mutableState.update { it.copy(library = it.library.copy(isLoadingMore = true, error = null)) }
+    mutableState.update {
+        it.copy(library = it.library.copy(isLoadingMore = true, error = null, errorDirection = null))
+    }
     libraryRequest.cancel()
     val offset = library.windowStart + library.items.size
     libraryRequest = repository.getLibrary(query, offset, TunesLinkViewModel.PAGE_SIZE,
-        libraryResult(query, generation, replace = false, requestedOffset = offset))
+        libraryResult(query, generation, replace = false, requestedOffset = offset,
+            direction = PageDirection.Next))
 }
 
 internal fun TunesLinkViewModel.loadPrevious() {
@@ -41,10 +59,13 @@ internal fun TunesLinkViewModel.loadPrevious() {
     val limit = library.windowStart - offset
     if (limit <= 0) return
     val generation = libraryGeneration
-    mutableState.update { it.copy(library = it.library.copy(isLoadingPrevious = true, error = null)) }
+    mutableState.update {
+        it.copy(library = it.library.copy(isLoadingPrevious = true, error = null, errorDirection = null))
+    }
     libraryRequest.cancel()
     libraryRequest = repository.getLibrary(query, offset, limit,
-        libraryResult(query, generation, replace = false, requestedOffset = offset))
+        libraryResult(query, generation, replace = false, requestedOffset = offset,
+            direction = PageDirection.Previous))
 }
 
 internal fun TunesLinkViewModel.openLibraryKind(kind: LibraryBrowseKind) {
@@ -300,37 +321,25 @@ internal fun TunesLinkViewModel.playTrack(
 
 internal fun TunesLinkViewModel.commitSearch(query: String) {
     libraryRequest.cancel()
-    announcedResultQuery = null
+    libraryGeneration++
     val normalized = query.trim()
-    if (mutableState.value.connection !is ConnectionState.Connected) {
-        mutableState.update {
-            it.copy(
-                library = it.library.copy(
-                    loadedQuery = null,
-                    isRefreshing = false,
-                    isLoadingMore = false,
-                ),
-            )
-        }
+    // Each new query is announced once; refreshing the same query only announces a new count.
+    if (normalized != mutableState.value.library.loadedQuery) announcedResultQuery = null
+    if (normalized.isEmpty()) {
+        mutableState.update { it.copy(library = it.library.clearedSearch(loadedQuery = "")) }
         return
     }
-    libraryGeneration++
-    if (normalized.isEmpty()) {
+    if (mutableState.value.connection !is ConnectionState.Connected) {
         mutableState.update {
+            val library = it.library
             it.copy(
-                library = it.library.copy(
-                    items = emptyList(),
-                    total = 0,
-                    hasMore = false,
-                    hasPrevious = false,
-                    windowStart = 0,
-                    revision = "",
-                    loadedQuery = "",
-                    isRefreshing = false,
-                    isLoadingMore = false,
-                    isLoadingPrevious = false,
-                    error = null,
-                ),
+                library = if (library.loadedQuery == normalized) {
+                    // These are this query's results; they refresh after reconnecting.
+                    library.copy(isRefreshing = false, isLoadingMore = false, isLoadingPrevious = false)
+                } else {
+                    // Never present another query's rows as results for this one.
+                    library.clearedSearch(loadedQuery = null).copy(awaitingConnection = true)
+                },
             )
         }
         return
@@ -342,7 +351,10 @@ internal fun TunesLinkViewModel.commitSearch(query: String) {
                 loadedQuery = normalized,
                 isRefreshing = true,
                 isLoadingMore = false,
+                isLoadingPrevious = false,
                 error = null,
+                errorDirection = null,
+                awaitingConnection = false,
             ),
         )
     }
@@ -350,13 +362,36 @@ internal fun TunesLinkViewModel.commitSearch(query: String) {
         libraryResult(normalized, generation, replace = true))
 }
 
-internal fun TunesLinkViewModel.loadLibrary(refresh: Boolean) {
-    val library = mutableState.value.library
-    if (!refresh && library.loadedQuery != null) return
-    commitSearch(library.editingQuery)
+internal fun LibraryUiState.clearedSearch(loadedQuery: String?) = copy(
+    items = emptyList(),
+    total = 0,
+    hasMore = false,
+    hasPrevious = false,
+    windowStart = 0,
+    revision = "",
+    loadedQuery = loadedQuery,
+    isRefreshing = false,
+    isLoadingMore = false,
+    isLoadingPrevious = false,
+    error = null,
+    errorDirection = null,
+    awaitingConnection = false,
+)
+
+/** Whether showing Search must (re)run the typed query rather than keep what is displayed. */
+internal fun LibraryUiState.searchNeedsCommit(): Boolean {
+    val normalized = editingQuery.trim()
+    return normalized.isNotEmpty() &&
+        (normalized != loadedQuery || (error != null && items.isEmpty()))
 }
 
-internal fun TunesLinkViewModel.libraryResult(query: String, generation: Int, replace: Boolean, requestedOffset: Int = 0) =
+internal fun TunesLinkViewModel.libraryResult(
+    query: String,
+    generation: Int,
+    replace: Boolean,
+    requestedOffset: Int = 0,
+    direction: PageDirection? = null,
+) =
     object : BridgeRepository.PageResult<BridgeClient.LibraryPage> {
         override fun page(value: BridgeClient.LibraryPage, authoritative: Boolean) {
             val current = mutableState.value.library
@@ -366,9 +401,7 @@ internal fun TunesLinkViewModel.libraryResult(query: String, generation: Int, re
                 return
             }
             val alreadyAnnounced = announcedResultQuery == query && current.total == value.total
-            val converted = value.items.map {
-                it.toUiState()
-            }
+            val converted = value.items.map { it.toUiState(untitled) }
             mutableState.update { state ->
                 val library = state.library
                 if (!authoritative) {
@@ -384,6 +417,7 @@ internal fun TunesLinkViewModel.libraryResult(query: String, generation: Int, re
                         value.offset,
                         replace || library.items.isEmpty(),
                         TunesLinkViewModel.MAX_LIBRARY_WINDOW_ITEMS,
+                        key = TrackUiState::id,
                     )
                     return@update state.copy(
                         library = library.copy(
@@ -405,6 +439,7 @@ internal fun TunesLinkViewModel.libraryResult(query: String, generation: Int, re
                     replace || revisionReplaced,
                     TunesLinkViewModel.MAX_LIBRARY_WINDOW_ITEMS,
                     total = value.total,
+                    key = TrackUiState::id,
                 )
                 state.copy(
                     library = library.copy(
@@ -420,6 +455,7 @@ internal fun TunesLinkViewModel.libraryResult(query: String, generation: Int, re
                         isLoadingMore = false,
                         isLoadingPrevious = false,
                         error = null,
+                        errorDirection = null,
                     ),
                 )
             }
@@ -433,15 +469,20 @@ internal fun TunesLinkViewModel.libraryResult(query: String, generation: Int, re
             announcePlural(R.plurals.result_count, value.total, listOf(value.total))
         }
 
-        override fun failure(message: String, unauthorized: Boolean) {
+        override fun failure(message: String, unauthorized: Boolean) =
+            failure(message, unauthorized, BridgeClient.ErrorCode.NONE)
+
+        override fun failure(message: String, unauthorized: Boolean, code: BridgeClient.ErrorCode) {
             if (generation != libraryGeneration) return
+            val error = localizedFailure(message, R.string.error_library_unavailable, code)
             mutableState.update {
                 it.copy(
                     library = it.library.copy(
                         isRefreshing = false,
                         isLoadingMore = false,
                         isLoadingPrevious = false,
-                        error = localizedFailure(message, R.string.error_library_unavailable),
+                        error = error,
+                        errorDirection = direction,
                     ),
                 )
             }
@@ -459,7 +500,7 @@ internal fun TunesLinkViewModel.browseCollectionsResult(generation: Int, replace
             val converted = value.items.map {
                 LibraryCollectionUiState(
                     it.id,
-                    it.title,
+                    it.title.ifBlank(untitled),
                     it.subtitle,
                     it.trackCount,
                     it.artworkId,
@@ -480,6 +521,7 @@ internal fun TunesLinkViewModel.browseCollectionsResult(generation: Int, replace
                         value.offset,
                         replace || state.browse.collections.isEmpty(),
                         TunesLinkViewModel.MAX_LIBRARY_WINDOW_ITEMS,
+                        key = LibraryCollectionUiState::id,
                     )
                     return@update state.copy(
                         browse = state.browse.copy(
@@ -500,6 +542,7 @@ internal fun TunesLinkViewModel.browseCollectionsResult(generation: Int, replace
                     replaced,
                     TunesLinkViewModel.MAX_LIBRARY_WINDOW_ITEMS,
                     total = value.total,
+                    key = LibraryCollectionUiState::id,
                 )
                 state.copy(
                     browse = state.browse.copy(
@@ -520,9 +563,12 @@ internal fun TunesLinkViewModel.browseCollectionsResult(generation: Int, replace
             }
         }
 
-        override fun failure(message: String, unauthorized: Boolean) {
+        override fun failure(message: String, unauthorized: Boolean) =
+            failure(message, unauthorized, BridgeClient.ErrorCode.NONE)
+
+        override fun failure(message: String, unauthorized: Boolean, code: BridgeClient.ErrorCode) {
             if (generation != browseCollectionsGeneration) return
-            failBrowseCursor(LibraryBrowseTarget.Collections, message)
+            failBrowseCursor(LibraryBrowseTarget.Collections, message, code)
         }
     }
 
@@ -534,7 +580,7 @@ internal fun TunesLinkViewModel.browseTracksResult(generation: Int, replace: Boo
                 if (authoritative) failure("", false)
                 return
             }
-            val converted = value.items.map { it.toUiState() }
+            val converted = value.items.map { it.toUiState(untitled) }
             mutableState.update { state ->
                 val cursor = state.browse.tracksCursor
                 if (!authoritative) {
@@ -550,6 +596,7 @@ internal fun TunesLinkViewModel.browseTracksResult(generation: Int, replace: Boo
                         value.offset,
                         replace || state.browse.tracks.isEmpty(),
                         TunesLinkViewModel.MAX_LIBRARY_WINDOW_ITEMS,
+                        key = TrackUiState::id,
                     )
                     return@update state.copy(
                         browse = state.browse.copy(
@@ -570,6 +617,7 @@ internal fun TunesLinkViewModel.browseTracksResult(generation: Int, replace: Boo
                     replaced,
                     TunesLinkViewModel.MAX_LIBRARY_WINDOW_ITEMS,
                     total = value.total,
+                    key = TrackUiState::id,
                 )
                 state.copy(
                     browse = state.browse.copy(
@@ -590,14 +638,21 @@ internal fun TunesLinkViewModel.browseTracksResult(generation: Int, replace: Boo
             }
         }
 
-        override fun failure(message: String, unauthorized: Boolean) {
+        override fun failure(message: String, unauthorized: Boolean) =
+            failure(message, unauthorized, BridgeClient.ErrorCode.NONE)
+
+        override fun failure(message: String, unauthorized: Boolean, code: BridgeClient.ErrorCode) {
             if (generation != browseTracksGeneration) return
-            failBrowseCursor(LibraryBrowseTarget.Tracks, message)
+            failBrowseCursor(LibraryBrowseTarget.Tracks, message, code)
         }
     }
 
-private fun TunesLinkViewModel.failBrowseCursor(target: LibraryBrowseTarget, message: String) {
-    val failure = localizedFailure(message, R.string.error_library_unavailable)
+private fun TunesLinkViewModel.failBrowseCursor(
+    target: LibraryBrowseTarget,
+    message: String,
+    code: BridgeClient.ErrorCode,
+) {
+    val failure = localizedFailure(message, R.string.error_library_unavailable, code)
     mutableState.update {
         it.copy(
             browse = it.browse.withCursor(
@@ -651,9 +706,12 @@ internal fun <T> provisionalCursor(
     hasPrevious = window.startOffset > 0,
 )
 
-private fun BridgeClient.LibraryTrack.toUiState() = TrackUiState(
+/** Blank wire titles are shown with the localized "Untitled". */
+private val TunesLinkViewModel.untitled: () -> String get() = { localizedString(R.string.untitled) }
+
+private fun BridgeClient.LibraryTrack.toUiState(untitled: () -> String) = TrackUiState(
     id = id,
-    title = title,
+    title = title.ifBlank(untitled),
     artist = artist,
     album = album,
     duration = duration,
@@ -665,6 +723,12 @@ private fun BridgeClient.LibraryTrack.toUiState() = TrackUiState(
 
 internal data class PageWindow<T>(val items: List<T>, val startOffset: Int)
 
+/**
+ * Merges a page into the retained window by absolute offset. The result is unique by [key]
+ * (lazy lists key rows by ID): when a row moved between page loads, the incoming copy keeps its
+ * position and the stale copy is dropped. Dropping a stale row before the page moves the window
+ * start so the page's rows keep their absolute offsets; the next page load fills any gap.
+ */
 internal fun <T> mergePageWindow(
     existing: List<T>,
     existingStart: Int,
@@ -673,19 +737,20 @@ internal fun <T> mergePageWindow(
     replace: Boolean,
     maximumItems: Int,
     total: Int = Int.MAX_VALUE,
+    key: (T) -> Any? = { it },
 ): PageWindow<T> {
     require(maximumItems > 0)
     require(total >= 0)
     if (total == 0) return PageWindow(emptyList(), 0)
-    val window = mergeUnboundedPageWindow(existing, existingStart, incoming, incomingStart,
-        replace, maximumItems)
+    val window = mergeUnboundedPageWindow(existing, existingStart, incoming.distinctBy(key),
+        incomingStart, replace, maximumItems, key)
     val start = window.startOffset.coerceAtMost(total)
     return PageWindow(window.items.take(total - start), start)
 }
 
 private fun <T> mergeUnboundedPageWindow(
     existing: List<T>, existingStart: Int, incoming: List<T>, incomingStart: Int,
-    replace: Boolean, maximumItems: Int,
+    replace: Boolean, maximumItems: Int, key: (T) -> Any?,
 ): PageWindow<T> {
     if (replace || existing.isEmpty()) {
         val kept = incoming.take(maximumItems)
@@ -707,14 +772,31 @@ private fun <T> mergeUnboundedPageWindow(
         val kept = incoming.take(maximumItems)
         return PageWindow(kept, safeIncomingStart)
     }
-    @Suppress("UNCHECKED_CAST")
-    val merged = slots as List<T>
-    if (merged.size <= maximumItems) return PageWindow(merged, unionStart)
+    val incomingFrom = safeIncomingStart - unionStart
+    val incomingUntil = incomingFrom + incoming.size
+    val incomingKeys = incoming.mapTo(HashSet(), key)
+    val seen = HashSet<Any?>()
+    val merged = ArrayList<T>(slots.size)
+    var droppedBefore = 0
+    slots.forEachIndexed { index, slot ->
+        @Suppress("UNCHECKED_CAST")
+        val item = slot as T
+        val itemKey = key(item)
+        val fromIncoming = index in incomingFrom until incomingUntil
+        if (!fromIncoming && (itemKey in incomingKeys || !seen.add(itemKey))) {
+            if (index < incomingFrom) droppedBefore++
+        } else {
+            seen.add(itemKey)
+            merged += item
+        }
+    }
+    val start = unionStart + droppedBefore
+    if (merged.size <= maximumItems) return PageWindow(merged, start)
 
     return if (safeIncomingStart >= safeExistingStart) {
         val drop = merged.size - maximumItems
-        PageWindow(merged.drop(drop), unionStart + drop)
+        PageWindow(merged.drop(drop), start + drop)
     } else {
-        PageWindow(merged.take(maximumItems), unionStart)
+        PageWindow(merged.take(maximumItems), start)
     }
 }

@@ -42,7 +42,8 @@ public sealed partial class MainWindow : Microsoft.UI.Xaml.Window, IDisposable
 
     private readonly BridgeRuntime? runtime;
     private readonly BridgeLaunchOptions launch;
-    private readonly TrayService tray;
+    private readonly DispatcherQueue uiQueue;
+    private readonly TrayService? tray;
     private readonly DispatcherQueueTimer pairTimer;
     private readonly DispatcherQueueTimer statusTimer;
     private readonly DispatcherQueueTimer relativeTimer;
@@ -58,7 +59,9 @@ public sealed partial class MainWindow : Microsoft.UI.Xaml.Window, IDisposable
     private bool animationsEnabled = true;
     private bool opacityFeedbackEnabled = true;
     private int feedbackDurationMs = MotionTokens.StatusCrossfadeMs;
-    private bool pairingExpanded;
+    private readonly PairingDisclosure pairingDisclosure = new();
+    private readonly TaskCompletionSource startupDialogOpened =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
     private bool uiActivityActive;
     private bool suppressVisibilityLifecycle;
     private bool systemEventsSubscribed;
@@ -73,23 +76,27 @@ public sealed partial class MainWindow : Microsoft.UI.Xaml.Window, IDisposable
     private bool disposed;
     private string? copyableAddress;
     private Microsoft.UI.Xaml.Media.Animation.TransitionCollection? contentReflowTransitions;
+    // Written and read on the UI thread only: the cause of a change the UI itself is making.
     private SecurityChangeCause pendingSecurityChange;
     private string? pendingSecurityDeviceName;
-    private int lastKnownDeviceCount;
+    private SecuritySnapshot shownSecurity;
     private SizeInt32 requestedClientSizeDip = new(DefaultClientWidthDip, DefaultClientHeightDip);
 
-    internal MainWindow(BridgeRuntime? runtime, BridgeLaunchOptions launch,
-        SingleInstanceCoordinator? singleton)
+    internal MainWindow(BridgeRuntime? runtime, BridgeLaunchOptions launch)
     {
         this.runtime = runtime;
         this.launch = launch;
         InitializeComponent();
-        Title = "TunesLink Bridge";
+        uiQueue = DispatcherQueue;
+        Title = UiStrings.Get("AppDisplayName", "TunesLink Bridge");
+        ToolTipService.SetToolTip(SettingsButton, UiStrings.Get("SettingsToolTip", "Settings"));
         DevicesItems.ItemsSource = pairedPhones;
         contentReflowTransitions = ContentStack.ChildrenTransitions;
+        BackdropWaveHost.SizeChanged += (_, _) => SyncBackdropWaveSize();
         LoadBrandImages();
         ConfigureWindow();
-        tray = new TrayService(ShowFromExternalInstance, ExitApplication);
+        // Isolated previews must not leave a second icon in the user's notification area.
+        tray = launch.IsolatedPreview ? null : new TrayService(ShowFromExternalInstance, ExitApplication);
 
         pairTimer = DispatcherQueue.CreateTimer();
         pairTimer.Interval = TimeSpan.FromSeconds(1);
@@ -107,20 +114,18 @@ public sealed partial class MainWindow : Microsoft.UI.Xaml.Window, IDisposable
             runtime.AddressSelector.Changed += AddressChanged;
             restoringPreferences = true;
             KeepRunningToggle.IsOn = runtime.Preferences.KeepRunningOnClose;
-            try
+            restoringPreferences = false;
+            if (!launch.Demo)
             {
-                if (!launch.Demo)
+                try { StartupRegistration.RepairEnabledPath(); }
+                catch (Exception exception)
                 {
-                    StartupRegistration.RepairEnabledPath();
-                    OpenAtLoginToggle.IsOn = StartupRegistration.IsEnabled();
+                    BridgeDiagnostics.Record("startup.repair", exception);
                 }
             }
-            catch (Exception exception)
-            {
-                BridgeDiagnostics.Record("startup.read", exception);
-            }
-            restoringPreferences = false;
+            ReadOpenAtLogin();
             RefreshAll();
+            shownSecurity = CaptureSecuritySnapshot(runtime);
             if (launch.UiState is "itunes-error" or "both-errors")
                 SetProblem(new BridgeProblem(BridgeProblemKind.ITunesUnavailable,
                     UiStrings.Get("ItunesUnavailableTitle", "iTunes is unavailable"),
@@ -131,7 +136,13 @@ public sealed partial class MainWindow : Microsoft.UI.Xaml.Window, IDisposable
             SetHeroText(new HeroPresentation(HeroMode.PairFirstPhone,
                 UiStrings.Get("HeroUnavailableTitle", "Bridge unavailable."),
                 UiStrings.Get("HeroUnavailableDetail", "Restart TunesLink Bridge to restore pairing and playback controls."), false));
-            PairCodeText.Text = "— — —";
+            PairCodeText.Text = UiStrings.Get("PairingCodeUnavailable", "— — —");
+            AutomationProperties.SetName(PairCodeText,
+                UiStrings.Get("PairingCodeUnavailableAccessibleName", "Pairing code unavailable"));
+            // No code exists without the bridge: nothing may count down or invite entry.
+            PairExpiryText.Visibility = Visibility.Collapsed;
+            PairCodeActions.Visibility = Visibility.Collapsed;
+            CodeDetailText.Visibility = Visibility.Collapsed;
             AddressText.Text = UiStrings.Get("Unavailable", "Unavailable");
             CopyCodeButton.IsEnabled = false;
             CopyAddressButton.IsEnabled = false;
@@ -144,7 +155,6 @@ public sealed partial class MainWindow : Microsoft.UI.Xaml.Window, IDisposable
         }
         ApplyRuntimeAvailability();
 
-        singleton?.Listen(ShowFromExternalInstance);
         Closed += Window_Closed;
         AppWindow.Closing += AppWindow_Closing;
         AppWindow.Changed += AppWindow_Changed;
@@ -188,8 +198,14 @@ public sealed partial class MainWindow : Microsoft.UI.Xaml.Window, IDisposable
             {
                 ApplySystemPresentationSettings();
                 UpdateUiActivity();
+                return;
             }
+            // Minimizing deactivates before the window reports its new state; check again once
+            // the minimize has settled.
+            UpdateUiActivity();
+            uiQueue.TryEnqueue(DispatcherQueuePriority.Low, UpdateUiActivity);
         };
+        VisibilityChanged += (_, _) => UpdateUiActivity();
     }
 
     internal void InitializeHidden()
@@ -207,14 +223,34 @@ public sealed partial class MainWindow : Microsoft.UI.Xaml.Window, IDisposable
         }
     }
 
-    internal async Task ShowStartupFailureAsync(string message)
+    /// <summary>Explains a failed start once the window can host a dialog; true means Retry.</summary>
+    internal async Task<bool> ShowStartupFailureAsync(Exception exception, int port)
     {
-        await ShowDialogAsync(
+        await WhenRootLoadedAsync();
+        string detail = StartupFailurePresentation.Detail(
+            StartupFailurePresentation.Classify(exception), port);
+        ContentDialogResult result = await ShowDialogAsync(
             UiStrings.Get("StartupFailureTitle", "TunesLink couldn’t start"),
-            message,
+            detail,
+            UiStrings.Get("TryAgain", "Try again"),
             UiStrings.Get("Close", "Close"),
-            null,
-            destructive: false);
+            destructive: false,
+            initialFocusOnPrimary: true,
+            opened: () => startupDialogOpened.TrySetResult());
+        return result == ContentDialogResult.Primary;
+    }
+
+    private Task WhenRootLoadedAsync()
+    {
+        if (RootGrid.IsLoaded && RootGrid.XamlRoot is not null) return Task.CompletedTask;
+        TaskCompletionSource loaded = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        void OnLoaded(object sender, RoutedEventArgs args)
+        {
+            RootGrid.Loaded -= OnLoaded;
+            loaded.TrySetResult();
+        }
+        RootGrid.Loaded += OnLoaded;
+        return loaded.Task;
     }
 
     private void LoadBrandImages()
@@ -294,7 +330,6 @@ public sealed partial class MainWindow : Microsoft.UI.Xaml.Window, IDisposable
             visual.Brush = brush;
             ElementCompositionPreview.SetElementChildVisual(BackdropWaveHost, visual);
             backdropWave = visual;
-            BackdropWaveHost.SizeChanged += (_, _) => SyncBackdropWaveSize();
             SyncBackdropWaveSize();
         }
         catch (Exception exception)
@@ -331,13 +366,19 @@ public sealed partial class MainWindow : Microsoft.UI.Xaml.Window, IDisposable
         // Ring colors are driven by running compositor animations, so a theme change rebuilds
         // the wave rather than poking the animated values.
         if (backdropWave is null) return;
-        bool visible = backdropWave.IsVisible;
+        RemoveBackdropWave();
+        ApplyRingPulsePolicy();
+    }
+
+    private void RemoveBackdropWave()
+    {
+        // Tearing the visual down (rather than hiding it) stops its endless compositor
+        // animations while the window is hidden or minimized.
+        if (backdropWave is null) return;
         ElementCompositionPreview.SetElementChildVisual(BackdropWaveHost, null);
         backdropWave.Dispose();
         backdropWave = null;
         backdropWaveRingStops.Clear();
-        EnsureBackdropWave();
-        if (backdropWave is not null) backdropWave.IsVisible = visible;
     }
 
     private void UpdatePhoneShadowOpacity() =>

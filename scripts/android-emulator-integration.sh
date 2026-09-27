@@ -954,7 +954,9 @@ wait_node text "Browse Library" >/dev/null
 wait_orientation portrait 0
 capture "paired-large-text"
 tap_node desc "Now Playing"
-  wait_node desc "iTunes volume, 64%" >/dev/null
+  # The slider's label is "iTunes volume"; its value ("64%") is a stateDescription, which
+  # uiautomator dumps do not include.
+  wait_node desc "iTunes volume" >/dev/null
 capture "paired-large-text-player-controls"
 tap_node desc "Library"
 android_emulator_set_font_scale "$adb_command" 2.0

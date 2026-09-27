@@ -27,6 +27,9 @@ internal sealed class PlaybackStateSubscription : IAsyncDisposable
 internal sealed class PlaybackStateHub : IDisposable
 {
     private static readonly TimeSpan FreshStateAge = TimeSpan.FromMilliseconds(650);
+    // A busy worker (a long queue build, a request in flight) is not a closed iTunes. Phones keep
+    // the last good state through a few slow samples before they are told iTunes is unavailable.
+    private const int UnavailableAfterFailures = 3;
     private readonly IMediaController media;
     private readonly TimeProvider timeProvider;
     private readonly CancellationTokenSource cancellation = new();
@@ -36,7 +39,9 @@ internal sealed class PlaybackStateHub : IDisposable
     private readonly Dictionary<Guid, Channel<PlaybackStateUpdate>> subscribers = [];
     private readonly Task sampler;
     private PlaybackState? current;
-    private DateTimeOffset sampledAt;
+    // A monotonic timestamp, so a wall-clock step cannot make a stale state look fresh forever.
+    private long? sampledAt;
+    private int consecutiveFailures;
     private long sequence;
     private bool disposed;
 
@@ -56,8 +61,7 @@ internal sealed class PlaybackStateHub : IDisposable
     {
         lock (gate)
         {
-            if (current is not null && timeProvider.GetUtcNow() - sampledAt <= FreshStateAge)
-                return current;
+            if (current is not null && IsFreshLocked()) return current;
         }
         return await SampleAsync(token).ConfigureAwait(false);
     }
@@ -86,7 +90,7 @@ internal sealed class PlaybackStateHub : IDisposable
     public void Wake()
     {
         if (disposed) return;
-        lock (gate) sampledAt = default;
+        lock (gate) sampledAt = null;
         SignalSampler();
     }
 
@@ -135,8 +139,7 @@ internal sealed class PlaybackStateHub : IDisposable
         {
             lock (gate)
             {
-                if (current is not null && timeProvider.GetUtcNow() - sampledAt <= FreshStateAge)
-                    return current;
+                if (current is not null && IsFreshLocked()) return current;
             }
 
             using CancellationTokenSource operation = CancellationTokenSource.CreateLinkedTokenSource(token);
@@ -145,14 +148,29 @@ internal sealed class PlaybackStateHub : IDisposable
             try
             {
                 sampled = await media.GetStateAsync(operation.Token).ConfigureAwait(false);
+                lock (gate) consecutiveFailures = 0;
             }
             catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
-            catch
+            catch (Exception exception)
             {
+                PlaybackState? previous;
+                lock (gate)
+                {
+                    previous = current;
+                    int failures = ++consecutiveFailures;
+                    if (previous is not null && failures < UnavailableAfterFailures
+                        && !IsUnavailable(exception))
+                    {
+                        // Serve the last good state for the usual freshness window instead of
+                        // making every reader wait on the busy worker again.
+                        sampledAt = timeProvider.GetTimestamp();
+                        return previous;
+                    }
+                }
                 // Keep useful metadata, but publish the loss of the media backend to every client.
-                PlaybackState previous = Current ?? new PlaybackState(
+                PlaybackState last = previous ?? new PlaybackState(
                     false, false, "", "", "", 0, 0, 0, "", "", false, "off");
-                sampled = previous with { ITunesAvailable = false, Playing = false };
+                sampled = last with { ITunesAvailable = false, Playing = false };
             }
             List<Channel<PlaybackStateUpdate>> targets = [];
             PlaybackStateUpdate? update = null;
@@ -160,7 +178,7 @@ internal sealed class PlaybackStateHub : IDisposable
             {
                 bool changed = current is null || current != sampled;
                 current = sampled;
-                sampledAt = timeProvider.GetUtcNow();
+                sampledAt = timeProvider.GetTimestamp();
                 if (changed)
                 {
                     update = new PlaybackStateUpdate(++sequence, sampled);
@@ -176,6 +194,19 @@ internal sealed class PlaybackStateHub : IDisposable
             sampleGate.Release();
         }
     }
+
+    private bool IsFreshLocked() =>
+        sampledAt is { } at && timeProvider.GetElapsedTime(at) <= FreshStateAge;
+
+    private static bool IsUnavailable(Exception exception) => exception switch
+    {
+        MediaUnavailableException => true,
+        ItunesWorkerException worker => worker.Category
+            is ItunesWorkerFailureCategory.ItunesTerminated
+            or ItunesWorkerFailureCategory.ComDisconnected
+            or ItunesWorkerFailureCategory.Unavailable,
+        _ => false,
+    };
 
     private void RemoveSubscriber(Guid id)
     {

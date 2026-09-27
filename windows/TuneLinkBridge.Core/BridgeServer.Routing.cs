@@ -13,7 +13,8 @@ internal sealed partial class BridgeServer
     {
         if (!IsLocalAddress(remote))
         {
-            await WriteJsonAsync(stream, 403, new { error = "TunesLink is local-network only" }, token);
+            await WriteErrorAsync(stream,
+                new ApiError(403, "invalid_request", "TunesLink is local-network only"), token);
             return;
         }
         string path = request.Target.Split('?', 2)[0];
@@ -33,7 +34,49 @@ internal sealed partial class BridgeServer
 
         if (request.Method == "POST" && path == "/api/pair")
         {
-            if (!pairingRateLimiter.CanAttempt(remote, out int retryAfter))
+            // A closed bridge answers before anything else so a guess costs nothing and
+            // reveals nothing.
+            if (!security.PairingOpen)
+            {
+                await WriteErrorAsync(stream, ApiError.PairingClosed, token);
+                return;
+            }
+            string code;
+            string clientId;
+            string device;
+            try
+            {
+                PairRequest? pairing = JsonSerializer.Deserialize<PairRequest>(request.Body, JsonOptions);
+                if (pairing is null || string.IsNullOrWhiteSpace(pairing.Code))
+                    throw new JsonException("Pairing code is required");
+                code = pairing.Code;
+                clientId = pairing.ClientId ?? "";
+                if (!BridgeSecurity.IsValidClientId(clientId))
+                    throw new JsonException("Client identity is required");
+                device = pairing.DeviceName ?? "Android phone";
+            }
+            catch (JsonException)
+            {
+                await WriteErrorAsync(stream, ApiError.InvalidRequest("Invalid pairing request"), token);
+                return;
+            }
+            BridgeSecurity.PairingResult? outcome = null;
+            int retryAfter;
+            // Checking the limit and recording the result is one step, so concurrent connections
+            // cannot all pass the check before any of their failures are counted.
+            lock (pairingGate)
+            {
+                if (pairingRateLimiter.CanAttempt(remote, out retryAfter))
+                {
+                    BridgeSecurity.PairingResult attempt = security.Pair(code, clientId, device);
+                    if (attempt.Status == BridgeSecurity.PairingStatus.Rejected)
+                        pairingRateLimiter.RecordFailure(remote);
+                    else if (attempt.Succeeded)
+                        pairingRateLimiter.ClearAddress(remote);
+                    outcome = attempt;
+                }
+            }
+            if (outcome is not { } pair)
             {
                 await WriteJsonAsync(stream, 429,
                     new
@@ -45,49 +88,29 @@ internal sealed partial class BridgeServer
                     new Dictionary<string, string> { ["Retry-After"] = retryAfter.ToString(CultureInfo.InvariantCulture) });
                 return;
             }
-            try
+            ApiError? failure = pair.Status switch
             {
-                PairRequest? pairing = JsonSerializer.Deserialize<PairRequest>(request.Body, JsonOptions);
-                if (pairing is null || string.IsNullOrWhiteSpace(pairing.Code))
-                    throw new JsonException("Pairing code is required");
-                string code = pairing.Code;
-                string clientId = pairing.ClientId ?? "";
-                if (!BridgeSecurity.IsValidClientId(clientId))
-                    throw new JsonException("Client identity is required");
-                string device = pairing.DeviceName ?? "Android phone";
-                BridgeSecurity.PairingResult pair = security.Pair(code, clientId, device);
-                if (pair.Status == BridgeSecurity.PairingStatus.PersistenceFailed)
-                {
-                    await WriteJsonAsync(stream, 500,
-                        new { error = "Pairing could not be saved" }, token);
-                    return;
-                }
-                if (pair.Status == BridgeSecurity.PairingStatus.DeviceLimitReached)
-                {
-                    await WriteJsonAsync(stream, 409,
-                        new { error = "This PC already has two paired phones" }, token);
-                    return;
-                }
-                if (!pair.Succeeded)
-                {
-                    pairingRateLimiter.RecordFailure(remote);
-                    await WriteJsonAsync(stream, 403, new { error = "That pairing code is not correct" }, token);
-                    return;
-                }
-                pairingRateLimiter.ClearAddress(remote);
-                await WriteJsonAsync(stream, 200, new { token = pair.Token }, token);
-            }
-            catch (JsonException)
+                BridgeSecurity.PairingStatus.Succeeded => null,
+                BridgeSecurity.PairingStatus.PairingClosed => ApiError.PairingClosed,
+                BridgeSecurity.PairingStatus.PersistenceFailed =>
+                    new ApiError(500, "pairing_save_failed", "Pairing could not be saved"),
+                BridgeSecurity.PairingStatus.DeviceLimitReached =>
+                    new ApiError(409, "pairing_device_limit", "This PC already has two paired phones"),
+                _ => new ApiError(403, "pairing_code_incorrect", "That pairing code is not correct"),
+            };
+            if (failure is not null)
             {
-                await WriteJsonAsync(stream, 400, new { error = "Invalid pairing request" }, token);
+                await WriteErrorAsync(stream, failure, token);
+                return;
             }
+            await WriteJsonAsync(stream, 200, new { token = pair.Token }, token);
             return;
         }
 
         string? bearer = BearerToken(request.Headers);
         if (!security.ValidateToken(bearer))
         {
-            await WriteJsonAsync(stream, 401, new { error = "Not paired" }, token);
+            await WriteErrorAsync(stream, ApiError.NotPaired, token);
             return;
         }
         addressSelector?.ObserveAuthenticatedClient(remote);
@@ -97,13 +120,13 @@ internal sealed partial class BridgeServer
             PersistenceResult revocation = security.TryForgetToken(bearer);
             if (!revocation.Succeeded)
             {
-                await WriteJsonAsync(stream, 500,
-                    new { error = "Revocation could not be saved" }, token);
+                await WriteErrorAsync(stream,
+                    ApiError.BridgeError with { Message = "Revocation could not be saved" }, token);
                 return;
             }
             if (!revocation.Changed)
             {
-                await WriteJsonAsync(stream, 401, new { error = "Not paired" }, token);
+                await WriteErrorAsync(stream, ApiError.NotPaired, token);
                 return;
             }
             await WriteJsonAsync(stream, 200, new { ok = true }, token);
@@ -120,8 +143,7 @@ internal sealed partial class BridgeServer
             }
             catch (OperationCanceledException) when (!token.IsCancellationRequested)
             {
-                await WriteJsonAsync(stream, 503,
-                    new { error = "The computer is busy. Try again." }, token);
+                await WriteErrorAsync(stream, ApiError.Busy, token);
                 return;
             }
             await WriteJsonAsync(stream, 200, state, token);
@@ -136,8 +158,8 @@ internal sealed partial class BridgeServer
             if (sizeValue.Length > 0
                 && (!int.TryParse(sizeValue, out size) || size is < 64 or > 1000))
             {
-                await WriteJsonAsync(stream, 400,
-                    new { error = "Artwork size must be between 64 and 1000 pixels" }, token);
+                await WriteErrorAsync(stream,
+                    ApiError.InvalidRequest("Artwork size must be between 64 and 1000 pixels"), token);
                 return;
             }
             using CancellationTokenSource operation = OperationTimeout(BridgeProtocol.MediaTimeout, token);
@@ -145,13 +167,13 @@ internal sealed partial class BridgeServer
                 .ConfigureAwait(false);
             if (artwork is null)
             {
-                await WriteJsonAsync(stream, 404, new { error = "Artwork not found" }, token);
+                await WriteErrorAsync(stream, ApiError.NotFound with { Message = "Artwork not found" }, token);
                 return;
             }
             if (artwork.Bytes.Length is 0 or > MaxArtworkResponseBytes
                 || artwork.ContentType is not ("image/jpeg" or "image/png"))
             {
-                await WriteJsonAsync(stream, 500, new { error = "Artwork is invalid" }, token);
+                await WriteErrorAsync(stream, ApiError.BridgeError with { Message = "Artwork is invalid" }, token);
                 return;
             }
             await WriteBytesAsync(stream, 200, artwork.Bytes, artwork.ContentType, token);
@@ -166,7 +188,7 @@ internal sealed partial class BridgeServer
             if (query.Length > 120 || kind is not ("artists" or "genres")
                 || !ItunesCollectionId.IsValidText(id, kind))
             {
-                await WriteJsonAsync(stream, 400, new { error = "Invalid album collection" }, token);
+                await WriteErrorAsync(stream, ApiError.InvalidRequest("Invalid album collection"), token);
                 return;
             }
             int offset = int.TryParse(QueryValue(request.Target, "offset"), out int parsedOffset)
@@ -186,12 +208,12 @@ internal sealed partial class BridgeServer
             string query = QueryValue(request.Target, "query").Trim();
             if (kind is not ("artists" or "albums" or "genres" or "playlists"))
             {
-                await WriteJsonAsync(stream, 400, new { error = "Unknown library collection" }, token);
+                await WriteErrorAsync(stream, ApiError.InvalidRequest("Unknown library collection"), token);
                 return;
             }
             if (query.Length > 120)
             {
-                await WriteJsonAsync(stream, 400, new { error = "Search is too long" }, token);
+                await WriteErrorAsync(stream, ApiError.InvalidRequest("Search is too long"), token);
                 return;
             }
             int offset = int.TryParse(QueryValue(request.Target, "offset"), out int parsedOffset)
@@ -213,7 +235,7 @@ internal sealed partial class BridgeServer
             string collectionId = QueryValue(request.Target, "collectionId").Trim();
             if (query.Length > 120)
             {
-                await WriteJsonAsync(stream, 400, new { error = "Search is too long" }, token);
+                await WriteErrorAsync(stream, ApiError.InvalidRequest("Search is too long"), token);
                 return;
             }
             int offset = int.TryParse(QueryValue(request.Target, "offset"), out int parsedOffset)
@@ -224,7 +246,7 @@ internal sealed partial class BridgeServer
                 && (collectionKind is not ("artists" or "albums" or "genres" or "playlists")
                     || collectionId.Length is < 3 or > 1024))
             {
-                await WriteJsonAsync(stream, 400, new { error = "Invalid library collection" }, token);
+                await WriteErrorAsync(stream, ApiError.InvalidRequest("Invalid library collection"), token);
                 return;
             }
             TimeSpan timeout = collectionKind.Length == 0
@@ -241,7 +263,7 @@ internal sealed partial class BridgeServer
             }
             catch (ArgumentException exception)
             {
-                await WriteJsonAsync(stream, 404, new { error = exception.Message }, token);
+                await WriteErrorAsync(stream, ApiError.NotFound with { Message = exception.Message }, token);
             }
             return;
         }
@@ -257,7 +279,7 @@ internal sealed partial class BridgeServer
             }
             catch (JsonException)
             {
-                await WriteJsonAsync(stream, 400, new { error = "Invalid playback cancellation" }, token);
+                await WriteErrorAsync(stream, ApiError.InvalidRequest("Invalid playback cancellation"), token);
             }
             return;
         }
@@ -273,7 +295,7 @@ internal sealed partial class BridgeServer
                 string collectionId = submitted?.CollectionId?.Trim() ?? "";
                 if (id.Length is < 8 or > 80)
                 {
-                    await WriteJsonAsync(stream, 400, new { error = "A valid song is required" }, token);
+                    await WriteErrorAsync(stream, ApiError.InvalidRequest("A valid song is required"), token);
                     return;
                 }
                 bool hasCollectionKind = collectionKind.Length > 0;
@@ -283,8 +305,7 @@ internal sealed partial class BridgeServer
                         && (collectionKind is not ("artists" or "albums" or "genres" or "playlists")
                             || collectionId.Length is < 3 or > 1024)))
                 {
-                    await WriteJsonAsync(stream, 400,
-                        new { error = "Invalid playback collection" }, token);
+                    await WriteErrorAsync(stream, ApiError.InvalidRequest("Invalid playback collection"), token);
                     return;
                 }
                 using CancellationTokenSource operation =
@@ -293,7 +314,7 @@ internal sealed partial class BridgeServer
                     ? playbackRequests.Begin(bearer!, sequence, operation.Token) : null;
                 if (submitted?.Sequence is not null && selection is null)
                 {
-                    await WriteJsonAsync(stream, 409, new { error = "Playback selection was superseded" }, token);
+                    await WriteErrorAsync(stream, ApiError.Superseded("Playback selection was superseded"), token);
                     return;
                 }
                 long started = Stopwatch.GetTimestamp();
@@ -306,7 +327,7 @@ internal sealed partial class BridgeServer
                 catch (OperationCanceledException) when (selection?.Token.IsCancellationRequested == true
                     && !token.IsCancellationRequested && !operation.IsCancellationRequested)
                 {
-                    await WriteJsonAsync(stream, 409, new { error = "Playback selection was canceled" }, token);
+                    await WriteErrorAsync(stream, ApiError.Superseded("Playback selection was canceled"), token);
                     return;
                 }
                 finally
@@ -320,11 +341,11 @@ internal sealed partial class BridgeServer
             }
             catch (JsonException)
             {
-                await WriteJsonAsync(stream, 400, new { error = "Invalid play request" }, token);
+                await WriteErrorAsync(stream, ApiError.InvalidRequest("Invalid play request"), token);
             }
             catch (ArgumentException exception)
             {
-                await WriteJsonAsync(stream, 404, new { error = exception.Message }, token);
+                await WriteErrorAsync(stream, ApiError.NotFound with { Message = exception.Message }, token);
             }
             return;
         }
@@ -339,7 +360,7 @@ internal sealed partial class BridgeServer
                 if (command is not ("playPause" or "next" or "previous" or "volume" or "position"
                     or "shuffle" or "repeat"))
                 {
-                    await WriteJsonAsync(stream, 400, new { error = "Unknown command" }, token);
+                    await WriteErrorAsync(stream, ApiError.InvalidRequest("Unknown command"), token);
                     return;
                 }
                 if (value is not null && !double.IsFinite(value.Value))
@@ -354,16 +375,16 @@ internal sealed partial class BridgeServer
             }
             catch (JsonException)
             {
-                await WriteJsonAsync(stream, 400, new { error = "Invalid command" }, token);
+                await WriteErrorAsync(stream, ApiError.InvalidRequest("Invalid command"), token);
             }
             catch (ArgumentException exception)
             {
-                await WriteJsonAsync(stream, 400, new { error = exception.Message }, token);
+                await WriteErrorAsync(stream, ApiError.InvalidRequest(exception.Message), token);
             }
             return;
         }
 
-        await WriteJsonAsync(stream, 404, new { error = "Not found" }, token);
+        await WriteErrorAsync(stream, ApiError.NotFound, token);
     }
 
     private string ComputerName => string.IsNullOrWhiteSpace(options.ComputerName)
@@ -373,6 +394,10 @@ internal sealed partial class BridgeServer
     private async Task StreamStateAsync(Stream stream, string bearer, CancellationToken token)
     {
         if (options.Demo) Console.WriteLine("state-stream:open");
+        // A revocation must end the stream now, not at the next heartbeat.
+        TaskCompletionSource securityChanged = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        void OnSecurityChanged() => Volatile.Read(ref securityChanged).TrySetResult();
+        security.Changed += OnSecurityChanged;
         try
         {
             await using PlaybackStateSubscription subscription = await stateHub.SubscribeAsync(token)
@@ -383,7 +408,7 @@ internal sealed partial class BridgeServer
                 "Cache-Control: no-store\r\n" +
                 "X-Content-Type-Options: nosniff\r\n" +
                 "Transfer-Encoding: chunked\r\n" +
-                "Connection: keep-alive\r\n\r\n";
+                "Connection: close\r\n\r\n";
             await WriteWithTimeoutAsync(stream, Encoding.ASCII.GetBytes(responseHeaders), token)
                 .ConfigureAwait(false);
 
@@ -392,8 +417,13 @@ internal sealed partial class BridgeServer
                 using CancellationTokenSource wait = CancellationTokenSource.CreateLinkedTokenSource(token);
                 Task<bool> stateReady = subscription.Reader.WaitToReadAsync(wait.Token).AsTask();
                 Task heartbeat = Task.Delay(BridgeProtocol.SseHeartbeatInterval, wait.Token);
-                Task completed = await Task.WhenAny(stateReady, heartbeat).ConfigureAwait(false);
+                Task completed = await Task.WhenAny(stateReady, heartbeat,
+                    Volatile.Read(ref securityChanged).Task).ConfigureAwait(false);
                 wait.Cancel();
+                // Re-armed before the check below, so a change arriving during it wakes the loop again.
+                if (securityChanged.Task.IsCompleted)
+                    Volatile.Write(ref securityChanged,
+                        new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
 
                 if (!security.ValidateToken(bearer))
                 {
@@ -402,6 +432,7 @@ internal sealed partial class BridgeServer
                     break;
                 }
 
+                if (completed != stateReady && completed != heartbeat) continue;
                 if (completed == stateReady && await stateReady.ConfigureAwait(false))
                 {
                     while (subscription.Reader.TryRead(out PlaybackStateUpdate? update))
@@ -422,6 +453,7 @@ internal sealed partial class BridgeServer
         }
         finally
         {
+            security.Changed -= OnSecurityChanged;
             if (options.Demo) Console.WriteLine("state-stream:close");
         }
     }

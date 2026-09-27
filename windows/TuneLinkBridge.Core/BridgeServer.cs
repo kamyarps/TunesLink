@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net;
 using System.Net.Security;
 using System.Net.Sockets;
@@ -10,8 +11,10 @@ namespace TunesLinkBridge;
 
 internal sealed partial class BridgeServer : IDisposable
 {
-    private const int MaxConnections = 24;
-    private const int MaxConnectionsPerAddress = 8;
+    // A phone runs up to eight requests at once plus its state stream, and a request it abandons
+    // keeps its slot until the bridge notices. The per-address limit leaves room for both.
+    private const int MaxConnections = 32;
+    private const int MaxConnectionsPerAddress = 16;
     private const int MaxHeaderBytes = 16 * 1024;
     private const int MaxHeaderCount = 64;
     private const int MaxHeaderLineBytes = 4 * 1024;
@@ -19,6 +22,8 @@ internal sealed partial class BridgeServer : IDisposable
     private const int MaxBodyBytes = 32 * 1024;
     private const int MaxArtworkResponseBytes = 2 * 1024 * 1024;
     private const int MaxRequestsPerConnection = 64;
+    private static readonly TimeSpan RejectionTimeout = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan ErrorWriteTimeout = TimeSpan.FromSeconds(5);
 
     private sealed record HttpRequest(string Method, string Target, string Version,
         Dictionary<string, string> Headers, byte[] Body);
@@ -38,7 +43,7 @@ internal sealed partial class BridgeServer : IDisposable
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         PropertyNameCaseInsensitive = true
     };
-    private static readonly AsyncLocal<bool> ResponseKeepAlive = new();
+    private static readonly AsyncLocal<ResponseConnection?> ResponseKeepAlive = new();
 
     private readonly BridgeSecurity security;
     private readonly BridgeTlsIdentity tlsIdentity;
@@ -53,12 +58,16 @@ internal sealed partial class BridgeServer : IDisposable
     private readonly Dictionary<string, int> activeConnectionsByAddress = new();
     private readonly object connectionsGate = new();
     private readonly PairingRateLimiter pairingRateLimiter;
+    private readonly object pairingGate = new();
     private readonly PlaybackRequests playbackRequests;
     private TcpListener? tcp;
     private UdpClient? udp;
     private Task? tcpLoop;
     private Task? udpLoop;
     private bool disposed;
+
+    /// <summary>False when the discovery port could not be opened; HTTPS still serves phones.</summary>
+    public bool DiscoveryAvailable { get; private set; }
 
     internal int ActiveConnectionCountForTest
     {
@@ -80,11 +89,13 @@ internal sealed partial class BridgeServer : IDisposable
         this.options = options;
         this.addressSelector = addressSelector;
         pairingRateLimiter = new PairingRateLimiter(timeProvider);
-        playbackRequests = new PlaybackRequests(security.ValidateToken);
+        playbackRequests = new PlaybackRequests(security.IsAuthorized);
     }
 
     public void Start()
     {
+        BridgeDiagnostics.RecordEvent("bridge.start", BridgeProtocol.ProductVersion,
+            options.ConfigDirectory);
         tcp = new TcpListener(IPAddress.Any, options.Port);
         tcp.Server.ExclusiveAddressUse = true;
         tcp.Start(32);
@@ -92,11 +103,29 @@ internal sealed partial class BridgeServer : IDisposable
 
         if (options.DiscoveryPort > 0)
         {
-            udp = new UdpClient(AddressFamily.InterNetwork);
-            udp.Client.ExclusiveAddressUse = true;
-            udp.Client.Bind(new IPEndPoint(IPAddress.Any, options.DiscoveryPort));
-            udp.EnableBroadcast = true;
-            udpLoop = Task.Run(DiscoveryLoopAsync);
+            // Discovery is a convenience; a phone that knows the address still connects. Another
+            // program holding the port must not take the whole bridge down.
+            try
+            {
+                udp = new UdpClient(AddressFamily.InterNetwork);
+                udp.Client.ExclusiveAddressUse = true;
+                if (OperatingSystem.IsWindows())
+                {
+                    // Without this, an ICMP port-unreachable from a departed phone surfaces as a
+                    // connection reset on the next receive.
+                    const int SioUdpConnectionReset = -1744830452;
+                    udp.Client.IOControl(SioUdpConnectionReset, [0, 0, 0, 0], null);
+                }
+                udp.Client.Bind(new IPEndPoint(IPAddress.Any, options.DiscoveryPort));
+                udpLoop = Task.Run(DiscoveryLoopAsync);
+                DiscoveryAvailable = true;
+            }
+            catch (SocketException exception)
+            {
+                BridgeDiagnostics.Record("network.discovery.bind", exception, options.ConfigDirectory);
+                udp?.Dispose();
+                udp = null;
+            }
         }
     }
 
@@ -179,9 +208,11 @@ internal sealed partial class BridgeServer : IDisposable
             client.NoDelay = true;
             IPAddress remote = ((IPEndPoint?)client.Client.RemoteEndPoint)?.Address ?? IPAddress.None;
             if (!IsLocalAddress(remote)) return;
-            if (!TryEnterAddress(remote)) return;
+            bool admitted = TryEnterAddress(remote);
             NetworkStream stream = client.GetStream();
             SslStream? secureStream = null;
+            // Canceled when the phone closes the connection while a long request is running.
+            using CancellationTokenSource disconnected = new();
             try
             {
                 using CancellationTokenSource handshake = CancellationTokenSource.CreateLinkedTokenSource(cancellation.Token);
@@ -196,11 +227,17 @@ internal sealed partial class BridgeServer : IDisposable
                 };
                 await secureStream.AuthenticateAsServerAsync(authentication, handshake.Token)
                     .ConfigureAwait(false);
+                if (!admitted)
+                {
+                    await RejectBusyAsync(secureStream).ConfigureAwait(false);
+                    return;
+                }
                 HttpConnectionReader reader = new();
-                DateTimeOffset connectionExpiresAt = DateTimeOffset.UtcNow.Add(BridgeProtocol.ConnectionLifetime);
+                long connectionStarted = Stopwatch.GetTimestamp();
                 for (int requestCount = 0; requestCount < MaxRequestsPerConnection; requestCount++)
                 {
-                    TimeSpan idleRemaining = connectionExpiresAt - DateTimeOffset.UtcNow;
+                    TimeSpan idleRemaining = BridgeProtocol.ConnectionLifetime
+                        - Stopwatch.GetElapsedTime(connectionStarted);
                     if (idleRemaining <= TimeSpan.Zero) break;
                     using CancellationTokenSource idleTimeout =
                         CancellationTokenSource.CreateLinkedTokenSource(cancellation.Token);
@@ -210,25 +247,33 @@ internal sealed partial class BridgeServer : IDisposable
                         .ConfigureAwait(false);
                     if (request is null) break;
                     using CancellationTokenSource requestTimeout =
-                        CancellationTokenSource.CreateLinkedTokenSource(cancellation.Token);
+                        CancellationTokenSource.CreateLinkedTokenSource(cancellation.Token,
+                            disconnected.Token);
                     requestTimeout.CancelAfter(BridgeProtocol.RequestTimeout);
-                    bool keepAlive = request.Version == "HTTP/1.1"
+                    bool keepAliveRequested = request.Version == "HTTP/1.1"
                         && (!request.Headers.TryGetValue("Connection", out string? connection)
-                            || !connection.Equals("close", StringComparison.OrdinalIgnoreCase))
-                        && requestCount < MaxRequestsPerConnection - 1;
-                    ResponseKeepAlive.Value = keepAlive;
+                            || !connection.Equals("close", StringComparison.OrdinalIgnoreCase));
+                    ResponseConnection response = new(connectionStarted,
+                        MaxRequestsPerConnection - requestCount - 1, keepAliveRequested);
+                    ResponseKeepAlive.Value = response;
 
                     string path = request.Target.Split('?', 2)[0];
+                    if (IsLongRequest(request.Method, path))
+                        reader.WatchForDisconnect(secureStream, disconnected);
                     if (!options.LegacyState && request.Method == "GET" && path == "/api/state/stream")
                     {
+                        response.Closing = true;
                         string? bearer = BearerToken(request.Headers);
                         if (!security.ValidateToken(bearer))
-                            await WriteJsonAsync(secureStream, 401, new { error = "Not paired" },
+                            await WriteErrorAsync(secureStream, ApiError.NotPaired,
                                 requestTimeout.Token).ConfigureAwait(false);
                         else
                         {
                             addressSelector?.ObserveAuthenticatedClient(remote);
-                            await StreamStateAsync(secureStream, bearer!, cancellation.Token)
+                            using CancellationTokenSource streaming =
+                                CancellationTokenSource.CreateLinkedTokenSource(cancellation.Token,
+                                    disconnected.Token);
+                            await StreamStateAsync(secureStream, bearer!, streaming.Token)
                                 .ConfigureAwait(false);
                         }
                         break;
@@ -239,13 +284,23 @@ internal sealed partial class BridgeServer : IDisposable
                         await RouteAsync(secureStream, request, remote, requestTimeout.Token)
                             .ConfigureAwait(false);
                     }
-                    catch (Exception exception) when (IsMediaUnavailable(exception))
+                    catch (Exception exception) when (!cancellation.IsCancellationRequested
+                        && !disconnected.IsCancellationRequested
+                        && ApiErrorFor(exception) is { } failure)
                     {
-                        await WriteJsonAsync(secureStream, 503,
-                            new { error = exception.Message }, requestTimeout.Token)
-                            .ConfigureAwait(false);
+                        // Timeouts and iTunes failures get an answer the phone can act on. The
+                        // connection stays usable because the request was read completely.
+                        if (failure == ApiError.BridgeError)
+                        {
+                            BridgeDiagnostics.Record("network.request", exception, options.ConfigDirectory);
+                            response.Closing = true;
+                        }
+                        using CancellationTokenSource write =
+                            CancellationTokenSource.CreateLinkedTokenSource(cancellation.Token);
+                        write.CancelAfter(ErrorWriteTimeout);
+                        await WriteErrorAsync(secureStream, failure, write.Token).ConfigureAwait(false);
                     }
-                    if (!keepAlive) break;
+                    if (response.Closing) break;
                 }
             }
             catch (BadHttpRequestException)
@@ -254,9 +309,9 @@ internal sealed partial class BridgeServer : IDisposable
                 {
                     if (secureStream?.IsAuthenticated == true)
                     {
-                        ResponseKeepAlive.Value = false;
-                        await WriteJsonAsync(secureStream, 400,
-                            new { error = "Bad request" }, cancellation.Token);
+                        ResponseKeepAlive.Value = null;
+                        await WriteErrorAsync(secureStream,
+                            new ApiError(400, "invalid_request", "Bad request"), cancellation.Token);
                     }
                 }
                 catch { }
@@ -270,8 +325,8 @@ internal sealed partial class BridgeServer : IDisposable
                 {
                     if (secureStream?.IsAuthenticated == true)
                     {
-                        ResponseKeepAlive.Value = false;
-                        await WriteJsonAsync(secureStream, 500, new { error = "Bridge error" }, cancellation.Token);
+                        ResponseKeepAlive.Value = null;
+                        await WriteErrorAsync(secureStream, ApiError.BridgeError, cancellation.Token);
                     }
                 }
                 catch { }
@@ -279,10 +334,31 @@ internal sealed partial class BridgeServer : IDisposable
             finally
             {
                 secureStream?.Dispose();
-                ExitAddress(remote);
+                if (admitted) ExitAddress(remote);
             }
         }
     }
+
+    // A phone over its connection allowance is told to retry rather than left with a reset.
+    // The request is read first so closing the socket does not discard the response.
+    private async Task RejectBusyAsync(Stream stream)
+    {
+        ResponseKeepAlive.Value = null;
+        using CancellationTokenSource timeout =
+            CancellationTokenSource.CreateLinkedTokenSource(cancellation.Token);
+        timeout.CancelAfter(RejectionTimeout);
+        HttpRequest? request = await new HttpConnectionReader().ReadAsync(stream, timeout.Token)
+            .ConfigureAwait(false);
+        if (request is not null)
+            await WriteErrorAsync(stream, ApiError.Busy, timeout.Token).ConfigureAwait(false);
+    }
+
+    // Requests that can wait on iTunes for a long time, and the state stream. For these the
+    // bridge watches for the phone hanging up so abandoned work stops and frees its slot.
+    private static bool IsLongRequest(string method, string path) =>
+        (method == "GET" && path is "/api/library" or "/api/collections"
+            or "/api/collection-albums" or "/api/artwork" or "/api/state/stream")
+        || (method == "POST" && path == "/api/play");
 
     private bool TryEnterAddress(IPAddress address)
     {
@@ -306,10 +382,6 @@ internal sealed partial class BridgeServer : IDisposable
             else activeConnectionsByAddress[key] = count - 1;
         }
     }
-
-    private static bool IsMediaUnavailable(Exception exception) =>
-        exception is MediaUnavailableException
-            or ItunesWorkerException { Category: ItunesWorkerFailureCategory.Unavailable };
 
     internal static bool IsLocalAddress(IPAddress address)
     {

@@ -30,6 +30,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -100,9 +101,11 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlin.math.max
@@ -115,13 +118,16 @@ internal fun TabletTunesWorkspace(
     viewModel: TunesLinkViewModel,
     modifier: Modifier = Modifier,
 ) {
-    LaunchedEffect(destination, state.browse.kind) {
-        if (destination == TunesLinkDestination.NowPlaying) {
-            viewModel.navigate(TunesLinkDestination.Library)
-        }
-        if (destination != TunesLinkDestination.Search && state.browse.kind == null) {
-            viewModel.openLibraryKind(LibraryBrowseKind.Albums)
-        }
+    // The workspace shows Now Playing as the library workspace (transport lives in the header)
+    // without navigating, and opens a default category only for display. Neither rewrites the
+    // stored destination, so rotating back to the phone layout returns the user where they were.
+    val needsDefaultKind = destination != TunesLinkDestination.Search && state.browse.kind == null
+    LaunchedEffect(needsDefaultKind) {
+        if (needsDefaultKind) viewModel.openWorkspaceDefaultKind()
+    }
+    val openedCollection = state.browse.selectedCollection != null
+    LaunchedEffect(openedCollection) {
+        if (openedCollection) viewModel.claimWorkspaceBrowse()
     }
 
     Column(modifier.background(TunesLinkTheme.colors.canvas)) {
@@ -132,9 +138,10 @@ internal fun TabletTunesWorkspace(
             Row(Modifier.fillMaxSize()) {
                 TabletLibrarySidebar(
                     selectedKind = state.browse.kind,
-                    selected = destination == TunesLinkDestination.Library,
+                    selected = destination != TunesLinkDestination.Search,
                     width = sidebarWidth,
                     onSelect = { kind ->
+                        viewModel.claimWorkspaceBrowse()
                         viewModel.cancelSearch()
                         viewModel.navigate(TunesLinkDestination.Library)
                         viewModel.openLibraryKind(kind)
@@ -164,10 +171,11 @@ private fun TabletWorkspaceHeader(
     val compactHeight = with(density) {
         LocalWindowInfo.current.containerSize.height.toDp() < 500.dp
     }
+    val headerMinHeight = if (compactHeight) 72.dp else 82.dp
     BoxWithConstraints(
         Modifier
             .fillMaxWidth()
-            .height(if (compactHeight) 72.dp else 82.dp)
+            .heightIn(min = headerMinHeight)
             .background(TunesLinkTheme.colors.surface.copy(alpha = 0.96f))
             .padding(horizontal = 12.dp),
     ) {
@@ -178,9 +186,15 @@ private fun TabletWorkspaceHeader(
             compactWidth -> 188.dp
             else -> 230.dp
         }
-        Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .heightIn(min = headerMinHeight)
+                .padding(vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             Column(
-                Modifier.width(leftWidth).fillMaxHeight(),
+                Modifier.width(leftWidth),
                 verticalArrangement = Arrangement.Center,
             ) {
                 Row(
@@ -224,11 +238,9 @@ private fun TabletWorkspaceHeader(
             ) {
                 TabletNowPlayingSurface(
                     player = state.player,
+                    viewModel = viewModel,
                     controlsEnabled = controlsEnabled,
                     compact = compactWidth,
-                    onSeek = viewModel::seek,
-                    onShuffle = viewModel::toggleShuffle,
-                    onRepeat = viewModel::cycleRepeat,
                     modifier = Modifier.weight(1f),
                 )
             }
@@ -276,16 +288,15 @@ private fun TabletWorkspaceHeader(
 @Composable
 private fun TabletNowPlayingSurface(
     player: PlayerUiState,
+    viewModel: TunesLinkViewModel,
     controlsEnabled: Boolean,
     compact: Boolean,
-    onSeek: (Double) -> Unit,
-    onShuffle: () -> Unit,
-    onRepeat: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val modeButtonSize = if (compact) 48.dp else 52.dp
     Row(
         modifier = modifier
-            .height(62.dp)
+            .heightIn(min = 62.dp)
             .clip(RoundedCornerShape(14.dp))
             .background(TunesLinkTheme.colors.raisedSurface.copy(alpha = 0.72f))
             .padding(start = if (compact) 4.dp else 5.dp),
@@ -293,48 +304,28 @@ private fun TabletNowPlayingSurface(
     ) {
         ArtworkSurface(
             bitmap = player.artwork,
-            description = player.artwork?.let {
-                stringResource(R.string.artwork_for, player.title)
-            },
+            description = playerArtworkDescription(player),
             modifier = Modifier.size(if (compact) 44.dp else 52.dp),
         )
         TabletNowPlayingHeader(
             player = player,
+            viewModel = viewModel,
             controlsEnabled = controlsEnabled,
             compact = compact,
-            onSeek = onSeek,
-            modifier = Modifier.weight(1f).fillMaxHeight(),
+            modifier = Modifier.weight(1f),
         )
         Row(verticalAlignment = Alignment.CenterVertically) {
-            TabletPlaybackModeButton(
-                icon = Icons.Rounded.Shuffle,
-                description = stringResource(
-                    if (player.shuffleEnabled) {
-                        R.string.turn_shuffle_off
-                    } else {
-                        R.string.turn_shuffle_on
-                    },
-                ),
-                selected = player.shuffleEnabled,
+            ShuffleToggle(
+                player = player,
                 enabled = controlsEnabled,
-                compact = compact,
-                onClick = onShuffle,
+                size = modeButtonSize,
+                onClick = viewModel::toggleShuffle,
             )
-            TabletPlaybackModeButton(
-                icon = if (player.repeatMode == RepeatMode.One) {
-                    Icons.Rounded.RepeatOne
-                } else {
-                    Icons.Rounded.Repeat
-                },
-                description = when (player.repeatMode) {
-                    RepeatMode.Off -> stringResource(R.string.turn_repeat_all_on)
-                    RepeatMode.All -> stringResource(R.string.turn_repeat_one_on)
-                    RepeatMode.One -> stringResource(R.string.turn_repeat_off)
-                },
-                selected = player.repeatMode != RepeatMode.Off,
+            RepeatToggle(
+                player = player,
                 enabled = controlsEnabled,
-                compact = compact,
-                onClick = onRepeat,
+                size = modeButtonSize,
+                onClick = viewModel::cycleRepeat,
             )
         }
     }
@@ -355,10 +346,6 @@ private fun TabletVolumeControl(
             volumeValue = player.volume.toFloat()
         }
     }
-    val volumeDescription = stringResource(
-        R.string.itunes_volume_accessibility,
-        volumeValue.toInt(),
-    )
     Row(
         modifier = modifier,
         verticalAlignment = Alignment.CenterVertically,
@@ -383,10 +370,11 @@ private fun TabletVolumeControl(
             valueRange = 0f..100f,
             enabled = controlsEnabled,
             lowEmphasis = true,
+            semanticsLabel = stringResource(R.string.itunes_volume),
+            semanticsState = stringResource(R.string.volume_state, volumeValue.toInt()),
             modifier = Modifier
                 .weight(1f)
-                .fillMaxHeight()
-                .semantics { contentDescription = volumeDescription },
+                .fillMaxHeight(),
         )
     }
 }
@@ -406,7 +394,14 @@ private fun TabletTransportButton(
         modifier = Modifier
             .size(if (compact) 48.dp else 52.dp)
             .clip(CircleShape)
-            .background(if (emphasized) TunesLinkTheme.colors.primaryText else Color.Transparent)
+            .background(
+                // Explicit colours override IconButton's disabled state; dim them ourselves.
+                if (emphasized) {
+                    TunesLinkTheme.colors.primaryText.copy(alpha = if (enabled) 1f else DISABLED_CONTENT_ALPHA)
+                } else {
+                    Color.Transparent
+                },
+            )
             .semantics { contentDescription = description },
     ) {
         val iconTransition = if (TunesLinkTheme.motion.spatialEnabled) {
@@ -432,7 +427,8 @@ private fun TabletTransportButton(
             Icon(
                 displayedIcon,
                 null,
-                tint = if (emphasized) TunesLinkTheme.colors.canvas else TunesLinkTheme.colors.primaryText,
+                tint = (if (emphasized) TunesLinkTheme.colors.canvas else TunesLinkTheme.colors.primaryText)
+                    .copy(alpha = if (enabled) 1f else DISABLED_CONTENT_ALPHA),
                 modifier = Modifier.size(if (emphasized) 28.dp else 26.dp),
             )
         }
@@ -440,113 +436,45 @@ private fun TabletTransportButton(
 }
 
 @Composable
-private fun TabletPlaybackModeButton(
-    icon: ImageVector,
-    description: String,
-    selected: Boolean,
-    enabled: Boolean,
-    compact: Boolean,
-    onClick: () -> Unit,
-) {
-    val size = if (compact) 48.dp else 52.dp
-    IconButton(
-        onClick = onClick,
-        enabled = enabled,
-        modifier = Modifier
-            .size(size)
-            .clip(RoundedCornerShape(12.dp))
-            .background(
-                if (selected) {
-                    TunesLinkTheme.colors.accentText.copy(alpha = 0.16f)
-                } else {
-                    Color.Transparent
-                },
-            )
-            .semantics {
-                contentDescription = description
-                this.selected = selected
-            },
-    ) {
-        Icon(
-            icon,
-            contentDescription = null,
-            tint = if (selected) {
-                TunesLinkTheme.colors.accentText
-            } else {
-                TunesLinkTheme.colors.secondaryText
-            },
-            modifier = Modifier.size(24.dp),
-        )
-    }
-}
-
-@Composable
 private fun TabletNowPlayingHeader(
     player: PlayerUiState,
+    viewModel: TunesLinkViewModel,
     controlsEnabled: Boolean,
     compact: Boolean,
-    onSeek: (Double) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val haptic = LocalHapticFeedback.current
-    var seekValue by remember(player.trackId, player.duration) {
-        mutableFloatStateOf(player.position.toFloat())
-    }
-    var seeking by remember(player.trackId) { mutableStateOf(false) }
-    LaunchedEffect(player.position, player.pending(PlaybackAction.Position), seeking) {
-        if (!seeking && player.pending(PlaybackAction.Position) == null) {
-            seekValue = player.position.toFloat()
-        }
-    }
-    val duration = max(1f, player.duration.toFloat())
-    val seekDescription = stringResource(
-        R.string.track_position_accessibility,
-        formatTime(seekValue.toDouble()),
-        formatTime(player.duration),
-    )
-    Box(modifier) {
-        Column(
-            Modifier
-                .fillMaxSize()
-                .padding(horizontal = if (compact) 6.dp else 12.dp, vertical = 7.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            Text(
-                player.title.ifBlank { stringResource(R.string.nothing_playing) },
-                style = MaterialTheme.typography.bodyLarge,
-                fontWeight = FontWeight.SemiBold,
-                color = TunesLinkTheme.colors.primaryText,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                playerSubtitle(player, includeAlbum = true, unavailableHint = true),
-                style = MaterialTheme.typography.labelMedium,
-                color = TunesLinkTheme.colors.secondaryText,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-        TunesLinkSlider(
-            value = seekValue.coerceIn(0f, duration),
-            onValueChange = {
-                seeking = true
-                seekValue = it
-            },
-            onValueChangeFinished = {
-                seeking = false
-                onSeek(seekValue.toDouble())
+    // A column (not an overlaid box) so larger text pushes the scrubber down instead of under it.
+    Column(
+        modifier.padding(horizontal = if (compact) 6.dp else 12.dp, vertical = 2.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(
+            player.title.ifBlank { stringResource(R.string.nothing_playing) },
+            style = MaterialTheme.typography.bodyLarge,
+            fontWeight = FontWeight.SemiBold,
+            color = TunesLinkTheme.colors.primaryText,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+            playerSubtitle(player, includeAlbum = true, unavailableHint = true),
+            style = MaterialTheme.typography.labelMedium,
+            color = TunesLinkTheme.colors.secondaryText,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        PlaybackProgress(
+            viewModel = viewModel,
+            trackId = player.trackId,
+            duration = player.duration,
+            enabled = controlsEnabled && player.duration > 0,
+            onSeek = { position, draggedTrackId ->
+                viewModel.seek(position, draggedTrackId)
                 haptic.performHapticFeedback(HapticFeedbackType.Confirm)
             },
-            valueRange = 0f..duration,
-            enabled = controlsEnabled && player.duration > 0,
-            lowEmphasis = true,
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .fillMaxWidth()
-                .height(24.dp)
-                .padding(horizontal = 10.dp)
-                .semantics { contentDescription = seekDescription },
+            inline = true,
+            modifier = Modifier.fillMaxWidth(),
         )
     }
 }
@@ -560,9 +488,16 @@ private fun TabletConnectionButton(state: TunesLinkUiState, onClick: () -> Unit)
         state.bridgeName.ifBlank { stringResource(R.string.connection_default) },
         stringResource(availability.titleRes),
     )
+    val showDetails = stringResource(R.string.show_connection_details)
     IconButton(
         onClick = onClick,
-        modifier = Modifier.size(52.dp).semantics { contentDescription = description },
+        modifier = Modifier.size(52.dp).semantics {
+            contentDescription = description
+            onClick(label = showDetails) {
+                onClick()
+                true
+            }
+        },
     ) {
         Box {
             Icon(
@@ -664,6 +599,7 @@ private fun TabletLibraryPane(state: TunesLinkUiState, viewModel: TunesLinkViewM
             state = state,
             viewModel = viewModel,
             onRetry = { viewModel.openLibraryKind(LibraryBrowseKind.Songs) },
+            emptyCopy = LibraryBrowseKind.Songs.emptyCopy(),
         )
         LibraryBrowseKind.Artists,
         LibraryBrowseKind.Genres,
@@ -697,6 +633,18 @@ private fun TabletAlbumsPane(state: TunesLinkUiState, viewModel: TunesLinkViewMo
             onRetry = { viewModel.openLibraryKind(LibraryBrowseKind.Albums) },
             modifier = Modifier.fillMaxSize(),
         )
+        browse.collections.isEmpty() && !browse.collectionsCursor.isBusy -> {
+            val empty = if (browse.albumParent != null) {
+                LibraryEmptyCopy(R.string.no_albums, R.string.no_albums_detail)
+            } else {
+                LibraryBrowseKind.Albums.emptyCopy()
+            }
+            ContentState(
+                stringResource(empty.title),
+                stringResource(empty.detail),
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
         else -> BoxWithConstraints(Modifier.fillMaxSize()) {
             val density = LocalDensity.current
             val compactHeight = with(density) {
@@ -723,24 +671,36 @@ private fun TabletAlbumsPane(state: TunesLinkUiState, viewModel: TunesLinkViewMo
                 horizontalArrangement = Arrangement.spacedBy(if (compactHeight) 12.dp else 18.dp),
                 verticalArrangement = Arrangement.spacedBy(if (compactHeight) 12.dp else 20.dp),
             ) {
-                if (browse.collectionsCursor.windowStart == 0) item(key = "albums-heading", span = { GridItemSpan(maxLineSpan) }) {
+                if (browse.collectionsCursor.windowStart == 0) item(
+                    key = "albums-heading",
+                    span = { GridItemSpan(maxLineSpan) },
+                    contentType = "heading",
+                ) {
                     TabletPaneHeading(
-                        stringResource(R.string.albums),
-                        browse.collectionsCursor.total,
+                        browse.albumParent?.title ?: stringResource(R.string.albums),
+                        libraryCountLabel(LibraryBrowseKind.Albums, browse.collectionsCursor.total),
                     )
                 }
                 if (browse.collectionsCursor.isLoadingPrevious) {
-                    item(key = "albums-previous-progress", span = { GridItemSpan(maxLineSpan) }) { TabletProgress() }
+                    item(
+                        key = "albums-previous-progress",
+                        span = { GridItemSpan(maxLineSpan) },
+                        contentType = "progress",
+                    ) { TabletProgress() }
                 }
                 if (browse.collectionsCursor.hasPrevious && browse.collectionsCursor.error != null) {
-                    item(key = "albums-previous-error", span = { GridItemSpan(maxLineSpan) }) {
+                    item(
+                        key = "albums-previous-error",
+                        span = { GridItemSpan(maxLineSpan) },
+                        contentType = "error",
+                    ) {
                         LibraryPageError(browse.collectionsCursor.error) {
                             viewModel.retryBrowse(LibraryBrowseTarget.Collections)
                         }
                     }
                 }
                 browse.collections.forEachIndexed { index, collection ->
-                    item(key = collection.id) {
+                    item(key = collection.id, contentType = "album") {
                         TabletAlbumCard(
                             collection = collection,
                             selected = browse.selectedCollection?.id == collection.id,
@@ -760,6 +720,7 @@ private fun TabletAlbumsPane(state: TunesLinkUiState, viewModel: TunesLinkViewMo
                             item(
                                 key = "album-detail:${selected.id}",
                                 span = { GridItemSpan(maxLineSpan) },
+                                contentType = "album-detail",
                             ) {
                                 TabletExpandedAlbum(
                                     selected = selected,
@@ -796,13 +757,13 @@ private fun TabletAlbumsPane(state: TunesLinkUiState, viewModel: TunesLinkViewMo
                         }
                     }
                 }
-                item(key = "albums-page-error", span = { GridItemSpan(maxLineSpan) }) {
+                item(key = "albums-page-error", span = { GridItemSpan(maxLineSpan) }, contentType = "error") {
                     LibraryPageError(browse.collectionsCursor.error) {
                         viewModel.retryBrowse(LibraryBrowseTarget.Collections)
                     }
                 }
                 if (browse.collectionsCursor.isLoadingMore) {
-                    item(key = "album-progress", span = { GridItemSpan(maxLineSpan) }) {
+                    item(key = "album-progress", span = { GridItemSpan(maxLineSpan) }, contentType = "progress") {
                         TabletProgress()
                     }
                 }
@@ -812,7 +773,7 @@ private fun TabletAlbumsPane(state: TunesLinkUiState, viewModel: TunesLinkViewMo
 }
 
 @Composable
-private fun TabletPaneHeading(title: String, total: Int, detail: String = "") {
+private fun TabletPaneHeading(title: String, countLabel: String, detail: String = "") {
     Row(
         Modifier.fillMaxWidth().padding(bottom = 4.dp),
         verticalAlignment = Alignment.Bottom,
@@ -834,8 +795,8 @@ private fun TabletPaneHeading(title: String, total: Int, detail: String = "") {
             }
         }
         Text(
-            pluralStringResource(R.plurals.result_count, total, total),
-            style = MaterialTheme.typography.bodyMedium,
+            countLabel,
+            style = MaterialTheme.typography.bodyMedium.tabularNumerals(),
             color = TunesLinkTheme.colors.secondaryText,
         )
     }
@@ -889,9 +850,9 @@ private fun TabletAlbumCard(
     ) {
         TabletArtwork(
             artworkId = collection.artworkId,
-            title = collection.title,
             viewModel = viewModel,
             maxSize = 384,
+            cornerRadius = TunesLinkShapes.artworkMedium,
             modifier = Modifier.fillMaxWidth().aspectRatio(1f),
         )
         Spacer(Modifier.height(10.dp))
@@ -957,9 +918,9 @@ private fun TabletExpandedAlbum(
                 Column(Modifier.widthIn(min = 180.dp, max = 260.dp).weight(0.34f)) {
                     TabletArtwork(
                         artworkId = artworkId,
-                        title = selected.title,
                         viewModel = viewModel,
                         maxSize = 512,
+                        cornerRadius = TunesLinkShapes.artworkMedium,
                         modifier = Modifier.fillMaxWidth().aspectRatio(1f),
                     )
                     Spacer(Modifier.height(12.dp))
@@ -999,6 +960,7 @@ private fun TabletExpandedAlbum(
                             viewModel = viewModel,
                             collection = selected,
                             showHeading = false,
+                            emptyCopy = LibraryEmptyCopy(R.string.no_songs, R.string.no_songs_detail),
                         )
                     }
                 }
@@ -1015,6 +977,17 @@ private fun TabletCollectionMasterDetail(state: TunesLinkUiState, viewModel: Tun
     LibraryPagination(listState, browse.collectionsCursor,
         onPrevious = { viewModel.loadPreviousBrowse(LibraryBrowseTarget.Collections) },
         onNext = { viewModel.loadMoreBrowse(LibraryBrowseTarget.Collections) })
+    val collectionsEmpty = browse.collections.isEmpty() && !browse.collectionsCursor.isBusy &&
+        browse.collectionsCursor.error == null
+    if (collectionsEmpty) {
+        val empty = kind.emptyCopy()
+        ContentState(
+            stringResource(empty.title),
+            stringResource(empty.detail),
+            modifier = Modifier.fillMaxSize(),
+        )
+        return
+    }
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val masterWidth = if (maxWidth < 700.dp) 196.dp else 280.dp
         Row(Modifier.fillMaxSize()) {
@@ -1040,15 +1013,15 @@ private fun TabletCollectionMasterDetail(state: TunesLinkUiState, viewModel: Tun
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(vertical = 8.dp),
                 ) {
-                    if (browse.collectionsCursor.isLoadingPrevious) item { TabletProgress() }
+                    if (browse.collectionsCursor.isLoadingPrevious) item(contentType = "progress") { TabletProgress() }
                     if (browse.collectionsCursor.hasPrevious && browse.collectionsCursor.error != null) {
-                        item(key = "collections-previous-error") {
+                        item(key = "collections-previous-error", contentType = "error") {
                             LibraryPageError(browse.collectionsCursor.error) {
                                 viewModel.retryBrowse(LibraryBrowseTarget.Collections)
                             }
                         }
                     }
-                    items(browse.collections, key = { it.id }) { collection ->
+                    items(browse.collections, key = { it.id }, contentType = { "collection" }) { collection ->
                         TabletCollectionListRow(
                             collection = collection,
                             selected = browse.selectedCollection?.id == collection.id,
@@ -1056,12 +1029,12 @@ private fun TabletCollectionMasterDetail(state: TunesLinkUiState, viewModel: Tun
                             onClick = { viewModel.openLibraryCollection(collection) },
                         )
                     }
-                    item(key = "collections-page-error") {
+                    item(key = "collections-page-error", contentType = "error") {
                         LibraryPageError(browse.collectionsCursor.error) {
                             viewModel.retryBrowse(LibraryBrowseTarget.Collections)
                         }
                     }
-                    if (browse.collectionsCursor.isLoadingMore) item { TabletProgress() }
+                    if (browse.collectionsCursor.isLoadingMore) item(contentType = "progress") { TabletProgress() }
                 }
             }
         }
@@ -1071,7 +1044,7 @@ private fun TabletCollectionMasterDetail(state: TunesLinkUiState, viewModel: Tun
             when {
                 selected == null -> ContentState(
                     kind.tabletLabel(),
-                    stringResource(R.string.albums_and_songs),
+                    stringResource(kind.selectionHint()),
                     modifier = Modifier.fillMaxSize(),
                 )
                 browse.tracksCursor.isLoading && browse.tracks.isEmpty() -> ContentState(
@@ -1092,6 +1065,7 @@ private fun TabletCollectionMasterDetail(state: TunesLinkUiState, viewModel: Tun
                     state = state,
                     viewModel = viewModel,
                     collection = selected,
+                    emptyCopy = LibraryEmptyCopy(R.string.no_songs, R.string.no_songs_detail),
                 )
                 else -> TabletGroupedCollectionDetail(selected, state, viewModel)
             }
@@ -1119,7 +1093,6 @@ private fun TabletCollectionListRow(
     ) {
         TabletArtwork(
             artworkId = collection.artworkId,
-            title = collection.title,
             viewModel = viewModel,
             maxSize = 128,
             modifier = Modifier.size(46.dp),
@@ -1156,6 +1129,9 @@ private fun TabletGroupedCollectionDetail(
 ) {
     val albumLabel = stringResource(R.string.album)
     val albums = remember(state.browse.tracks) { libraryBrowseAlbums(state.browse.tracks) }
+    val currentTrackId = state.player.trackId
+    val playing = state.player.playing
+    val enabled = state.playbackControlsEnabled
     val listState = key(selected.id) { rememberLazyListState() }
     LibraryPagination(listState, state.browse.tracksCursor,
         onPrevious = { viewModel.loadPreviousBrowse(LibraryBrowseTarget.Tracks) },
@@ -1166,27 +1142,31 @@ private fun TabletGroupedCollectionDetail(
         contentPadding = PaddingValues(24.dp),
         verticalArrangement = Arrangement.spacedBy(18.dp),
     ) {
-        if (state.browse.tracksCursor.windowStart == 0) item {
+        if (state.browse.tracksCursor.windowStart == 0) item(contentType = "heading") {
             TabletPaneHeading(
                 title = selected.title,
-                total = state.browse.tracksCursor.total,
+                countLabel = pluralStringResource(
+                    R.plurals.song_count,
+                    state.browse.tracksCursor.total,
+                    state.browse.tracksCursor.total,
+                ),
                 detail = selected.subtitle,
             )
         }
-        if (state.browse.tracksCursor.isLoadingPrevious) item { TabletProgress() }
-        if (state.browse.tracksCursor.error != null) item(key = "grouped-page-error") {
+        if (state.browse.tracksCursor.isLoadingPrevious) item(contentType = "progress") { TabletProgress() }
+        if (state.browse.tracksCursor.error != null) item(key = "grouped-page-error", contentType = "error") {
             LibraryPageError(state.browse.tracksCursor.error) { viewModel.retryBrowse(LibraryBrowseTarget.Tracks) }
         }
-        if (state.browse.tracks.isEmpty() && state.browse.tracksCursor.error == null) item {
+        if (state.browse.tracks.isEmpty() && state.browse.tracksCursor.error == null) item(contentType = "empty") {
             Text(stringResource(R.string.no_songs), color = TunesLinkTheme.colors.secondaryText)
         }
-        items(albums, key = { it.heading.key }) { album ->
+        items(albums, key = { it.heading.key }, contentType = { "album-group" }) { album ->
             Row(horizontalArrangement = Arrangement.spacedBy(18.dp)) {
                 TabletArtwork(
                     artworkId = album.heading.artworkId,
-                    title = album.heading.album,
                     viewModel = viewModel,
                     maxSize = 256,
+                    cornerRadius = TunesLinkShapes.artworkMedium,
                     modifier = Modifier.size(132.dp),
                 )
                 Column(Modifier.weight(1f)) {
@@ -1202,10 +1182,11 @@ private fun TabletGroupedCollectionDetail(
                         TabletTrackRow(
                             track = song.track,
                             position = song.position,
-                            state = state,
-                            viewModel = viewModel,
+                            current = currentTrackId == song.track.id,
+                            playing = playing,
+                            enabled = enabled,
+                            onPlay = { viewModel.playTrack(song.track, selected) },
                             showColumns = false,
-                            collection = selected,
                         )
                     }
                 }
@@ -1213,10 +1194,10 @@ private fun TabletGroupedCollectionDetail(
         }
         if (state.browse.tracksCursor.error != null &&
             (state.browse.tracksCursor.hasMore || state.browse.tracksCursor.hasPrevious)
-        ) item(key = "grouped-next-error") {
+        ) item(key = "grouped-next-error", contentType = "error") {
             LibraryPageError(state.browse.tracksCursor.error) { viewModel.retryBrowse(LibraryBrowseTarget.Tracks) }
         }
-        if (state.browse.tracksCursor.isLoadingMore) item { TabletProgress() }
+        if (state.browse.tracksCursor.isLoadingMore) item(contentType = "progress") { TabletProgress() }
     }
 }
 
@@ -1230,17 +1211,23 @@ private fun TabletSongsPane(
     state: TunesLinkUiState,
     viewModel: TunesLinkViewModel,
     onRetry: () -> Unit,
+    emptyCopy: LibraryEmptyCopy,
     collection: SelectedLibraryCollection? = null,
     listIdentity: String = collection?.id.orEmpty(),
     showHeading: Boolean = true,
+    loadingCopy: LibraryEmptyCopy = LibraryEmptyCopy(R.string.loading_library, R.string.loading_library_detail),
+    countPlural: Int = R.plurals.song_count,
 ) {
     val listState = key(listIdentity) { rememberLazyListState() }
     LibraryPagination(listState, cursor, onLoadPrevious, onLoadMore)
     val error = cursor.error
+    val currentTrackId = state.player.trackId
+    val playing = state.player.playing
+    val enabled = state.playbackControlsEnabled
     when {
         cursor.isLoading && tracks.isEmpty() -> ContentState(
-            stringResource(R.string.loading_library),
-            stringResource(R.string.loading_library_detail),
+            stringResource(loadingCopy.title),
+            stringResource(loadingCopy.detail),
             loading = true,
             modifier = Modifier.fillMaxSize(),
         )
@@ -1251,8 +1238,8 @@ private fun TabletSongsPane(
             modifier = Modifier.fillMaxSize(),
         )
         tracks.isEmpty() -> ContentState(
-            stringResource(R.string.no_songs),
-            stringResource(R.string.no_songs_detail),
+            stringResource(emptyCopy.title),
+            stringResource(emptyCopy.detail),
             modifier = Modifier.fillMaxSize(),
         )
         else -> BoxWithConstraints(Modifier.fillMaxSize()) {
@@ -1260,7 +1247,7 @@ private fun TabletSongsPane(
             Column(Modifier.fillMaxSize()) {
                 if (showHeading) {
                     Column(Modifier.padding(horizontal = 20.dp, vertical = 16.dp)) {
-                        TabletPaneHeading(title, cursor.total)
+                        TabletPaneHeading(title, pluralStringResource(countPlural, cursor.total, cursor.total))
                     }
                     Box(Modifier.padding(horizontal = if (showFullColumns) 20.dp else 12.dp)) {
                         TabletSongTableHeader(showFullColumns)
@@ -1274,24 +1261,29 @@ private fun TabletSongsPane(
                         vertical = 16.dp,
                     ),
                 ) {
-                    if (cursor.isLoadingPrevious) item { TabletProgress() }
-                    if (cursor.hasPrevious && error != null) item(key = "songs-previous-error") {
+                    if (cursor.isLoadingPrevious) item(contentType = "progress") { TabletProgress() }
+                    if (cursor.hasPrevious && error != null) item(key = "songs-previous-error", contentType = "error") {
                         LibraryPageError(error, onRetry)
                     }
-                    itemsIndexed(tracks, key = { _, track -> track.id }) { index, track ->
+                    itemsIndexed(
+                        tracks,
+                        key = { _, track -> track.id },
+                        contentType = { _, _ -> "track" },
+                    ) { index, track ->
                         TabletTrackRow(
                             track = track,
                             position = track.trackNumber.takeIf { it > 0 } ?: cursor.windowStart + index + 1,
-                            state = state,
-                            viewModel = viewModel,
+                            current = currentTrackId == track.id,
+                            playing = playing,
+                            enabled = enabled,
+                            onPlay = { viewModel.playTrack(track, collection) },
                             showColumns = showFullColumns,
-                            collection = collection,
                             showMetadataUnderTitle = showHeading && !showFullColumns,
                             striped = index % 2 == 1,
                         )
                     }
-                    item(key = "songs-page-error") { LibraryPageError(error, onRetry) }
-                    if (cursor.isLoadingMore || cursor.isLoading) item { TabletProgress() }
+                    item(key = "songs-page-error", contentType = "error") { LibraryPageError(error, onRetry) }
+                    if (cursor.isLoadingMore || cursor.isLoading) item(contentType = "progress") { TabletProgress() }
                 }
             }
         }
@@ -1318,23 +1310,29 @@ private fun TabletSongTableHeader(showFullColumns: Boolean) {
                 color = TunesLinkTheme.colors.secondaryText, modifier = Modifier.weight(1.1f))
         }
         Text(stringResource(R.string.time), style = MaterialTheme.typography.labelMedium,
-            color = TunesLinkTheme.colors.secondaryText, modifier = Modifier.width(62.dp))
+            color = TunesLinkTheme.colors.secondaryText, textAlign = TextAlign.End,
+            modifier = Modifier.width(62.dp))
     }
 }
 
+/**
+ * Rows take only what they display, so a playback update re-renders the current row rather
+ * than every row in the table.
+ */
 @Composable
 private fun TabletTrackRow(
     track: TrackUiState,
     position: Int,
-    state: TunesLinkUiState,
-    viewModel: TunesLinkViewModel,
+    current: Boolean,
+    playing: Boolean,
+    enabled: Boolean,
+    onPlay: () -> Unit,
     showColumns: Boolean,
-    collection: SelectedLibraryCollection? = null,
     showMetadataUnderTitle: Boolean = false,
     striped: Boolean = false,
 ) {
-    val current = state.player.trackId == track.id
-    val enabled = state.playbackControlsEnabled
+    val emphasis = if (enabled) 1f else DISABLED_ROW_TEXT_ALPHA
+    val secondary = TunesLinkTheme.colors.secondaryText.copy(alpha = emphasis)
     Row(
         Modifier
             .fillMaxWidth()
@@ -1351,7 +1349,7 @@ private fun TabletTrackRow(
                 enabled = enabled,
                 role = Role.Button,
                 onClickLabel = stringResource(R.string.play_track, track.title),
-                onClick = { viewModel.playTrack(track, collection) },
+                onClick = onPlay,
             )
             .semantics { selected = current }
             .padding(horizontal = 12.dp, vertical = 8.dp),
@@ -1359,17 +1357,17 @@ private fun TabletTrackRow(
     ) {
         Box(Modifier.width(42.dp), contentAlignment = Alignment.CenterStart) {
             if (current) {
-                Icon(
-                    if (state.player.playing) Icons.Rounded.Equalizer else Icons.Rounded.Pause,
-                    stringResource(if (state.player.playing) R.string.now_playing else R.string.current_track),
-                    tint = TunesLinkTheme.colors.accentText,
+                NowPlayingIndicator(
+                    playing = playing,
+                    description = stringResource(if (playing) R.string.now_playing else R.string.current_track),
+                    tint = TunesLinkTheme.colors.accentText.copy(alpha = emphasis),
                     modifier = Modifier.size(18.dp),
                 )
             } else {
                 Text(
                     position.toString(),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = TunesLinkTheme.colors.secondaryText,
+                    style = MaterialTheme.typography.bodyMedium.tabularNumerals(),
+                    color = secondary,
                 )
             }
         }
@@ -1377,7 +1375,8 @@ private fun TabletTrackRow(
             Text(
                 track.title,
                 style = MaterialTheme.typography.bodyLarge,
-                color = if (current) TunesLinkTheme.colors.accentText else TunesLinkTheme.colors.primaryText,
+                color = (if (current) TunesLinkTheme.colors.accentText else TunesLinkTheme.colors.primaryText)
+                    .copy(alpha = emphasis),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -1385,7 +1384,7 @@ private fun TabletTrackRow(
                 Text(
                     listOf(track.artist, track.album).filter(String::isNotBlank).joinToString(" · "),
                     style = MaterialTheme.typography.labelMedium,
-                    color = TunesLinkTheme.colors.secondaryText,
+                    color = secondary,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -1395,7 +1394,7 @@ private fun TabletTrackRow(
             Text(
                 track.artist,
                 style = MaterialTheme.typography.bodyMedium,
-                color = TunesLinkTheme.colors.secondaryText,
+                color = secondary,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1.1f).padding(start = 12.dp),
@@ -1403,17 +1402,23 @@ private fun TabletTrackRow(
             Text(
                 track.album,
                 style = MaterialTheme.typography.bodyMedium,
-                color = TunesLinkTheme.colors.secondaryText,
+                color = secondary,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1.1f).padding(start = 12.dp),
             )
         }
+        val spoken = spokenDuration(track.duration)
         Text(
             formatTime(track.duration),
-            style = MaterialTheme.typography.labelMedium,
-            color = TunesLinkTheme.colors.secondaryText,
-            modifier = Modifier.width(62.dp).padding(start = 8.dp),
+            style = MaterialTheme.typography.labelMedium.tabularNumerals(),
+            color = secondary,
+            textAlign = TextAlign.End,
+            maxLines = 1,
+            modifier = Modifier
+                .width(62.dp)
+                .padding(start = 8.dp)
+                .semantics { contentDescription = spoken },
         )
     }
 }
@@ -1421,39 +1426,52 @@ private fun TabletTrackRow(
 @Composable
 private fun TabletSearchPane(state: TunesLinkUiState, viewModel: TunesLinkViewModel) {
     val library = state.library
-    when {
-        library.editingQuery.isBlank() -> ContentState(
-            stringResource(R.string.search_your_music),
-            stringResource(R.string.search_your_music_detail),
-            modifier = Modifier.fillMaxSize(),
-        )
-        else -> TabletSongsPane(
-            title = stringResource(R.string.search_results),
-            tracks = library.items,
-            cursor = library.pageCursor(),
-            listIdentity = library.loadedQuery.orEmpty(),
-            onLoadPrevious = viewModel::loadPrevious,
-            onLoadMore = viewModel::loadMore,
-            state = state,
-            viewModel = viewModel,
-            onRetry = viewModel::refreshLibrary,
-        )
+    // Results must stay scrollable above the keyboard under edge-to-edge.
+    Box(Modifier.fillMaxSize().imePadding()) {
+        when {
+            library.editingQuery.isBlank() -> ContentState(
+                stringResource(R.string.search_your_music),
+                stringResource(R.string.search_your_music_detail),
+                modifier = Modifier.fillMaxSize(),
+            )
+            library.awaitingConnection -> ContentState(
+                stringResource(R.string.search_waiting_title),
+                stringResource(R.string.search_waiting_detail),
+                modifier = Modifier.fillMaxSize(),
+            )
+            else -> TabletSongsPane(
+                title = stringResource(R.string.search_results),
+                tracks = library.items,
+                cursor = library.pageCursor(),
+                listIdentity = library.loadedQuery.orEmpty(),
+                onLoadPrevious = viewModel::loadPrevious,
+                onLoadMore = viewModel::loadMore,
+                state = state,
+                viewModel = viewModel,
+                onRetry = viewModel::retrySearch,
+                emptyCopy = LibraryEmptyCopy(R.string.no_songs_found, R.string.no_songs_found_detail),
+                loadingCopy = LibraryEmptyCopy(R.string.searching, R.string.searching_detail),
+                countPlural = R.plurals.result_count,
+            )
+        }
     }
 }
 
+/** Grid and list artwork is decorative; the card or row already speaks its title. */
 @Composable
 private fun TabletArtwork(
     artworkId: String,
-    title: String,
     viewModel: TunesLinkViewModel,
     maxSize: Int,
     modifier: Modifier = Modifier,
+    cornerRadius: androidx.compose.ui.unit.Dp = TunesLinkShapes.artworkSmall,
 ) {
     val artwork = rememberLibraryArtwork(artworkId, maxSize, viewModel)
     ArtworkSurface(
         bitmap = artwork,
-        description = if (artwork != null) stringResource(R.string.artwork_for, title) else null,
+        description = null,
         modifier = modifier,
+        cornerRadius = cornerRadius,
     )
 }
 
@@ -1475,6 +1493,15 @@ private fun LibraryBrowseKind.tabletLabel(): String = when (this) {
     LibraryBrowseKind.Albums -> stringResource(R.string.albums)
     LibraryBrowseKind.Songs -> stringResource(R.string.songs)
     LibraryBrowseKind.Genres -> stringResource(R.string.genres)
+}
+
+private fun LibraryBrowseKind.selectionHint(): Int = when (this) {
+    LibraryBrowseKind.Artists -> R.string.select_artist_hint
+    LibraryBrowseKind.Genres -> R.string.select_genre_hint
+    LibraryBrowseKind.Playlists,
+    LibraryBrowseKind.Albums,
+    LibraryBrowseKind.Songs,
+    -> R.string.select_playlist_hint
 }
 
 private fun LibraryBrowseKind.tabletIcon(): ImageVector = when (this) {

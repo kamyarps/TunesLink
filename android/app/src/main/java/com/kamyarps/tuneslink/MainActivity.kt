@@ -31,6 +31,19 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.calculateEndPadding
+import androidx.compose.foundation.layout.calculateStartPadding
+import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.unit.Dp
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -194,7 +207,14 @@ private fun TunesLinkApp(
     hasLocalNetworkAccess: () -> Boolean,
     requestLocalNetworkPermission: () -> Unit,
 ) {
-    val state by viewModel.state.collectAsStateWithLifecycle()
+    // The playback clock is sampled every ~750 ms. Only the progress controls read it (through
+    // rememberPlaybackPosition), so the root collects state without it and does not recompose
+    // on every sample.
+    val rootState = remember(viewModel) {
+        viewModel.state.map(TunesLinkUiState::withoutPlaybackClock).distinctUntilChanged()
+    }
+    val initialState = remember(viewModel) { viewModel.state.value.withoutPlaybackClock() }
+    val state by rootState.collectAsStateWithLifecycle(initialState)
     val density = LocalDensity.current
     val windowWidth = with(density) {
         LocalWindowInfo.current.containerSize.width.toDp()
@@ -202,7 +222,12 @@ private fun TunesLinkApp(
     val useTabletWorkspace = windowWidth >= 600.dp && density.fontScale < 1.5f
     val useNavigationRail = windowWidth >= 600.dp && !useTabletWorkspace
     val haptic = LocalHapticFeedback.current
-    val imeVisible = WindowInsets.ime.getBottom(density) > 0
+    val imeInsets = WindowInsets.ime
+    // Read the insets inside derivedStateOf: every IME animation frame changes the inset, but the
+    // root only needs to know when the keyboard appears or disappears.
+    val imeVisible by remember(imeInsets, density) {
+        derivedStateOf { imeInsets.getBottom(density) > 0 }
+    }
     val appFocusRequester = remember { FocusRequester() }
     val availability = ConnectionAvailability.from(state.connection)
     var dismissedRecoveryKind by remember { mutableStateOf<ConnectionAvailabilityKind?>(null) }
@@ -263,13 +288,20 @@ private fun TunesLinkApp(
     }
 
     val connectedDestination = (state.route as? TunesLinkRoute.Connected)?.destination
+    val connected = connectedDestination != null
+    LaunchedEffect(useTabletWorkspace, connected) {
+        // Returning from the workspace (for example rotating a phone back to portrait) restores
+        // the Library root if the workspace only opened its default category for display.
+        if (connected && !useTabletWorkspace) viewModel.restoreWorkspaceAutoOpenedRoot()
+    }
+    val backDestination = effectiveBackDestination(connectedDestination, useTabletWorkspace)
     val searchBackable = searchBackEnabled(
-        destination = connectedDestination,
+        destination = backDestination,
         searchActive = state.library.searchActive,
         editingQuery = state.library.editingQuery,
     )
-    val backAction = navigationBackAction(state.modal != null, searchBackable, connectedDestination)
-    val browseBackable = connectedDestination == TunesLinkDestination.Library && state.browse.canNavigateUp
+    val backAction = navigationBackAction(state.modal != null, searchBackable, backDestination)
+    val browseBackable = browseBackEnabled(backDestination, state.browse, useTabletWorkspace)
     val backHandled = !imeVisible && (showRecoveryDialog || browseBackable ||
         backAction != NavigationBackAction.System)
     TunesLinkSharedTransitionRoot {
@@ -300,12 +332,23 @@ private fun TunesLinkApp(
         bottomBar = {
             val route = state.route as? TunesLinkRoute.Connected
             if (route != null && !imeVisible && !useTabletWorkspace) {
-                Row(
+                Column(
                     Modifier
                         .fillMaxWidth()
                         .background(TunesLinkTheme.colors.surface.copy(alpha = 0.91f)),
                 ) {
-                    if (useNavigationRail) Spacer(Modifier.width(TunesLinkSizes.navigationRailWidth))
+                    // A hairline separates the translucent chrome from scrolling content.
+                    HorizontalDivider(thickness = 0.5.dp, color = TunesLinkTheme.colors.separator)
+                    Row(Modifier.fillMaxWidth()) {
+                    if (useNavigationRail) {
+                        Spacer(
+                            Modifier
+                                .windowInsetsPadding(
+                                    WindowInsets.safeDrawing.only(WindowInsetsSides.Start),
+                                )
+                                .width(TunesLinkSizes.navigationRailWidth),
+                        )
+                    }
                     UnifiedPlayerBar(
                         player = state.player,
                         destination = route.destination,
@@ -318,7 +361,9 @@ private fun TunesLinkApp(
                         controlsEnabled = state.playbackControlsEnabled,
                         showNavigation = !useNavigationRail,
                         modifier = Modifier.weight(1f),
+                        insetStart = !useNavigationRail,
                     )
+                    }
                 }
             }
         },
@@ -349,6 +394,7 @@ private fun TunesLinkApp(
                     onDiscover = { viewModel.requestDiscovery(hasLocalNetworkAccess()) },
                     onManual = { viewModel.requestManualAddress(hasLocalNetworkAccess()) },
                     onChooseBridge = viewModel::chooseBridge,
+                    onReturnToComputer = viewModel::returnToSavedComputer,
                     onRetryRevocations = {
                         viewModel.requestRetryPendingRevocations(hasLocalNetworkAccess())
                     },
@@ -427,6 +473,7 @@ private fun WelcomeScreen(
     onDiscover: () -> Unit,
     onManual: () -> Unit,
     onChooseBridge: (BridgeClient.BridgeInfo) -> Unit,
+    onReturnToComputer: () -> Unit,
     onRetryRevocations: () -> Unit,
 ) {
     BoxWithConstraints(
@@ -489,11 +536,11 @@ private fun WelcomeScreen(
                         icon = Icons.Rounded.Search,
                         modifier = Modifier.weight(1f),
                     )
-                    TunesLinkTonalAction(
-                        stringResource(R.string.enter_address),
-                        onManual,
-                        Modifier.weight(1f),
-                        Icons.Rounded.Computer,
+                    TunesLinkSecondaryButton(
+                        label = stringResource(R.string.enter_address),
+                        onClick = onManual,
+                        modifier = Modifier.weight(1f),
+                        icon = Icons.Rounded.Computer,
                     )
                 }
             } else {
@@ -505,11 +552,22 @@ private fun WelcomeScreen(
                     modifier = Modifier.widthIn(max = 460.dp).fillMaxWidth(),
                 )
                 Spacer(Modifier.height(8.dp))
+                TunesLinkSecondaryButton(
+                    label = stringResource(R.string.enter_address),
+                    onClick = onManual,
+                    modifier = Modifier.widthIn(max = 460.dp).fillMaxWidth(),
+                    icon = Icons.Rounded.Computer,
+                )
+            }
+            state.returnComputer?.let { computer ->
+                // Choosing another computer never forgets the paired one until a new pairing
+                // succeeds, so offer the way back.
+                Spacer(Modifier.height(8.dp))
                 TunesLinkTonalAction(
-                    stringResource(R.string.enter_address),
-                    onManual,
-                    Modifier.widthIn(max = 460.dp).fillMaxWidth(),
-                    Icons.Rounded.Computer,
+                    label = stringResource(R.string.return_to_computer, computer),
+                    onClick = onReturnToComputer,
+                    modifier = Modifier.widthIn(max = 460.dp).fillMaxWidth(),
+                    color = TunesLinkTheme.colors.accentText,
                 )
             }
             if (state.discoveryError != null) {
@@ -635,10 +693,26 @@ private fun ConnectedScreen(
     showTabletWorkspace: Boolean,
     animatedVisibilityScope: androidx.compose.animation.AnimatedVisibilityScope,
 ) {
-    Column(Modifier.fillMaxSize().padding(padding)) {
-        state.player.commandError?.let { message ->
+    val layoutDirection = LocalLayoutDirection.current
+    val commandError = state.player.commandError
+    // The top inset is applied by each destination so Now Playing can draw its ambient
+    // background full-bleed behind the status bar. Consuming the scaffold padding lets
+    // descendants add only the keyboard height that is not already covered (imePadding).
+    val topInset = if (commandError != null) 0.dp else padding.calculateTopPadding()
+    Column(
+        Modifier
+            .fillMaxSize()
+            .padding(
+                start = padding.calculateStartPadding(layoutDirection),
+                end = padding.calculateEndPadding(layoutDirection),
+                bottom = padding.calculateBottomPadding(),
+            )
+            .consumeWindowInsets(padding),
+    ) {
+        commandError?.let { message ->
             Row(
                 Modifier.fillMaxWidth().background(TunesLinkTheme.colors.surface)
+                    .padding(top = padding.calculateTopPadding())
                     .padding(horizontal = 16.dp, vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -652,7 +726,7 @@ private fun ConnectedScreen(
             }
         }
         Box(Modifier.weight(1f)) {
-            ConnectedContent(state, destination, PaddingValues(0.dp), viewModel,
+            ConnectedContent(state, destination, topInset, viewModel,
                 showNavigationRail, showTabletWorkspace, animatedVisibilityScope)
         }
     }
@@ -662,7 +736,7 @@ private fun ConnectedScreen(
 private fun ConnectedContent(
     state: TunesLinkUiState,
     destination: TunesLinkDestination,
-    padding: PaddingValues,
+    topInset: Dp,
     viewModel: TunesLinkViewModel,
     showNavigationRail: Boolean,
     showTabletWorkspace: Boolean,
@@ -673,15 +747,11 @@ private fun ConnectedContent(
             state = state,
             destination = destination,
             viewModel = viewModel,
-            modifier = Modifier.fillMaxSize().padding(padding),
+            modifier = Modifier.fillMaxSize().padding(top = topInset),
         )
         return
     }
-    Row(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(padding),
-    ) {
+    Row(modifier = Modifier.fillMaxSize()) {
         if (showNavigationRail) {
             TunesLinkDestinationRail(
                 destination = destination,
@@ -691,6 +761,7 @@ private fun ConnectedContent(
                 modifier = Modifier
                     .width(TunesLinkSizes.navigationRailWidth)
                     .fillMaxHeight(),
+                topInset = topInset,
             )
         }
         Box(Modifier.weight(1f).fillMaxHeight()) {
@@ -699,6 +770,7 @@ private fun ConnectedContent(
                     state,
                     viewModel,
                     Modifier
+                        .padding(top = topInset)
                         .widthIn(max = TunesLinkSizes.readableContentMaxWidth)
                         .fillMaxWidth()
                         .fillMaxHeight()
@@ -709,11 +781,13 @@ private fun ConnectedContent(
                     viewModel,
                     Modifier.fillMaxSize(),
                     animatedVisibilityScope,
+                    topInset = topInset,
                 )
                 TunesLinkDestination.Search -> SearchScreen(
                     state,
                     viewModel,
                     Modifier
+                        .padding(top = topInset)
                         .widthIn(max = TunesLinkSizes.readableContentMaxWidth)
                         .fillMaxWidth()
                         .fillMaxHeight()

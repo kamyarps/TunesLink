@@ -56,9 +56,17 @@ internal class TunesLinkViewModel(
     internal var browseTracksGeneration = 0
     private var connectedOnce = false
     private var stateUpdatesActive = false
-    internal var artworkRefreshAt: Long = 0
+    /** Wall-clock time the current cover is due for an automatic reload (refresh or retry). */
+    internal var artworkDueAt: Long = 0
+    internal var artworkFailureId = ""
+    internal var artworkFailures = 0
+    internal var artworkRetryJob: Job? = null
     internal val artworkSession = MutableStateFlow(0L)
     internal var artworkRequest: BridgeRepository.RequestHandle = BridgeRepository.RequestHandle.NONE
+    /** Queued or in-flight playback commands, by pending-mutation operation ID. */
+    internal val commandRequests = mutableMapOf<Long, BridgeRepository.RequestHandle>()
+    /** The connection shown before "Pair again", restored if the pairing sheet is dismissed. */
+    private var pairAgainPrevious: ConnectionState? = null
     internal var libraryRequest: BridgeRepository.RequestHandle = BridgeRepository.RequestHandle.NONE
     internal var browseCollectionsRequest: BridgeRepository.RequestHandle =
         BridgeRepository.RequestHandle.NONE
@@ -94,7 +102,10 @@ internal class TunesLinkViewModel(
         viewModelScope.launch {
             editingQuery.committedSearchQueries().collectLatest { commitSearch(it) }
         }
-        repository.current()?.takeUnless { mutableState.value.navigation.switchingComputer }?.let { saved ->
+        val saved = repository.current()
+        if (saved != null && mutableState.value.navigation.switchingComputer) {
+            mutableState.update { it.copy(returnComputer = displayName(saved.name)) }
+        } else if (saved != null) {
             updateBridge(saved.name, saved.host, saved.port)
             connect(initial = true)
         }
@@ -108,14 +119,11 @@ internal class TunesLinkViewModel(
             // Unchanged/paused playback produces no SSE frames, so refresh artwork independently.
             while (true) {
                 val current = mutableState.value
-                val now = System.currentTimeMillis()
                 val canRefresh = current.connection is ConnectionState.Connected &&
                     current.player.artworkId.isNotBlank()
-                if (canRefresh && !ArtworkDiskCache.isFresh(artworkRefreshAt, now)) {
-                    loadArtwork(current.player.artworkId)
-                }
+                if (canRefresh) refreshArtworkIfDue(current.player.artworkId, current.player.artworkId)
                 val wait = if (canRefresh) {
-                    (ArtworkDiskCache.MAX_AGE_MS - (now - artworkRefreshAt))
+                    (artworkDueAt - System.currentTimeMillis())
                         .coerceIn(1_000L, ArtworkDiskCache.MAX_AGE_MS)
                 } else ArtworkDiskCache.MAX_AGE_MS
                 delay(wait)
@@ -143,7 +151,7 @@ internal class TunesLinkViewModel(
             it.copy(
                 route = TunesLinkRoute.LocalNetworkPermission,
                 connection = savedBridge?.let { bridge ->
-                    ConnectionState.RecoverableFailure(bridge.name)
+                    ConnectionState.RecoverableFailure(displayName(bridge.name))
                 } ?: ConnectionState.Unpaired,
             )
         }
@@ -153,6 +161,8 @@ internal class TunesLinkViewModel(
     fun onBackground() {
         artworkRefreshJob?.cancel()
         artworkRefreshJob = null
+        artworkRetryJob?.cancel()
+        artworkRetryJob = null
         cancelTransientOperations()
         backgroundStopJob?.cancel()
         backgroundStopJob = viewModelScope.launch {
@@ -195,7 +205,16 @@ internal class TunesLinkViewModel(
             return
         }
         val action = pendingPermissionAction
-        mutableState.update { it.copy(route = TunesLinkRoute.Welcome, discoveryError = null) }
+        // A paired phone resumes its computer; only an unpaired one belongs on Welcome.
+        val resuming = action == PendingPermissionAction.Reconnect && repository.current() != null &&
+            !mutableState.value.navigation.switchingComputer
+        mutableState.update {
+            it.copy(
+                route = if (resuming) resumeRoute() else TunesLinkRoute.Welcome,
+                connection = if (resuming) ConnectionState.Connecting else it.connection,
+                discoveryError = null,
+            )
+        }
         viewModelScope.launch {
             // Present app UI on the next settled frame after the system permission
             // window closes. This prevents the grant gesture from dismissing a
@@ -227,17 +246,19 @@ internal class TunesLinkViewModel(
         }
         discoveryRequest = repository.discover(object : BridgeClient.Result<List<BridgeClient.BridgeInfo>> {
             override fun success(value: List<BridgeClient.BridgeInfo>) {
-                if (generation != discoveryGeneration || mutableState.value.modal != null) return
-                when (value.size) {
-                    0 -> mutableState.update {
+                if (generation != discoveryGeneration) return
+                val found = value.map(::withDisplayName)
+                when {
+                    found.isEmpty() -> mutableState.update {
                         it.copy(
                             connection = ConnectionState.Unpaired,
                             discoveryError = getApplication<Application>().getString(R.string.no_computer_found_detail),
                         )
                     }
-                    1 -> openPairing(value.first())
+                    // Never replace a dialog the user opened meanwhile; list the result instead.
+                    found.size == 1 && mutableState.value.modal == null -> openPairing(found.first())
                     else -> mutableState.update {
-                        it.copy(connection = ConnectionState.Unpaired, discovered = value)
+                        it.copy(connection = ConnectionState.Unpaired, discovered = found)
                     }
                 }
             }
@@ -254,9 +275,6 @@ internal class TunesLinkViewModel(
     fun chooseBridge(bridge: BridgeClient.BridgeInfo) = openPairing(bridge)
 
     fun openManualAddress() {
-        repository.cancelDiscovery()
-        discoveryRequest.cancel()
-        discoveryGeneration++
         Log.d(NAVIGATION_TAG, "present manual-address")
         setModalPresentation(ModalPresentation(TunesLinkModal.ManualAddress))
         mutableState.update { it.copy(manualAddressError = null) }
@@ -304,6 +322,7 @@ internal class TunesLinkViewModel(
                 pairing = it.pairing.copy(
                     code = value.filter { character -> character in '0'..'9' }.take(PAIRING_CODE_LENGTH),
                     codeError = null,
+                    message = null,
                     phase = PairingPhase.Editing,
                 ),
             )
@@ -334,6 +353,7 @@ internal class TunesLinkViewModel(
                 pairing = it.pairing.copy(
                     phase = PairingPhase.Submitting,
                     codeError = null,
+                    message = null,
                 ),
             )
         }
@@ -343,6 +363,8 @@ internal class TunesLinkViewModel(
             override fun success(value: SecureStore.SavedBridge) {
                 if (generation != pairingGeneration) return
                 latestAuthoritativeState = null
+                pairAgainPrevious = null
+                cancelPendingCommands()
                 mutationTimeoutJobs.values.forEach { it.cancel() }
                 mutationTimeoutJobs.clear()
                 updateBridge(value.name, value.host, value.port)
@@ -353,26 +375,36 @@ internal class TunesLinkViewModel(
                         browse = LibraryBrowseUiState(),
                         player = PlayerUiState(),
                         navigation = it.navigation.copy(switchingComputer = false),
+                        returnComputer = null,
                     )
                 }
                 savedStateHandle[KEY_SWITCHING_COMPUTER] = false
                 announce(
                     R.string.paired_securely_with,
-                    listOf(value.name),
+                    listOf(displayName(value.name)),
                     HapticIntent.Confirm,
                 )
                 connect(initial = true)
                 requestModalDismiss()
             }
 
-            override fun failure(message: String, unauthorized: Boolean) {
+            override fun failure(message: String, unauthorized: Boolean) =
+                failure(message, unauthorized, BridgeClient.ErrorCode.NONE)
+
+            override fun failure(message: String, unauthorized: Boolean, code: BridgeClient.ErrorCode) {
                 if (generation != pairingGeneration) return
+                // The sheet stays open. Only a rejected code is shown under the code field;
+                // "pairing isn't open on the PC" and similar reasons are a separate message.
+                val messageRes = failureMessageRes(message, R.string.error_pairing_code, code)
+                val copy = localizedString(messageRes)
+                val codeFailure = isPairingCodeFailure(code, messageRes)
                 mutableState.update {
                     it.copy(
                         connection = ConnectionState.Unpaired,
                         pairing = it.pairing.copy(
                             phase = PairingPhase.Editing,
-                            codeError = localizedFailure(message, R.string.error_pairing_code),
+                            codeError = if (codeFailure) copy else null,
+                            message = if (codeFailure) null else copy,
                         ),
                     )
                 }
@@ -431,6 +463,14 @@ internal class TunesLinkViewModel(
                 pendingRevocationCount = repository.pendingRevocationCount(),
             )
             resetAnnouncement = null
+            // A later pairing starts at Library with an empty search, and typing the old query
+            // again must still commit (the query flow is distinctUntilChanged).
+            restoreDestination = TunesLinkDestination.Library
+            pairAgainPrevious = null
+            announcedResultQuery = null
+            libraryGeneration++
+            editingQuery.value = ""
+            savedStateHandle[KEY_EDITING_QUERY] = ""
             savedStateHandle[KEY_SWITCHING_COMPUTER] = false
             savedStateHandle[KEY_DESTINATION] = TunesLinkDestination.Library.name
             savedStateHandle[KEY_MODAL] = null
@@ -439,12 +479,31 @@ internal class TunesLinkViewModel(
         }
         val presentation = mutableState.value.modalPresentation
         val next = presentation?.replacement ?: presentation?.returnTo?.let(::ModalPresentation)
+        val abandonedPairing = presentation?.destination is TunesLinkModal.Pairing && next == null &&
+            mutableState.value.pairing.phase != PairingPhase.Success
         publishModalPresentation(next)
         mutableState.update {
             it.copy(
                 pairing = if (next == null) PairingUiState() else it.pairing,
                 manualAddressError = null,
             )
+        }
+        if (abandonedPairing) restoreAfterAbandonedPairAgain()
+    }
+
+    /**
+     * "Pair again" was dismissed without pairing: show the saved computer's recovery state again
+     * (pairing expired / identity changed) or reconnect, instead of a silent, stopped session.
+     */
+    private fun restoreAfterAbandonedPairAgain() {
+        val previous = pairAgainPrevious ?: return
+        pairAgainPrevious = null
+        if (repository.current() == null || mutableState.value.navigation.switchingComputer) return
+        when (previous) {
+            is ConnectionState.Unauthorized, is ConnectionState.IdentityChanged -> mutableState.update {
+                it.copy(route = TunesLinkRoute.Connected(restoreDestination), connection = previous)
+            }
+            else -> connect(initial = false)
         }
     }
 
@@ -548,6 +607,8 @@ internal class TunesLinkViewModel(
         browseTracksRequest.cancel()
         repository.cancelRelocation()
         val generation = ++relocationGeneration
+        mutableState.value.connection.takeIf { it !is ConnectionState.Connecting }
+            ?.let { pairAgainPrevious = it }
         mutableState.update { it.copy(connection = ConnectionState.Connecting) }
         relocationRequest = repository.resolvePairingEndpoint(object : BridgeClient.Result<BridgeClient.BridgeInfo> {
             override fun success(value: BridgeClient.BridgeInfo) {
@@ -557,7 +618,8 @@ internal class TunesLinkViewModel(
 
             override fun failure(message: String, unauthorized: Boolean) {
                 if (generation != relocationGeneration) return
-                val computer = repository.current()?.name.orEmpty()
+                pairAgainPrevious = null
+                val computer = displayName(repository.current()?.name.orEmpty())
                 mutableState.update {
                     it.copy(
                         connection = ConnectionState.RecoverableFailure(computer),
@@ -579,6 +641,8 @@ internal class TunesLinkViewModel(
         savedStateHandle[KEY_SWITCHING_COMPUTER] = true
         savedStateHandle[KEY_MODAL] = null
         savedStateHandle[KEY_MODAL_RETURN] = null
+        // Choosing is not forgetting: the saved pairing stays until another one succeeds.
+        val saved = repository.current()
         mutableState.update {
             it.copy(
                 route = TunesLinkRoute.Welcome,
@@ -586,8 +650,30 @@ internal class TunesLinkViewModel(
                 discoveryError = null,
                 modalPresentation = null,
                 navigation = it.navigation.copy(switchingComputer = true),
+                returnComputer = saved?.let { bridge -> displayName(bridge.name) },
             )
         }
+    }
+
+    /** Leaves "Choose another computer" and reconnects to the computer that is still paired. */
+    fun returnToSavedComputer() {
+        val saved = repository.current() ?: return
+        cancelTransientOperations()
+        savedStateHandle[KEY_SWITCHING_COMPUTER] = false
+        savedStateHandle[KEY_MODAL] = null
+        savedStateHandle[KEY_MODAL_RETURN] = null
+        updateBridge(saved.name, saved.host, saved.port)
+        mutableState.update {
+            it.copy(
+                route = resumeRoute(),
+                discovered = emptyList(),
+                discoveryError = null,
+                modalPresentation = null,
+                navigation = it.navigation.copy(switchingComputer = false),
+                returnComputer = null,
+            )
+        }
+        connect(initial = true)
     }
 
     fun navigate(destination: TunesLinkDestination) {
@@ -599,10 +685,10 @@ internal class TunesLinkViewModel(
                 navigation = it.navigation.copy(destination = destination),
             )
         }
-        if (destination == TunesLinkDestination.Search
-            && mutableState.value.library.editingQuery.isNotBlank()
-        ) {
-            commitSearch(mutableState.value.library.editingQuery)
+        // Returning to Search keeps results (and their announcement) for an unchanged query.
+        val library = mutableState.value.library
+        if (destination == TunesLinkDestination.Search && library.searchNeedsCommit()) {
+            commitSearch(library.editingQuery)
         }
     }
 
@@ -612,7 +698,16 @@ internal class TunesLinkViewModel(
 
     fun next() = sendCommand(PlaybackAction.Next)
 
-    fun seek(position: Double) = sendCommand(PlaybackAction.Position, position)
+    fun seek(position: Double) = seek(position, mutableState.value.player.trackId)
+
+    /**
+     * Seeks within [trackId], the song the drag started on. A release after the song changed is
+     * dropped rather than moving the new song.
+     */
+    fun seek(position: Double, trackId: String) {
+        if (trackId != mutableState.value.player.trackId) return
+        sendCommand(PlaybackAction.Position, position)
+    }
 
     fun setVolume(volume: Int) = sendCommand(PlaybackAction.Volume, volume.coerceIn(0, 100).toDouble())
 
@@ -648,9 +743,7 @@ internal class TunesLinkViewModel(
             mutationTimeoutJobs.remove(mutation.operationId)?.cancel()
             announceMutationSuccess(mutation.action, merged)
         }
-        if (before.artworkId != merged.artworkId ||
-            !ArtworkDiskCache.isFresh(artworkRefreshAt, System.currentTimeMillis())
-        ) loadArtwork(merged.artworkId)
+        refreshArtworkIfDue(before.artworkId, merged.artworkId)
     }
 
     private fun connect(initial: Boolean) {
@@ -688,12 +781,13 @@ internal class TunesLinkViewModel(
                     mutableState.update {
                         it.copy(
                             route = TunesLinkRoute.Connected(restoreDestination),
-                            connection = ConnectionState.Connected(activeBridge.name),
+                            connection = ConnectionState.Connected(displayName(activeBridge.name)),
                         )
                     }
                     lastAvailabilityKind = ConnectionAvailabilityKind.Available
                     if (restored) {
-                        playTrackRequest.cancel()
+                        // Anything still queued belongs to the interrupted session.
+                        cancelPendingCommands()
                         mutationTimeoutJobs.values.forEach { it.cancel() }
                         mutationTimeoutJobs.clear()
                         mutableState.update { state ->
@@ -705,18 +799,19 @@ internal class TunesLinkViewModel(
                             ))
                         }
                         artworkRequest.cancel()
-                        artworkRefreshAt = 0
+                        artworkDueAt = 0
                         artworkSession.value++
-                        announce(R.string.connected_to, listOf(activeBridge.name))
+                        announce(R.string.connected_to, listOf(displayName(activeBridge.name)))
                         commitSearch(mutableState.value.library.editingQuery)
                         restoreBrowseAfterReconnect()
                     }
                 } else {
                     val identityChanged = message == BridgeClient.IDENTITY_CHANGED_MESSAGE
+                    val computer = displayName(activeBridge.name)
                     val nextConnection = if (identityChanged) {
-                        ConnectionState.IdentityChanged(activeBridge.name)
+                        ConnectionState.IdentityChanged(computer)
                     } else {
-                        ConnectionState.RecoverableFailure(activeBridge.name)
+                        ConnectionState.RecoverableFailure(computer)
                     }
                     mutableState.update {
                         it.copy(
@@ -729,7 +824,7 @@ internal class TunesLinkViewModel(
             }
 
             override fun unauthorized(activeBridge: SecureStore.SavedBridge, message: String) {
-                val nextConnection = ConnectionState.Unauthorized(activeBridge.name)
+                val nextConnection = ConnectionState.Unauthorized(displayName(activeBridge.name))
                 mutableState.update {
                     it.copy(
                         route = TunesLinkRoute.Connected(restoreDestination),
@@ -749,11 +844,13 @@ internal class TunesLinkViewModel(
         manualRequest.cancel()
         discoveryGeneration++
         manualGeneration++
-        savedStateHandle[KEY_SWITCHING_COMPUTER] = false
+        // switchingComputer stays set until pairing succeeds, so a dismissed sheet can still
+        // return to the saved computer.
         savedStateHandle[KEY_MODAL] = null
         savedStateHandle[KEY_MODAL_RETURN] = null
+        val named = withDisplayName(bridge)
         mutableState.update {
-            val next = ModalPresentation(TunesLinkModal.Pairing(bridge))
+            val next = ModalPresentation(TunesLinkModal.Pairing(named))
             val currentModal = it.modalPresentation
             it.copy(
                 connection = ConnectionState.Unpaired,
@@ -765,7 +862,6 @@ internal class TunesLinkViewModel(
                 discovered = emptyList(),
                 pairing = PairingUiState(),
                 manualResolutionBusy = false,
-                navigation = it.navigation.copy(switchingComputer = false),
             )
         }
         startPairingCooldown(bridge)
@@ -777,7 +873,8 @@ internal class TunesLinkViewModel(
         libraryRequest.cancel()
         browseCollectionsRequest.cancel()
         browseTracksRequest.cancel()
-        playTrackRequest.cancel()
+        cancelPendingCommands()
+        artworkRetryJob?.cancel()
         mutationTimeoutJobs.values.forEach(Job::cancel)
         mutationTimeoutJobs.clear()
         connectedOnce = false
@@ -852,11 +949,26 @@ internal class TunesLinkViewModel(
     private fun updateBridge(name: String, host: String, port: Int) {
         mutableState.update {
             it.copy(
-                bridgeName = name,
+                bridgeName = displayName(name),
                 bridgeAddress = "$host:$port",
             )
         }
     }
+
+    /** A computer that reports no name is shown with a localized default. */
+    internal fun displayName(name: String): String =
+        name.ifBlank { localizedString(R.string.default_computer_name) }
+
+    private fun withDisplayName(bridge: BridgeClient.BridgeInfo): BridgeClient.BridgeInfo =
+        if (bridge.name.isNotBlank()) bridge else BridgeClient.BridgeInfo(
+            bridge.id, displayName(bridge.name), bridge.host, bridge.port, bridge.tlsFingerprint,
+        )
+
+    /** Where a paired phone waits while it reconnects: never the Welcome screen. */
+    private fun resumeRoute(): TunesLinkRoute =
+        if (connectedOnce) TunesLinkRoute.Connected(restoreDestination) else TunesLinkRoute.Connecting
+
+    internal fun localizedString(res: Int): String = getApplication<Application>().getString(res)
 
     internal fun announce(
         messageRes: Int,
@@ -897,12 +1009,16 @@ internal class TunesLinkViewModel(
         }
     }
 
+    /** A dialog replaces discovery: stop it and release the "Finding computers…" state. */
+    private fun cancelDiscoveryForModal() {
+        discoveryGeneration++
+        discoveryRequest.cancel()
+        repository.cancelDiscovery()
+        mutableState.update(TunesLinkUiState::afterDiscoveryCancelled)
+    }
+
     private fun setModalPresentation(presentation: ModalPresentation?) {
-        if (presentation != null) {
-            discoveryGeneration++
-            discoveryRequest.cancel()
-            repository.cancelDiscovery()
-        }
+        if (presentation != null) cancelDiscoveryForModal()
         val current = mutableState.value.modalPresentation
         if (presentation != null && current != null && !current.dismissRequested &&
             current.destination != presentation.destination
@@ -946,38 +1062,17 @@ internal class TunesLinkViewModel(
 
     /**
      * Network and storage layers retain diagnostic text for logs and protocol compatibility. The
-     * presentation layer never exposes that English text directly: known categories and the
-     * conservative fallback are all resource-backed and therefore translation-ready.
+     * presentation layer never exposes that English text directly: a typed bridge code wins, then
+     * the legacy categories, then the conservative fallback — all resource-backed.
      */
     internal fun localizedFailure(
         diagnostic: String,
         fallbackRes: Int = R.string.error_computer_unavailable,
+        code: BridgeClient.ErrorCode = BridgeClient.ErrorCode.NONE,
     ): String {
-        val normalized = diagnostic.lowercase()
-        val messageRes = when {
-            "update tuneslink bridge" in normalized -> R.string.error_bridge_update_required
-            "already being paired" in normalized -> R.string.error_operation_in_progress
-            "two paired phones" in normalized || "device limit" in normalized ->
-                R.string.error_device_limit
-            "no saved computer" in normalized -> R.string.error_no_saved_computer
-            "could not find the paired computer" in normalized -> R.string.error_computer_not_found
-            "local network" in normalized || "private ipv4" in normalized ->
-                R.string.error_local_network_only
-            "not a tuneslink bridge" in normalized -> R.string.error_not_TunesLink_bridge
-            "identity" in normalized || "security" in normalized || "invalid token" in normalized ->
-                R.string.error_bridge_identity
-            "pairing" in normalized && ("failed" in normalized || "code" in normalized) ->
-                R.string.error_pairing_code
-            "secure storage" in normalized || "commit secure pairing" in normalized ->
-                R.string.error_pairing_storage
-            "queue" in normalized && "revocation" in normalized -> R.string.error_revocation_queue_full
-            "revoke" in normalized || "revocation" in normalized || "still authorized" in normalized ->
-                R.string.error_revocation_pending
-            "library" in normalized || "itunes" in normalized -> R.string.error_library_unavailable
-            else -> fallbackRes
-        }
-        Log.w(TAG, "Bridge operation failed (category=$messageRes)")
-        return getApplication<Application>().getString(messageRes)
+        val messageRes = failureMessageRes(diagnostic, fallbackRes, code)
+        Log.w(TAG, "Bridge operation failed (code=$code, category=$messageRes)")
+        return localizedString(messageRes)
     }
 
     override fun onCleared() {
@@ -986,7 +1081,7 @@ internal class TunesLinkViewModel(
         libraryRequest.cancel()
         browseCollectionsRequest.cancel()
         browseTracksRequest.cancel()
-        playTrackRequest.cancel()
+        cancelPendingCommands()
         mutationTimeoutJobs.values.forEach(Job::cancel)
         mutationTimeoutJobs.clear()
         stateUpdatesActive = false

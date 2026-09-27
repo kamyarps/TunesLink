@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
@@ -68,6 +69,8 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.DialogWindowProvider
+import androidx.compose.ui.layout.Layout
+import androidx.core.view.WindowCompat
 import androidx.core.graphics.get
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.coroutineScope
@@ -163,6 +166,7 @@ private fun ManualAddressDialog(state: TunesLinkUiState, viewModel: TunesLinkVie
         ),
         onConfirm = viewModel::resolveManualAddress,
         confirmEnabled = !state.manualResolutionBusy,
+        confirmLoading = state.manualResolutionBusy,
         dismissLabel = stringResource(R.string.cancel),
     )
 }
@@ -210,6 +214,17 @@ private fun PairingDialog(
                     shape = RoundedCornerShape(16.dp),
                     modifier = Modifier.fillMaxWidth().focusRequester(requester),
                 )
+                // Failures that are not about the code itself, such as pairing not being open
+                // on the computer, are shown apart from the field so the code isn't marked wrong.
+                state.pairing.message?.let { message ->
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        message,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = TunesLinkTheme.colors.danger,
+                        modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+                    )
+                }
             }
         },
         confirmLabel = when (state.pairing.phase) {
@@ -220,6 +235,7 @@ private fun PairingDialog(
         confirmIcon = if (state.pairing.phase == PairingPhase.Success) Icons.Rounded.CheckCircle else null,
         onConfirm = submitPairing,
         confirmEnabled = state.pairing.canSubmit,
+        confirmLoading = state.pairing.phase == PairingPhase.Submitting,
         dismissLabel = stringResource(R.string.cancel),
     )
 }
@@ -343,6 +359,7 @@ private fun TunesLinkAlertDialog(
     confirmIcon: androidx.compose.ui.graphics.vector.ImageVector? = null,
     onConfirm: () -> Unit,
     confirmEnabled: Boolean = true,
+    confirmLoading: Boolean = false,
     dismissLabel: String? = null,
     destructive: Boolean = false,
 ) {
@@ -369,13 +386,25 @@ private fun TunesLinkAlertDialog(
         }
         if (dismissRequested) onDismissComplete()
     }
+    // Edge-to-edge dialog window: the scrim below is drawn under the status and navigation bars
+    // too, and content is kept clear of them with safeDrawing padding.
     Dialog(
         onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false),
+        properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
     ) {
-        val dialogWindow = (LocalView.current.parent as? DialogWindowProvider)?.window
-        DisposableEffect(dialogWindow) {
+        val dialogView = LocalView.current
+        val dialogWindow = (dialogView.parent as? DialogWindowProvider)?.window
+        val lightBars = !TunesLinkTheme.colors.isDark
+        DisposableEffect(dialogWindow, lightBars) {
             dialogWindow?.setDimAmount(0f)
+            // While focused, the dialog window owns the system-bar icon appearance; match the
+            // theme so status icons are not white-on-white over the light scrim.
+            dialogWindow?.let { window ->
+                WindowCompat.getInsetsController(window, dialogView).apply {
+                    isAppearanceLightStatusBars = lightBars
+                    isAppearanceLightNavigationBars = lightBars
+                }
+            }
             onDispose { dialogWindow?.setDimAmount(0f) }
         }
         Box(
@@ -434,59 +463,82 @@ private fun TunesLinkAlertDialog(
                         )
                         content()
                     }
-                    BoxWithConstraints(Modifier.fillMaxWidth()) {
-                        val stacked = maxWidth < 360.dp || LocalDensity.current.fontScale >= 1.3f
-                        if (stacked) {
-                            Column(
-                                Modifier.fillMaxWidth(),
-                                verticalArrangement = Arrangement.spacedBy(8.dp),
-                            ) {
-                                dismissLabel?.let { label ->
-                                    TunesLinkTonalAction(label, onDismiss, Modifier.fillMaxWidth())
-                                }
-                                if (destructive) {
-                                    TunesLinkTonalAction(
-                                        confirmLabel,
-                                        onConfirm,
-                                        Modifier.fillMaxWidth(),
-                                        color = TunesLinkTheme.colors.danger,
-                                        enabled = confirmEnabled,
-                                    )
-                                } else {
-                                    TunesLinkPrimaryButton(
-                                        confirmLabel,
-                                        onConfirm,
-                                        Modifier.fillMaxWidth(),
-                                        enabled = confirmEnabled,
-                                        icon = confirmIcon,
-                                    )
-                                }
+                    DialogActions(
+                        dismiss = dismissLabel?.let { label ->
+                            { modifier: Modifier -> TunesLinkSecondaryButton(label, onDismiss, modifier) }
+                        },
+                        confirm = { modifier: Modifier ->
+                            if (destructive) {
+                                TunesLinkSecondaryButton(
+                                    confirmLabel,
+                                    onConfirm,
+                                    modifier,
+                                    color = TunesLinkTheme.colors.danger,
+                                    enabled = confirmEnabled,
+                                )
+                            } else {
+                                TunesLinkPrimaryButton(
+                                    confirmLabel,
+                                    onConfirm,
+                                    modifier,
+                                    enabled = confirmEnabled,
+                                    icon = confirmIcon,
+                                    loading = confirmLoading,
+                                )
                             }
-                        } else {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                dismissLabel?.let { label -> TunesLinkTonalAction(label, onDismiss) }
-                                if (destructive) {
-                                    TunesLinkTonalAction(
-                                        confirmLabel,
-                                        onConfirm,
-                                        color = TunesLinkTheme.colors.danger,
-                                        enabled = confirmEnabled,
-                                    )
-                                } else {
-                                    TunesLinkPrimaryButton(
-                                        confirmLabel,
-                                        onConfirm,
-                                        enabled = confirmEnabled,
-                                        icon = confirmIcon,
-                                    )
-                                }
-                            }
-                        }
-                    }
+                        },
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Dialog buttons sit side by side (Cancel leading, confirm trailing) with equal widths when both
+ * labels fit; otherwise they stack full width with the confirming action on top and Cancel last.
+ */
+@Composable
+private fun DialogActions(
+    dismiss: (@Composable (Modifier) -> Unit)?,
+    confirm: @Composable (Modifier) -> Unit,
+) {
+    val spacing = 8.dp
+    Layout(
+        content = {
+            dismiss?.invoke(Modifier)
+            confirm(Modifier)
+        },
+        modifier = Modifier.fillMaxWidth(),
+    ) { measurables, constraints ->
+        val gap = spacing.roundToPx()
+        val width = constraints.maxWidth
+        val half = (width - gap) / 2
+        val sideBySide = measurables.size == 2 &&
+            measurables.all { it.maxIntrinsicWidth(constraints.maxHeight) <= half }
+        if (sideBySide) {
+            val placeables = measurables.map {
+                it.measure(constraints.copy(minWidth = half, maxWidth = half))
+            }
+            val height = placeables.maxOf { it.height }
+            layout(width, height) {
+                placeables.forEachIndexed { index, placeable ->
+                    placeable.placeRelative(
+                        x = index * (half + gap),
+                        y = (height - placeable.height) / 2,
+                    )
+                }
+            }
+        } else {
+            val full = constraints.copy(minWidth = width, maxWidth = width)
+            // Stacked: confirm first, Cancel last.
+            val placeables = measurables.reversed().map { it.measure(full) }
+            val height = placeables.sumOf { it.height } + gap * (placeables.size - 1)
+            layout(width, height) {
+                var y = 0
+                placeables.forEach { placeable ->
+                    placeable.placeRelative(0, y)
+                    y += placeable.height + gap
                 }
             }
         }

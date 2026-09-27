@@ -8,12 +8,42 @@ internal sealed partial class BridgeServer
     private sealed class HttpConnectionReader
     {
         private byte[] pending = [];
+        private readonly byte[] watchedByte = new byte[1];
+        private Task<int>? watchedRead;
+
+        /// <summary>
+        /// Starts a one-byte read while a request is being handled. End of stream means the phone
+        /// hung up, which cancels <paramref name="disconnected"/>. A byte that does arrive (a
+        /// pipelined request) is kept and becomes the start of the next request.
+        /// </summary>
+        public void WatchForDisconnect(Stream stream, CancellationTokenSource disconnected)
+        {
+            // Buffered bytes are already the next request; reading on would wait for more.
+            if (watchedRead is not null || pending.Length > 0) return;
+            watchedRead = stream.ReadAsync(watchedByte, CancellationToken.None).AsTask();
+            _ = watchedRead.ContinueWith(static (read, state) =>
+            {
+                if (read.IsCompletedSuccessfully && read.Result > 0) return;
+                _ = read.Exception;
+                try { ((CancellationTokenSource)state!).Cancel(); }
+                catch (ObjectDisposedException) { }
+            }, disconnected, CancellationToken.None, TaskContinuationOptions.None,
+                TaskScheduler.Default);
+        }
 
         public async Task<HttpRequest?> ReadAsync(Stream stream, CancellationToken token)
         {
             using MemoryStream received = new();
             if (pending.Length > 0) received.Write(pending);
             pending = [];
+            if (watchedRead is { } watched)
+            {
+                watchedRead = null;
+                int count = await watched.WaitAsync(token).ConfigureAwait(false);
+                if (count == 0) return received.Length == 0
+                    ? null : throw new BadHttpRequestException("Incomplete headers");
+                received.Write(watchedByte, 0, count);
+            }
             byte[] buffer = new byte[4096];
             int headerEnd = FindHeaderEnd(received.GetBuffer(), (int)received.Length);
             while (headerEnd < 0)

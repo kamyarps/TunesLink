@@ -10,6 +10,7 @@ import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -31,6 +32,7 @@ internal data class TunesLinkColors(
     val success: Color,
     val danger: Color,
     val focusIndicator: Color,
+    val isDark: Boolean = false,
 )
 
 internal object TunesLinkMotion {
@@ -66,16 +68,37 @@ internal object TunesLinkSpacing {
 internal object TunesLinkShapes {
     val control = 12.dp
     val card = 22.dp
+    val primaryButton = 16.dp
+
+    /** List thumbnails and the mini player. */
+    val artworkSmall = 6.dp
+
+    /** Album grid cards and expanded album art. */
+    val artworkMedium = 8.dp
+
+    /** The full Now Playing artwork. */
+    val artworkLarge = 12.dp
 }
+
+/** Active-state fill shared by shuffle/repeat, sidebar selection and destination indicators. */
+internal const val ACTIVE_INDICATOR_ALPHA = 0.16f
+
+/** Material's disabled-content emphasis, applied wherever a tint overrides the default. */
+internal const val DISABLED_CONTENT_ALPHA = 0.38f
+
+/** Disabled list rows stay legible but visibly inactive. */
+internal const val DISABLED_ROW_TEXT_ALPHA = 0.5f
 
 internal object TunesLinkSizes {
     val minimumTarget = 48.dp
     val compactArtwork = 48.dp
     val navigationRailWidth = 80.dp
     val readableContentMaxWidth = 760.dp
+    val primaryButtonMinHeight = 52.dp
+    val connectionChipMaxWidth = 190.dp
 }
 
-private fun composeColors(tokens: TunesLinkPaletteTokens) = TunesLinkColors(
+private fun composeColors(tokens: TunesLinkPaletteTokens, isDark: Boolean) = TunesLinkColors(
     canvas = Color(tokens.canvas),
     surface = Color(tokens.surface),
     raisedSurface = Color(tokens.raisedSurface),
@@ -89,12 +112,13 @@ private fun composeColors(tokens: TunesLinkPaletteTokens) = TunesLinkColors(
     success = Color(tokens.success),
     danger = Color(tokens.danger),
     focusIndicator = Color(tokens.accentText),
+    isDark = isDark,
 )
 
-private val DarkTunesLinkColors = composeColors(TunesLinkPalettes.Dark)
-private val LightTunesLinkColors = composeColors(TunesLinkPalettes.Light)
-private val HighContrastDarkTunesLinkColors = composeColors(TunesLinkPalettes.HighContrastDark)
-private val HighContrastLightTunesLinkColors = composeColors(TunesLinkPalettes.HighContrastLight)
+private val DarkTunesLinkColors = composeColors(TunesLinkPalettes.Dark, isDark = true)
+private val LightTunesLinkColors = composeColors(TunesLinkPalettes.Light, isDark = false)
+private val HighContrastDarkTunesLinkColors = composeColors(TunesLinkPalettes.HighContrastDark, isDark = true)
+private val HighContrastLightTunesLinkColors = composeColors(TunesLinkPalettes.HighContrastLight, isDark = false)
 
 private val LocalTunesLinkColors = staticCompositionLocalOf { DarkTunesLinkColors }
 private val LocalTunesLinkMotionPolicy = staticCompositionLocalOf { TunesLinkMotionPolicy() }
@@ -147,6 +171,12 @@ private val TunesLinkTypography = androidx.compose.material3.Typography(
     ),
 )
 
+/**
+ * Time and count labels use tabular figures so a ticking clock or a column of durations does
+ * not shift horizontally as digits change.
+ */
+internal fun TextStyle.tabularNumerals(): TextStyle = copy(fontFeatureSettings = "tnum")
+
 @Composable
 internal fun TunesLinkDesignTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
@@ -172,6 +202,11 @@ internal fun TunesLinkDesignTheme(
             onSurfaceVariant = colors.secondaryText,
             outline = colors.separator,
             error = colors.danger,
+            // Material components (navigation rail/bar indicators, tonal buttons) read these.
+            // Mirror the app's accent-tint selection instead of stock Material purple.
+            secondaryContainer = colors.accentText.copy(alpha = ACTIVE_INDICATOR_ALPHA)
+                .compositeOver(colors.surface),
+            onSecondaryContainer = colors.accentText,
         )
     } else {
         lightColorScheme(
@@ -185,6 +220,11 @@ internal fun TunesLinkDesignTheme(
             onSurfaceVariant = colors.secondaryText,
             outline = colors.separator,
             error = colors.danger,
+            // Material components (navigation rail/bar indicators, tonal buttons) read these.
+            // Mirror the app's accent-tint selection instead of stock Material purple.
+            secondaryContainer = colors.accentText.copy(alpha = ACTIVE_INDICATOR_ALPHA)
+                .compositeOver(colors.surface),
+            onSecondaryContainer = colors.accentText,
         )
     }
     val motionPolicy = TunesLinkMotionPolicy(spatialEnabled = animationsEnabled)

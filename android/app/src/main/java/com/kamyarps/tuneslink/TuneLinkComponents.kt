@@ -1,6 +1,5 @@
 package com.kamyarps.tuneslink
 
-import android.content.ClipData
 import android.graphics.Bitmap
 import android.content.res.Configuration
 import androidx.compose.animation.AnimatedContent
@@ -20,7 +19,19 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import kotlin.math.PI
+import kotlin.math.abs
+import kotlin.math.sin
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -39,19 +50,23 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.displayCutout
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.systemBars
+import androidx.compose.foundation.layout.union
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Album
-import androidx.compose.material.icons.rounded.Check
-import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.LibraryMusic
@@ -75,6 +90,7 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.NavigationRail
 import androidx.compose.material3.NavigationRailItem
+import androidx.compose.material3.NavigationRailItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -83,23 +99,20 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.ClipEntry
-import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
@@ -112,10 +125,10 @@ import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 
 private val LocalTunesLinkSharedTransitionScope =
     staticCompositionLocalOf<SharedTransitionScope?> { null }
@@ -172,11 +185,16 @@ internal fun TunesLinkPrimaryButton(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
     icon: ImageVector? = null,
+    loading: Boolean = false,
 ) {
     val motion = TunesLinkTheme.motion
     val source = remember { MutableInteractionSource() }
     val pressed by source.collectIsPressedAsState()
     var focused by remember { mutableStateOf(false) }
+    // While work is in progress the button keeps its brand fill and shows a spinner, so it reads
+    // as "busy" rather than "unavailable". It still ignores taps.
+    val active = enabled || loading
+    val shape = RoundedCornerShape(TunesLinkShapes.primaryButton)
     val scale by animateFloatAsState(
         targetValue = if (pressed && enabled && motion.spatialEnabled) 0.97f else 1f,
         animationSpec = tween(
@@ -187,15 +205,19 @@ internal fun TunesLinkPrimaryButton(
     )
     Button(
         onClick = onClick,
-        enabled = enabled,
+        enabled = enabled && !loading,
         interactionSource = source,
-        shape = RoundedCornerShape(16.dp),
+        shape = shape,
         contentPadding = PaddingValues(horizontal = 20.dp, vertical = 15.dp),
         colors = ButtonDefaults.buttonColors(
             containerColor = Color.Transparent,
             contentColor = TunesLinkTheme.colors.onBrandText,
-            disabledContainerColor = TunesLinkTheme.colors.raisedSurface,
-            disabledContentColor = TunesLinkTheme.colors.secondaryText,
+            disabledContainerColor = if (loading) Color.Transparent else TunesLinkTheme.colors.raisedSurface,
+            disabledContentColor = if (loading) {
+                TunesLinkTheme.colors.onBrandText
+            } else {
+                TunesLinkTheme.colors.secondaryText
+            },
         ),
         modifier = modifier
             .scale(scale)
@@ -203,23 +225,88 @@ internal fun TunesLinkPrimaryButton(
             .TunesLinkFocusBorder(
                 focused = focused,
                 color = TunesLinkTheme.colors.focusIndicator,
-                shape = RoundedCornerShape(16.dp),
+                shape = shape,
             )
             .background(
-                brush = if (enabled) {
+                brush = if (active) {
                     Brush.linearGradient(listOf(TunesLinkTheme.colors.brandStart, TunesLinkTheme.colors.brandEnd))
                 } else {
                     Brush.linearGradient(listOf(TunesLinkTheme.colors.raisedSurface, TunesLinkTheme.colors.raisedSurface))
                 },
-                shape = RoundedCornerShape(16.dp),
+                shape = shape,
             )
-            .heightIn(min = 52.dp),
+            .heightIn(min = TunesLinkSizes.primaryButtonMinHeight),
     ) {
-        if (icon != null) {
+        if (loading) {
+            CircularProgressIndicator(
+                color = TunesLinkTheme.colors.onBrandText,
+                strokeWidth = 2.dp,
+                modifier = Modifier.size(18.dp),
+            )
+            Spacer(Modifier.width(10.dp))
+        } else if (icon != null) {
             Icon(icon, contentDescription = null, modifier = Modifier.size(20.dp))
             Spacer(Modifier.width(10.dp))
         }
         Text(label, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
+    }
+}
+
+/**
+ * The quieter companion to [TunesLinkPrimaryButton]: same height and corner radius, so a pair of
+ * actions reads as one set, with a hairline outline instead of the brand fill.
+ */
+@Composable
+internal fun TunesLinkSecondaryButton(
+    label: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    icon: ImageVector? = null,
+    enabled: Boolean = true,
+    color: Color = TunesLinkTheme.colors.primaryText,
+) {
+    val motion = TunesLinkTheme.motion
+    val source = remember { MutableInteractionSource() }
+    val pressed by source.collectIsPressedAsState()
+    var focused by remember { mutableStateOf(false) }
+    val shape = RoundedCornerShape(TunesLinkShapes.primaryButton)
+    val scale by animateFloatAsState(
+        targetValue = if (pressed && enabled && motion.spatialEnabled) 0.97f else 1f,
+        animationSpec = tween(
+            durationMillis = if (pressed) TunesLinkMotion.PressDown else TunesLinkMotion.PressRelease,
+            easing = TunesLinkMotion.EaseOut,
+        ),
+        label = "Secondary press",
+    )
+    val contentColor = color.copy(alpha = if (enabled) 1f else DISABLED_CONTENT_ALPHA)
+    Row(
+        modifier = modifier
+            .scale(scale)
+            .heightIn(min = TunesLinkSizes.primaryButtonMinHeight)
+            .onFocusChanged { focused = it.isFocused }
+            .TunesLinkFocusBorder(
+                focused = focused,
+                color = TunesLinkTheme.colors.focusIndicator,
+                shape = shape,
+                restingColor = TunesLinkTheme.colors.separator,
+            )
+            .clip(shape)
+            .clickable(
+                enabled = enabled,
+                role = Role.Button,
+                interactionSource = source,
+                indication = LocalIndication.current,
+                onClick = onClick,
+            )
+            .padding(horizontal = 20.dp, vertical = 15.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.Center,
+    ) {
+        if (icon != null) {
+            Icon(icon, contentDescription = null, tint = contentColor, modifier = Modifier.size(20.dp))
+            Spacer(Modifier.width(10.dp))
+        }
+        Text(label, style = MaterialTheme.typography.bodyLarge, color = contentColor, fontWeight = FontWeight.SemiBold)
     }
 }
 
@@ -233,7 +320,7 @@ internal fun TunesLinkTonalAction(
     enabled: Boolean = true,
 ) {
     var focused by remember { mutableStateOf(false) }
-    val contentColor = color.copy(alpha = if (enabled) 1f else 0.38f)
+    val contentColor = color.copy(alpha = if (enabled) 1f else DISABLED_CONTENT_ALPHA)
     Row(
         modifier = modifier
             .heightIn(min = TunesLinkSizes.minimumTarget)
@@ -271,32 +358,56 @@ internal fun playerSubtitle(
         .ifBlank { stringResource(R.string.unknown_artist) }
 }
 
+/**
+ * The Now Playing description for the player's artwork. While a new track's artwork is still
+ * loading, the previous bitmap stays visible; it must not be announced as the new track's art.
+ */
+@Composable
+internal fun playerArtworkDescription(player: PlayerUiState): String? =
+    if (player.artworkIsCurrent) {
+        stringResource(R.string.artwork_for, player.title)
+    } else {
+        null
+    }
+
 @Composable
 internal fun ArtworkSurface(
     bitmap: Bitmap?,
     description: String?,
     modifier: Modifier = Modifier,
+    cornerRadius: Dp = TunesLinkShapes.artworkSmall,
+    elevated: Boolean = false,
 ) {
     val duration = if (TunesLinkTheme.motion.spatialEnabled) {
         TunesLinkMotion.ArtworkCrossfade
     } else {
         TunesLinkMotion.ReducedMotionFade
     }
+    val shape = RoundedCornerShape(cornerRadius)
+    // Crossfade only animates changes after first composition, so artwork seeded from the memory
+    // cache appears immediately instead of fading in from the placeholder on every scroll.
     Crossfade(
         targetState = bitmap,
         animationSpec = tween(duration, easing = TunesLinkMotion.EaseInOut),
         label = "Artwork transition",
         modifier = modifier
-            .clip(RectangleShape)
+            .then(
+                if (elevated) {
+                    Modifier.shadow(
+                        elevation = 18.dp,
+                        shape = shape,
+                        ambientColor = Color.Black.copy(alpha = 0.18f),
+                        spotColor = Color.Black.copy(alpha = 0.28f),
+                    )
+                } else {
+                    Modifier
+                },
+            )
+            .clip(shape)
             .background(TunesLinkTheme.colors.raisedSurface),
     ) { art ->
         if (art == null) {
-            Image(
-                painter = painterResource(R.drawable.default_artwork),
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize(),
-            )
+            ArtworkPlaceholder(Modifier.fillMaxSize())
         } else {
             Image(
                 bitmap = art.asImageBitmap(),
@@ -305,6 +416,38 @@ internal fun ArtworkSurface(
                 modifier = Modifier.fillMaxSize(),
             )
         }
+    }
+}
+
+@Composable
+private fun ArtworkPlaceholder(modifier: Modifier) {
+    val colors = TunesLinkTheme.colors
+    if (!colors.isDark) {
+        Image(
+            painter = painterResource(R.drawable.default_artwork),
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = modifier,
+        )
+        return
+    }
+    // The pastel bitmap glares against the dark canvas; draw a quiet tinted tile instead.
+    Box(
+        modifier
+            .background(colors.raisedSurface)
+            .background(
+                Brush.linearGradient(
+                    listOf(colors.brandStart.copy(alpha = 0.14f), colors.brandEnd.copy(alpha = 0.14f)),
+                ),
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            Icons.Rounded.MusicNote,
+            contentDescription = null,
+            tint = colors.secondaryText.copy(alpha = 0.72f),
+            modifier = Modifier.fillMaxSize(0.42f),
+        )
     }
 }
 
@@ -434,6 +577,7 @@ internal fun UnifiedPlayerBar(
     showMiniPlayer: Boolean = true,
     controlsEnabled: Boolean = true,
     showNavigation: Boolean = true,
+    insetStart: Boolean = true,
 ) {
     val compactLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     val motion = TunesLinkTheme.motion
@@ -447,7 +591,19 @@ internal fun UnifiedPlayerBar(
     } else {
         fadeOut(tween(TunesLinkMotion.ReducedMotionFade, easing = TunesLinkMotion.EaseOut))
     }
-    Column(modifier.fillMaxWidth().navigationBarsPadding()) {
+    // Keep the chrome clear of the navigation bar and, in landscape, the camera cutout.
+    val insetSides = if (insetStart) {
+        WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom
+    } else {
+        WindowInsetsSides.End + WindowInsetsSides.Bottom
+    }
+    Column(
+        modifier
+            .fillMaxWidth()
+            .windowInsetsPadding(
+                WindowInsets.systemBars.union(WindowInsets.displayCutout).only(insetSides),
+            ),
+    ) {
         if (compactLandscape && (showMiniPlayer || showNavigation)) {
             Row(
                 Modifier.fillMaxWidth().height(80.dp),
@@ -544,7 +700,7 @@ private fun MiniPlayerContent(
     ) {
         ArtworkSurface(
             player.artwork,
-            if (player.artwork != null) stringResource(R.string.artwork_for, player.title) else null,
+            playerArtworkDescription(player),
             Modifier
                 .size(if (compact) 40.dp else 48.dp)
                 .tunesLinkPlayerSharedElement("player-artwork", visibilityScope),
@@ -588,7 +744,10 @@ private fun MiniPlayerContent(
                 Icon(
                     if (playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
                     contentDescription = null,
-                    tint = TunesLinkTheme.colors.primaryText,
+                    // An explicit tint overrides IconButton's disabled colour; dim it ourselves.
+                    tint = TunesLinkTheme.colors.primaryText.copy(
+                        alpha = if (controlsEnabled) 1f else DISABLED_CONTENT_ALPHA,
+                    ),
                 )
             }
         }
@@ -720,12 +879,14 @@ internal fun TunesLinkDestinationRail(
     onPlayer: () -> Unit,
     onSearch: () -> Unit,
     modifier: Modifier = Modifier,
+    topInset: Dp = 0.dp,
 ) {
     val showLabels = navigationRailShowsLabels(LocalDensity.current.fontScale)
     NavigationRail(
         modifier = modifier.selectableGroup(),
         containerColor = TunesLinkTheme.colors.surface.copy(alpha = 0.91f),
-        windowInsets = WindowInsets(0, 0, 0, 0),
+        // The rail's surface runs under the status bar; its items start below it.
+        windowInsets = WindowInsets(top = topInset),
     ) {
         RailDestinationAction(
             icon = Icons.Rounded.LibraryMusic,
@@ -765,11 +926,28 @@ private fun RailDestinationAction(
         onClick = onClick,
         icon = { Icon(icon, contentDescription = null) },
         label = if (showLabel) {
-            { Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+            {
+                Text(
+                    label,
+                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         } else {
             null
         },
         alwaysShowLabel = showLabel,
+        // Match the bottom bar's accent treatment rather than stock Material purple.
+        colors = NavigationRailItemDefaults.colors(
+            selectedIconColor = TunesLinkTheme.colors.accentText,
+            selectedTextColor = TunesLinkTheme.colors.accentText,
+            indicatorColor = TunesLinkTheme.colors.accentText.copy(alpha = 0.12f),
+            unselectedIconColor = TunesLinkTheme.colors.secondaryText,
+            unselectedTextColor = TunesLinkTheme.colors.secondaryText,
+            disabledIconColor = TunesLinkTheme.colors.secondaryText.copy(alpha = DISABLED_CONTENT_ALPHA),
+            disabledTextColor = TunesLinkTheme.colors.secondaryText.copy(alpha = DISABLED_CONTENT_ALPHA),
+        ),
         modifier = Modifier
             .heightIn(min = TunesLinkSizes.minimumTarget)
             .onFocusChanged { focused = it.isFocused }
@@ -788,6 +966,53 @@ private fun RailDestinationAction(
 internal fun navigationRailShowsLabels(fontScale: Float): Boolean = fontScale < 1.3f
 
 internal fun usesCompactPlayerNavigationLabel(fontScale: Float): Boolean = fontScale >= 1.3f
+
+/**
+ * Marks the current song in a list: three bars that move while playing (only when system
+ * animations are on) and rest when paused. A Pause glyph here would read as a button.
+ * The animation is read in the draw phase, so it never recomposes the row.
+ */
+@Composable
+internal fun NowPlayingIndicator(
+    playing: Boolean,
+    description: String,
+    tint: Color,
+    modifier: Modifier = Modifier,
+) {
+    val labelled = modifier.semantics { contentDescription = description }
+    if (playing && TunesLinkTheme.motion.spatialEnabled) {
+        val transition = rememberInfiniteTransition(label = "Now playing bars")
+        val phase = transition.animateFloat(
+            initialValue = 0f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(tween(1_100, easing = LinearEasing)),
+            label = "Now playing bar phase",
+        )
+        Canvas(labelled) {
+            drawNowPlayingBars(tint) { index ->
+                0.3f + 0.7f * abs(sin((phase.value + index * 0.31f) * PI)).toFloat()
+            }
+        }
+    } else {
+        Canvas(labelled) { drawNowPlayingBars(tint) { index -> RestingBarHeights[index] } }
+    }
+}
+
+private val RestingBarHeights = floatArrayOf(0.55f, 0.9f, 0.7f)
+
+private fun DrawScope.drawNowPlayingBars(color: Color, height: (Int) -> Float) {
+    // Three bars and two equal gaps span the width.
+    val barWidth = size.width / 5f
+    repeat(3) { index ->
+        val barHeight = size.height * height(index).coerceIn(0.2f, 1f)
+        drawRoundRect(
+            color = color,
+            topLeft = Offset(index * barWidth * 2f, size.height - barHeight),
+            size = Size(barWidth, barHeight),
+            cornerRadius = CornerRadius(barWidth / 2f),
+        )
+    }
+}
 
 @Composable
 internal fun ContentState(
@@ -816,6 +1041,7 @@ internal fun ContentState(
             title,
             style = MaterialTheme.typography.titleLarge,
             color = TunesLinkTheme.colors.primaryText,
+            textAlign = TextAlign.Center,
             modifier = Modifier.semantics { heading() },
         )
         Spacer(Modifier.height(8.dp))
@@ -823,77 +1049,13 @@ internal fun ContentState(
             detail,
             style = MaterialTheme.typography.bodyMedium,
             color = TunesLinkTheme.colors.secondaryText,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.widthIn(max = 420.dp),
         )
         if (onRetry != null) {
             Spacer(Modifier.height(16.dp))
             TunesLinkTonalAction(stringResource(R.string.try_again), onRetry)
         }
-    }
-}
-
-@Composable
-internal fun CopyAction(
-    label: String,
-    value: String,
-    modifier: Modifier = Modifier,
-) {
-    val clipboard = LocalClipboard.current
-    val coroutineScope = rememberCoroutineScope()
-    var copied by remember(value) { mutableStateOf(false) }
-    var focused by remember { mutableStateOf(false) }
-    val copiedLabel = stringResource(R.string.copied)
-    val feedbackDuration = if (TunesLinkTheme.motion.spatialEnabled) {
-        TunesLinkMotion.SmallFeedback
-    } else {
-        TunesLinkMotion.ReducedMotionFade
-    }
-    LaunchedEffect(copied) {
-        if (copied) {
-            delay(1_200)
-            copied = false
-        }
-    }
-    Row(
-        modifier = modifier
-            .heightIn(min = TunesLinkSizes.minimumTarget)
-            .onFocusChanged { focused = it.isFocused }
-            .TunesLinkFocusBorder(
-                focused = focused,
-                color = TunesLinkTheme.colors.focusIndicator,
-                shape = RoundedCornerShape(12.dp),
-            )
-            .clip(RoundedCornerShape(12.dp))
-            .clickable(role = Role.Button) {
-                coroutineScope.launch {
-                    clipboard.setClipEntry(ClipEntry(ClipData.newPlainText(label, value)))
-                    copied = true
-                }
-            }
-            .padding(12.dp)
-            .semantics { if (copied) liveRegion = LiveRegionMode.Polite },
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        AnimatedContent(
-            targetState = copied,
-            transitionSpec = {
-                fadeIn(tween(feedbackDuration, easing = TunesLinkMotion.EaseOut)) togetherWith
-                    fadeOut(tween(feedbackDuration, easing = TunesLinkMotion.EaseOut))
-            },
-            label = "Copy feedback",
-        ) { success ->
-            Icon(
-                if (success) Icons.Rounded.Check else Icons.Rounded.ContentCopy,
-                contentDescription = null,
-                tint = if (success) TunesLinkTheme.colors.success else TunesLinkTheme.colors.secondaryText,
-                modifier = Modifier.size(18.dp),
-            )
-        }
-        Spacer(Modifier.width(8.dp))
-        Text(
-            if (copied) copiedLabel else label,
-            style = MaterialTheme.typography.bodyMedium,
-            color = if (copied) TunesLinkTheme.colors.success else TunesLinkTheme.colors.secondaryText,
-        )
     }
 }
 
@@ -905,6 +1067,10 @@ internal fun TunesLinkScaffold(
 ) {
     Scaffold(
         modifier = modifier,
+        // System bars plus the display cutout: in landscape the camera cutout would otherwise sit
+        // over the rail, workspace header and list leading edge. The keyboard is handled by the
+        // screens that scroll (imePadding) because edge-to-edge disables adjustResize.
+        contentWindowInsets = WindowInsets.systemBars.union(WindowInsets.displayCutout),
         containerColor = TunesLinkTheme.colors.canvas,
         contentColor = TunesLinkTheme.colors.primaryText,
         bottomBar = bottomBar,

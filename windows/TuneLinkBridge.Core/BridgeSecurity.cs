@@ -9,6 +9,11 @@ internal sealed class BridgeSecurity
 {
     public static readonly TimeSpan PairCodeLifetime = TimeSpan.FromMinutes(10);
     internal const int MaxPairedDevices = 2;
+    // Six digits allow a million guesses; a fresh code after this many wrong ones keeps any one
+    // code's exposure small even across the rate limiter's windows.
+    internal const int MaxFailedAttemptsPerCode = 10;
+    private const int ConfigReadAttempts = 5;
+    private static readonly TimeSpan ConfigReadRetryDelay = TimeSpan.FromMilliseconds(100);
     private const int MaxLoadablePairedDevices = 12;
     private static readonly JsonSerializerOptions ConfigurationJson = new()
     {
@@ -35,7 +40,8 @@ internal sealed class BridgeSecurity
         Succeeded,
         Rejected,
         DeviceLimitReached,
-        PersistenceFailed
+        PersistenceFailed,
+        PairingClosed
     }
 
     internal readonly record struct PairingResult(PairingStatus Status, string Token = "")
@@ -50,8 +56,21 @@ internal sealed class BridgeSecurity
     private Configuration configuration;
     private string pairCode;
     private DateTimeOffset pairCodeExpiresAt;
+    private int failedAttempts;
+    private volatile bool pairingOpen = true;
 
     public event Action? Changed;
+
+    /// <summary>
+    /// Whether a phone may pair right now. The host closes pairing while the code is not on
+    /// screen; a closed bridge refuses every code without consuming the code's attempt budget.
+    /// Open by default so headless, demo, and test bridges can pair.
+    /// </summary>
+    public bool PairingOpen
+    {
+        get => pairingOpen;
+        set => pairingOpen = value;
+    }
     public string BridgeId { get { lock (gate) return configuration.BridgeId; } }
     public string PairCode
     {
@@ -114,50 +133,73 @@ internal sealed class BridgeSecurity
 
     public PairingResult Pair(string suppliedCode, string clientId, string deviceName)
     {
-        if (!IsPairCode(suppliedCode) || !IsValidClientId(clientId))
-            return new PairingResult(PairingStatus.Rejected);
+        bool wellFormed = IsPairCode(suppliedCode) && IsValidClientId(clientId);
         EnsureCurrentPairCode();
         PairingResult result;
+        bool rotated = false;
         lock (gate)
         {
+            if (!pairingOpen) return new PairingResult(PairingStatus.PairingClosed);
             if (timeProvider.GetUtcNow() >= pairCodeExpiresAt)
             {
                 RotatePairCodeLocked();
-                return new PairingResult(PairingStatus.Rejected);
+                rotated = true;
+                result = new PairingResult(PairingStatus.Rejected);
             }
-            if (!CryptographicOperations.FixedTimeEquals(
-                    Encoding.UTF8.GetBytes(suppliedCode),
-                    Encoding.UTF8.GetBytes(pairCode)))
+            else if (!wellFormed || !CryptographicOperations.FixedTimeEquals(
+                         Encoding.UTF8.GetBytes(suppliedCode),
+                         Encoding.UTF8.GetBytes(pairCode)))
             {
-                return new PairingResult(PairingStatus.Rejected);
+                if (++failedAttempts >= MaxFailedAttemptsPerCode)
+                {
+                    RotatePairCodeLocked();
+                    rotated = true;
+                }
+                result = new PairingResult(PairingStatus.Rejected);
             }
-
-            bool replacingExistingDevice = configuration.Devices.Any(device =>
-                string.Equals(device.ClientId, clientId, StringComparison.Ordinal));
-            if (!replacingExistingDevice && configuration.Devices.Count >= MaxPairedDevices)
-                return new PairingResult(PairingStatus.DeviceLimitReached);
-
-            string token = Base64Url(RandomNumberGenerator.GetBytes(32));
-            string hash = HashToken(token);
-            Configuration proposed = Clone(configuration);
-            proposed.Devices.RemoveAll(d =>
-                string.Equals(d.ClientId, clientId, StringComparison.Ordinal));
-            proposed.Devices.Add(new PairedDevice
+            else
             {
-                ClientId = clientId,
-                Name = SafeDeviceName(deviceName),
-                TokenHash = hash,
-                PairedAt = timeProvider.GetUtcNow(),
-                LastSeenAt = timeProvider.GetUtcNow()
-            });
-            if (!TrySaveConfiguration(proposed))
-                return new PairingResult(PairingStatus.PersistenceFailed);
-            configuration = proposed;
-            RotatePairCodeLocked();
-            result = new PairingResult(PairingStatus.Succeeded, token);
+                result = CompletePairingLocked(clientId, deviceName);
+                rotated = result.Succeeded;
+            }
         }
-        Changed?.Invoke();
+        if (rotated) Changed?.Invoke();
         return result;
+    }
+
+    private PairingResult CompletePairingLocked(string clientId, string deviceName)
+    {
+        bool replacingExistingDevice = configuration.Devices.Any(device =>
+            string.Equals(device.ClientId, clientId, StringComparison.Ordinal));
+        if (!replacingExistingDevice && configuration.Devices.Count >= MaxPairedDevices)
+            return new PairingResult(PairingStatus.DeviceLimitReached);
+
+        string token = Base64Url(RandomNumberGenerator.GetBytes(32));
+        string hash = HashToken(token);
+        Configuration proposed = Clone(configuration);
+        proposed.Devices.RemoveAll(d =>
+            string.Equals(d.ClientId, clientId, StringComparison.Ordinal));
+        proposed.Devices.Add(new PairedDevice
+        {
+            ClientId = clientId,
+            Name = SafeDeviceName(deviceName),
+            TokenHash = hash,
+            PairedAt = timeProvider.GetUtcNow(),
+            LastSeenAt = timeProvider.GetUtcNow()
+        });
+        if (!TrySaveConfiguration(proposed))
+            return new PairingResult(PairingStatus.PersistenceFailed);
+        configuration = proposed;
+        RotatePairCodeLocked();
+        return new PairingResult(PairingStatus.Succeeded, token);
+    }
+
+    /// <summary>Checks a token without recording use, for work done on another phone's behalf.</summary>
+    public bool IsAuthorized(string? token)
+    {
+        if (string.IsNullOrWhiteSpace(token) || token.Length < 32) return false;
+        byte[] supplied = Convert.FromHexString(HashToken(token));
+        lock (gate) return FindDeviceLocked(supplied) is not null;
     }
 
     public bool ValidateToken(string? token)
@@ -166,15 +208,7 @@ internal sealed class BridgeSecurity
         byte[] supplied = Convert.FromHexString(HashToken(token));
         lock (gate)
         {
-            PairedDevice? match = configuration.Devices.FirstOrDefault(device =>
-            {
-                try
-                {
-                    return CryptographicOperations.FixedTimeEquals(
-                        supplied, Convert.FromHexString(device.TokenHash));
-                }
-                catch { return false; }
-            });
+            PairedDevice? match = FindDeviceLocked(supplied);
             if (match is null) return false;
             if (timeProvider.GetUtcNow() - match.LastSeenAt > TimeSpan.FromMinutes(5))
             {
@@ -190,6 +224,17 @@ internal sealed class BridgeSecurity
             return true;
         }
     }
+
+    private PairedDevice? FindDeviceLocked(byte[] suppliedHash) =>
+        configuration.Devices.FirstOrDefault(device =>
+        {
+            try
+            {
+                return CryptographicOperations.FixedTimeEquals(
+                    suppliedHash, Convert.FromHexString(device.TokenHash));
+            }
+            catch { return false; }
+        });
 
     public void RegeneratePairCode()
     {
@@ -277,10 +322,11 @@ internal sealed class BridgeSecurity
 
     private Configuration LoadConfiguration()
     {
+        string? stored = ReadConfigurationText();
+        if (stored is null) return NewConfiguration();
         try
         {
-            if (!File.Exists(configPath)) return NewConfiguration();
-            Configuration? loaded = JsonSerializer.Deserialize<Configuration>(File.ReadAllText(configPath));
+            Configuration? loaded = JsonSerializer.Deserialize<Configuration>(stored);
             if (loaded is null || !IsValidConfiguration(loaded))
                 throw new JsonException("The bridge security configuration is invalid");
             if (loaded.Devices.Count > MaxPairedDevices)
@@ -293,12 +339,43 @@ internal sealed class BridgeSecurity
             }
             return loaded;
         }
-        catch (Exception exception)
+        catch (Exception exception) when (exception is JsonException or NotSupportedException)
         {
             BridgeDiagnostics.Record("config.invalid", exception,
                 Path.GetDirectoryName(configPath));
             PreserveInvalidConfiguration();
             return NewConfiguration();
+        }
+    }
+
+    // Only content that was read and found invalid is quarantined. A file that cannot be read,
+    // for example while a backup or antivirus scanner holds it, still holds every pairing, so
+    // after a short retry the bridge fails to start instead of discarding them.
+    private string? ReadConfigurationText()
+    {
+        for (int attempt = 1; ; attempt++)
+        {
+            try
+            {
+                return File.Exists(configPath) ? File.ReadAllText(configPath) : null;
+            }
+            catch (Exception exception) when (exception is FileNotFoundException
+                                                  or DirectoryNotFoundException)
+            {
+                return null;
+            }
+            catch (Exception exception) when (exception is IOException
+                                                  or UnauthorizedAccessException)
+            {
+                if (attempt < ConfigReadAttempts)
+                {
+                    Thread.Sleep(ConfigReadRetryDelay);
+                    continue;
+                }
+                BridgeDiagnostics.Record("config.read", exception,
+                    Path.GetDirectoryName(configPath));
+                throw;
+            }
         }
     }
 
@@ -353,6 +430,7 @@ internal sealed class BridgeSecurity
 
     private void RotatePairCodeLocked()
     {
+        failedAttempts = 0;
         pairCode = GeneratePairCode();
         pairCodeExpiresAt = timeProvider.GetUtcNow().Add(PairCodeLifetime);
     }

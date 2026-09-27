@@ -17,7 +17,16 @@ internal static partial class BridgeSelfTest
     {
         private DateTimeOffset current = now;
         public override DateTimeOffset GetUtcNow() => current;
-        public void Advance(TimeSpan duration) => current += duration;
+        // The monotonic clock advances with the wall clock unless a test steps the wall clock.
+        private long elapsedTicks;
+        public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+        public override long GetTimestamp() => elapsedTicks;
+        public void Advance(TimeSpan duration)
+        {
+            current += duration;
+            elapsedTicks += duration.Ticks;
+        }
+        public void StepWallClock(TimeSpan duration) => current += duration;
     }
 
     private sealed class CountingMediaController : IMediaController

@@ -17,14 +17,20 @@ internal sealed record BridgeLaunchOptions(
     string? SnapshotPath,
     string? Theme)
 {
+    /// <summary>
+    /// Preview, snapshot, and layout-verification runs: isolated from the real instance, the
+    /// startup registry, and the notification area.
+    /// </summary>
+    public bool IsolatedPreview => VerifyLayout || SnapshotPath is not null || UiState is not null;
+
     public static BridgeLaunchOptions Parse(string[] args)
     {
         string? snapshot = ValueAfter(args, "--snapshot");
         string? uiState = ValueAfter(args, "--ui-state")?.ToLowerInvariant();
         if (uiState is not null && uiState is not ("unpaired" or "paired" or "network-error"
                 or "itunes-error" or "both-errors" or "runtime-unavailable" or "long-name"
-                or "two-phones"))
-            throw new ArgumentException("UI state must be unpaired, paired, two-phones, network-error, iTunes-error, both-errors, runtime-unavailable, or long-name.");
+                or "two-phones" or "startup-failure" or "discovery-unavailable"))
+            throw new ArgumentException("UI state must be unpaired, paired, two-phones, network-error, iTunes-error, both-errors, runtime-unavailable, startup-failure, discovery-unavailable, or long-name.");
         double textScale = DoubleAfter(args, "--text-scale", 1.0);
         if (textScale is not (1.0 or 1.5 or 2.0))
             throw new ArgumentException("Text scale must be 1.0, 1.5, or 2.0.");
@@ -96,7 +102,7 @@ internal sealed class BridgeRuntime : IDisposable
             launch.LegacyState);
         Security = new BridgeSecurity(launch.ConfigDirectory, launch.ForcedPairCode);
         if (launch.PairedPreview || launch.UiState is "paired" or "two-phones" or "network-error"
-                or "itunes-error" or "both-errors" or "long-name")
+                or "itunes-error" or "both-errors" or "long-name" or "discovery-unavailable")
         {
             _ = Security.TryPair("483921", "d64b17b7-2dc7-49fc-8141-7f94d41661cf",
                 launch.UiState == "long-name"

@@ -10,7 +10,16 @@ internal static class BridgeDiagnostics
 
     internal static void Record(string eventCode, Exception exception, string? directory = null)
     {
-        Append(eventCode, exception.GetType().Name, directory);
+        // An HRESULT identifies a COM failure without recording its (possibly personal) message.
+        string detail = exception is System.Runtime.InteropServices.COMException
+            ? exception.GetType().Name + " 0x" + exception.HResult.ToString("X8", CultureInfo.InvariantCulture)
+            : exception.GetType().Name;
+        Append(eventCode, detail, directory);
+    }
+
+    internal static void RecordEvent(string eventCode, string detail, string? directory = null)
+    {
+        Append(eventCode, SafeCode(detail), directory);
     }
 
     internal static void RecordDuration(string eventCode, long elapsedMilliseconds,

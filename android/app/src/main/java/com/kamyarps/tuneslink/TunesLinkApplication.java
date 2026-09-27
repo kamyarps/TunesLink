@@ -6,7 +6,8 @@ import android.app.Application;
 public final class TunesLinkApplication extends Application {
     private SessionGraph session;
 
-    SessionGraph session() {
+    /** Lazily created once; synchronized so concurrent first callers share one repository. */
+    synchronized SessionGraph session() {
         if (session == null) session = new SessionGraph(this);
         return session;
     }

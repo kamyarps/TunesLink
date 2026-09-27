@@ -71,8 +71,17 @@ internal data class PlayerUiState(
     val artworkState: ArtworkLoadState = ArtworkLoadState.Empty,
     val pendingMutations: Map<PlaybackAction, PendingMutation> = emptyMap(),
     val commandError: String? = null,
+    /** The artwork ID the visible bitmap was loaded for. */
+    val artworkOwnerId: String = "",
 ) {
     val artwork: Bitmap? get() = artworkState.visibleBitmap
+
+    /**
+     * False while a previous song's cover is still shown during a track change, so its
+     * description must not name the new song.
+     */
+    val artworkIsCurrent: Boolean
+        get() = artwork != null && artworkOwnerId.isNotEmpty() && artworkOwnerId == artworkId
 
     fun pending(action: PlaybackAction): PendingMutation? = pendingMutations[action]
 
@@ -189,6 +198,10 @@ internal data class LibraryUiState(
     val isLoadingPrevious: Boolean = false,
     val error: String? = null,
     val searchActive: Boolean = false,
+    /** A query is waiting for the computer; no results are shown for it yet. */
+    val awaitingConnection: Boolean = false,
+    /** Which page load produced [error]; null when the whole search failed. */
+    val errorDirection: PageDirection? = null,
 )
 
 internal sealed interface TunesLinkModal {
@@ -220,6 +233,8 @@ internal data class TunesLinkUiState(
     val pendingRevocationCount: Int = 0,
     val forgetBusy: Boolean = false,
     val forgetError: String? = null,
+    /** While choosing another computer: the still-paired computer the user can return to. */
+    val returnComputer: String? = null,
 ) {
     val modal: TunesLinkModal? get() = modalPresentation?.destination
     val pairingCode: String get() = pairing.code

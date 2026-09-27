@@ -18,10 +18,11 @@ internal static class CollectionAlbums
             .Select(group => new LibraryCollection(ItunesCollectionId.EncodeText("albums", group.Key),
                 group.First().Album, group.First().AlbumArtist, group.Count(),
                 group.FirstOrDefault(track => track.ArtworkId.Length > 0)?.ArtworkId ?? ""))
-            .Where(album => album.Title.Contains(query.Trim(), StringComparison.OrdinalIgnoreCase)
-                || album.Subtitle.Contains(query.Trim(), StringComparison.OrdinalIgnoreCase))
-            .OrderBy(album => album.Title, StringComparer.OrdinalIgnoreCase)
-            .ThenBy(album => album.Subtitle, StringComparer.OrdinalIgnoreCase).ToArray();
+            .Where(album => LibraryGrouping.Matches(album.Title, query.Trim())
+                || LibraryGrouping.Matches(album.Subtitle, query.Trim()))
+            .OrderBy(album => album.Title, LibraryGrouping.TitleOrder)
+            .ThenBy(album => album.Subtitle, LibraryGrouping.TitleOrder)
+            .ThenBy(album => album.Id, StringComparer.Ordinal).ToArray();
         int start = Math.Clamp(offset, 0, albums.Length);
         int size = Math.Clamp(limit, 1, 60);
         LibraryCollection[] page = albums.Skip(start).Take(size).ToArray();

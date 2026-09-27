@@ -2,6 +2,12 @@ package com.kamyarps.tuneslink;
 
 import android.content.Context;
 import android.graphics.Bitmap;
+import android.net.ConnectivityManager;
+import android.net.Network;
+import android.net.NetworkCapabilities;
+import android.net.NetworkRequest;
+import android.os.Handler;
+import android.os.Looper;
 import android.os.SystemClock;
 import android.util.LruCache;
 
@@ -23,6 +29,8 @@ final class BridgeRepository implements AutoCloseable {
     private static final int ARTWORK_CACHE_KIB = 16 * 1024;
     private static final int MISSING_ARTWORK_CACHE_ENTRIES = 512;
     private static final long MISSING_ARTWORK_TTL_MS = 60_000;
+    private static final long MIN_REVOCATION_RETRY_MS = 30_000;
+    private static final long MAX_REVOCATION_RETRY_MS = 15 * 60_000;
 
     interface RequestHandle {
         RequestHandle NONE = () -> { };
@@ -32,6 +40,9 @@ final class BridgeRepository implements AutoCloseable {
     interface PageResult<T> {
         void page(T value, boolean authoritative);
         void failure(String message, boolean unauthorized);
+        default void failure(String message, boolean unauthorized, BridgeClient.ErrorCode code) {
+            failure(message, unauthorized);
+        }
     }
 
     static final class Relocation {
@@ -113,6 +124,14 @@ final class BridgeRepository implements AutoCloseable {
     private boolean retryingRevocations;
     private final ArrayList<BridgeClient.Result<Integer>> revocationRetryObservers =
             new ArrayList<>();
+    /** Earliest time (elapsed realtime) for an automatic, connection-triggered revocation retry. */
+    private long automaticRevocationRetryAt;
+    private long automaticRevocationBackoffMs = MIN_REVOCATION_RETRY_MS;
+    /** Non-null while the caller wants state updates, including during a relocation. */
+    private StateUpdatesListener updatesListener;
+    private boolean streamFailed;
+    private final ConnectivityManager connectivity;
+    private ConnectivityManager.NetworkCallback networkCallback;
 
     interface StateUpdatesListener {
         void state(BridgeClient.PlayerState state);
@@ -122,20 +141,23 @@ final class BridgeRepository implements AutoCloseable {
 
     BridgeRepository(Context context) {
         this(new BridgeClient(), new SecureStore(context), new LibraryCacheStore(context),
-                new ArtworkDiskCache(context));
+                new ArtworkDiskCache(context),
+                (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE));
     }
 
     BridgeRepository(BridgeClient client, SecureStore store) {
-        this(client, store, null, null);
+        this(client, store, null, null, null);
     }
 
     private BridgeRepository(BridgeClient client, SecureStore store,
                              LibraryCacheStore libraryCache,
-                             ArtworkDiskCache artworkDiskCache) {
+                             ArtworkDiskCache artworkDiskCache,
+                             ConnectivityManager connectivity) {
         this.client = client;
         this.store = store;
         this.libraryCache = libraryCache;
         this.artworkDiskCache = artworkDiskCache;
+        this.connectivity = connectivity;
         current = store.load();
         if (current != null) session.activate(current);
     }
@@ -255,7 +277,15 @@ final class BridgeRepository implements AutoCloseable {
 
             @Override
             public void failure(String message, boolean unauthorized) {
-                finishPairingFailure(begin.generation, message, unauthorized);
+                failure(message, unauthorized, BridgeClient.ErrorCode.NONE);
+            }
+
+            @Override
+            public void failure(String message, boolean unauthorized,
+                                BridgeClient.ErrorCode code) {
+                BridgeClient.Result<SecureStore.SavedBridge> observer =
+                        pendingPairing.finish(begin.generation);
+                if (observer != null) observer.failure(message, unauthorized, code);
             }
 
             @Override public void rateLimited(int retryAfterSeconds) {
@@ -380,7 +410,7 @@ final class BridgeRepository implements AutoCloseable {
                 if (generation != relocationGeneration || current != trusted) return;
                 try {
                     SecureStore.SavedBridge relocated = store.updateEndpoint(trusted, verified);
-                    stopStateUpdates();
+                    haltStateStream();
                     cancelPendingArtwork();
                     current = relocated;
                     session.activate(relocated);
@@ -409,39 +439,6 @@ final class BridgeRepository implements AutoCloseable {
         relocationRequest = BridgeClient.Cancellation.NONE;
     }
 
-    void getState(BridgeClient.Result<BridgeClient.PlayerState> result) {
-        BridgeSession.Request request = capture();
-        if (request == null) return;
-        client.getState(request.bridge, new BridgeClient.Result<>() {
-            @Override public void success(BridgeClient.PlayerState value) {
-                if (session.isCurrent(request)) result.success(value);
-            }
-
-            @Override public void failure(String message, boolean unauthorized) {
-                if (!session.isCurrent(request)) return;
-                if (unauthorized) {
-                    result.failure(message, true);
-                    return;
-                }
-                relocateCurrent(new BridgeClient.Result<>() {
-                    @Override public void success(Relocation relocation) {
-                        if (relocation.status == Relocation.Status.IDENTITY_CHANGED) {
-                            result.failure(BridgeClient.IDENTITY_CHANGED_MESSAGE, false);
-                            return;
-                        }
-                        BridgeSession.Request retry = capture();
-                        if (retry != null) client.getState(retry.bridge, guarded(retry, result));
-                    }
-
-                    @Override public void failure(String relocationMessage,
-                                                  boolean relocationUnauthorized) {
-                        result.failure(message, false);
-                    }
-                });
-            }
-        });
-    }
-
     void startStateUpdates(StateUpdatesListener listener) {
         BridgeSession.Request request = capture();
         if (request == null) return;
@@ -449,9 +446,12 @@ final class BridgeRepository implements AutoCloseable {
             client.requestStateRefresh();
             return;
         }
-        stopStateUpdates();
+        haltStateStream();
         updatesRequest = request;
+        updatesListener = listener;
+        streamFailed = false;
         relocationInFlight.set(false);
+        watchNetwork();
         client.startStateUpdates(request.bridge, new BridgeClient.StateListener() {
             @Override
             public void state(BridgeClient.PlayerState state) {
@@ -463,28 +463,12 @@ final class BridgeRepository implements AutoCloseable {
 
             @Override
             public void connectionChanged(boolean connected, String message) {
-                if (session.isCurrent(request) && updatesRequest == request)
-                    listener.connectionChanged(request.bridge, connected, message);
-                if (connected) retryPendingRevocations(null);
-                if (!connected && session.isCurrent(request) && updatesRequest == request
-                        && relocationInFlight.compareAndSet(false, true)) {
-                    relocateCurrent(new BridgeClient.Result<>() {
-                        @Override public void success(Relocation relocation) {
-                            if (relocation.status == Relocation.Status.IDENTITY_CHANGED) {
-                                listener.connectionChanged(relocation.trusted, false,
-                                        BridgeClient.IDENTITY_CHANGED_MESSAGE);
-                            } else {
-                                startStateUpdates(listener);
-                            }
-                        }
-
-                        @Override public void failure(String ignored, boolean unauthorized) {
-                            // The stream retries with bounded backoff; allow its next failure
-                            // to rediscover a PC which was absent during this discovery window.
-                            relocationInFlight.set(false);
-                        }
-                    });
-                }
+                if (!session.isCurrent(request) || updatesRequest != request) return;
+                // The client reports transitions only, so this runs once per (re)connection.
+                streamFailed = !connected;
+                listener.connectionChanged(request.bridge, connected, message);
+                if (connected) retryPendingRevocationsAutomatically();
+                else relocateIfIdle(request, listener);
             }
 
             @Override
@@ -495,9 +479,83 @@ final class BridgeRepository implements AutoCloseable {
         });
     }
 
+    /** Starts one rediscovery for a failed stream unless one is already running. */
+    private void relocateIfIdle(BridgeSession.Request request, StateUpdatesListener listener) {
+        if (!session.isCurrent(request) || updatesRequest != request
+                || !relocationInFlight.compareAndSet(false, true)) return;
+        relocateCurrent(new BridgeClient.Result<>() {
+            @Override public void success(Relocation relocation) {
+                // Updates may have been stopped (backgrounded, permission lost) meanwhile.
+                if (updatesListener != listener) return;
+                if (relocation.status == Relocation.Status.IDENTITY_CHANGED) {
+                    listener.connectionChanged(relocation.trusted, false,
+                            BridgeClient.IDENTITY_CHANGED_MESSAGE);
+                } else {
+                    startStateUpdates(listener);
+                }
+            }
+
+            @Override public void failure(String ignored, boolean unauthorized) {
+                // The stream retries with bounded backoff; allow its next failure
+                // to rediscover a PC which was absent during this discovery window.
+                relocationInFlight.set(false);
+            }
+        });
+    }
+
+    /** Stops state updates for the caller: no stream, no relocation restart, no network watch. */
     void stopStateUpdates() {
+        updatesListener = null;
+        streamFailed = false;
+        unwatchNetwork();
+        if (relocationInFlight.get()) cancelRelocation();
+        haltStateStream();
+    }
+
+    /** Stops the current stream only; a relocation in progress may restart it. */
+    private void haltStateStream() {
         updatesRequest = null;
         client.stopStateUpdates();
+    }
+
+    /** Wi-Fi or Ethernet became available: retry now instead of waiting out the backoff. */
+    void networkAvailable() {
+        StateUpdatesListener listener = updatesListener;
+        BridgeSession.Request request = updatesRequest;
+        if (listener == null || request == null || !session.isCurrent(request)) return;
+        client.networkAvailable();
+        if (streamFailed) relocateIfIdle(request, listener);
+    }
+
+    private void watchNetwork() {
+        if (connectivity == null || networkCallback != null) return;
+        Handler main = new Handler(Looper.getMainLooper());
+        ConnectivityManager.NetworkCallback callback = new ConnectivityManager.NetworkCallback() {
+            @Override public void onAvailable(Network network) {
+                main.post(BridgeRepository.this::networkAvailable);
+            }
+        };
+        try {
+            // No INTERNET capability is required: the bridge is on the local network.
+            connectivity.registerNetworkCallback(new NetworkRequest.Builder()
+                    .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
+                    .addTransportType(NetworkCapabilities.TRANSPORT_ETHERNET)
+                    .build(), callback);
+            networkCallback = callback;
+        } catch (RuntimeException unavailable) {
+            // Recovery still happens through the stream's own reconnect backoff.
+        }
+    }
+
+    private void unwatchNetwork() {
+        ConnectivityManager.NetworkCallback callback = networkCallback;
+        networkCallback = null;
+        if (connectivity == null || callback == null) return;
+        try {
+            connectivity.unregisterNetworkCallback(callback);
+        } catch (RuntimeException alreadyUnregistered) {
+            // Nothing to release.
+        }
     }
 
     void requestStateRefresh() {
@@ -510,10 +568,12 @@ final class BridgeRepository implements AutoCloseable {
         if (request != null) client.getState(request.bridge, guarded(request, result));
     }
 
-    void command(String command, Double value, BridgeClient.Result<Boolean> result) {
+    RequestHandle command(String command, Double value, BridgeClient.Result<Boolean> result) {
         BridgeSession.Request request = capture();
-        if (request != null) client.command(request.bridge, command, value,
+        if (request == null) return RequestHandle.NONE;
+        BridgeClient.Cancellation cancellation = client.command(request.bridge, command, value,
                 refreshAfterSuccess(request, result));
+        return cancellation::cancel;
     }
 
     public RequestHandle getLibrary(String query, int offset, int limit,
@@ -607,47 +667,42 @@ final class BridgeRepository implements AutoCloseable {
 
     private <T> BridgeClient.Result<T> authoritativeOnly(BridgeSession.Request request,
                                                          PageResult<T> result) {
-        return new BridgeClient.Result<>() {
-            @Override public void success(T value) {
-                if (session.isCurrent(request)) result.page(value, true);
-            }
-
-            @Override public void failure(String message, boolean unauthorized) {
-                if (session.isCurrent(request)) result.failure(message, unauthorized);
-            }
-        };
+        return pageNetworkResult(request, new AtomicBoolean(), result, null);
     }
 
     private BridgeClient.Result<BridgeClient.LibraryPage> cacheTracksResult(
             BridgeSession.Request request, String key, AtomicBoolean cancelled,
             PageResult<BridgeClient.LibraryPage> result) {
-        return new BridgeClient.Result<>() {
-            @Override public void success(BridgeClient.LibraryPage value) {
-                if (cancelled.get() || !session.isCurrent(request)) return;
-                libraryCache.saveTracks(BridgeSession.cacheScope(request.bridge), key, value);
-                result.page(value, true);
-            }
-
-            @Override public void failure(String message, boolean unauthorized) {
-                if (!cancelled.get() && session.isCurrent(request))
-                    result.failure(message, unauthorized);
-            }
-        };
+        return pageNetworkResult(request, cancelled, result, page ->
+                libraryCache.saveTracks(BridgeSession.cacheScope(request.bridge), key, page));
     }
 
     private BridgeClient.Result<BridgeClient.LibraryCollectionPage> cacheCollectionsResult(
             BridgeSession.Request request, String key, AtomicBoolean cancelled,
             PageResult<BridgeClient.LibraryCollectionPage> result) {
+        return pageNetworkResult(request, cancelled, result, page ->
+                libraryCache.saveCollections(BridgeSession.cacheScope(request.bridge), key, page));
+    }
+
+    /** Delivers an authoritative page (optionally caching it) or a typed failure. */
+    private <T> BridgeClient.Result<T> pageNetworkResult(
+            BridgeSession.Request request, AtomicBoolean cancelled, PageResult<T> result,
+            java.util.function.Consumer<T> cache) {
         return new BridgeClient.Result<>() {
-            @Override public void success(BridgeClient.LibraryCollectionPage value) {
+            @Override public void success(T value) {
                 if (cancelled.get() || !session.isCurrent(request)) return;
-                libraryCache.saveCollections(BridgeSession.cacheScope(request.bridge), key, value);
+                if (cache != null) cache.accept(value);
                 result.page(value, true);
             }
 
             @Override public void failure(String message, boolean unauthorized) {
+                failure(message, unauthorized, BridgeClient.ErrorCode.NONE);
+            }
+
+            @Override public void failure(String message, boolean unauthorized,
+                                          BridgeClient.ErrorCode code) {
                 if (!cancelled.get() && session.isCurrent(request))
-                    result.failure(message, unauthorized);
+                    result.failure(message, unauthorized, code);
             }
         };
     }
@@ -731,7 +786,7 @@ final class BridgeRepository implements AutoCloseable {
                         }
                         if (!pendingArtwork.remove(cacheKey, started)) return;
                         artworkCache.put(cacheKey, new CachedArtwork(bitmap, fetchedAt));
-                        for (ArtworkObserver target : started.observers) {
+                        for (ArtworkObserver target : new ArrayList<>(started.observers)) {
                             if (!target.cancelled) target.result.success(bitmap);
                         }
                     });
@@ -757,7 +812,7 @@ final class BridgeRepository implements AutoCloseable {
                 } else {
                     missingArtwork.put(cacheKey, SystemClock.elapsedRealtime());
                 }
-                for (ArtworkObserver target : started.observers) {
+                for (ArtworkObserver target : new ArrayList<>(started.observers)) {
                     if (!target.cancelled) target.result.success(bitmap);
                 }
             }
@@ -766,7 +821,7 @@ final class BridgeRepository implements AutoCloseable {
             public void failure(String message, boolean unauthorized) {
                 if (!pendingArtwork.remove(cacheKey, started)
                         || !session.isCurrent(started.request)) return;
-                for (ArtworkObserver target : started.observers) {
+                for (ArtworkObserver target : new ArrayList<>(started.observers)) {
                     if (!target.cancelled) target.result.failure(message, unauthorized);
                 }
             }
@@ -838,6 +893,36 @@ final class BridgeRepository implements AutoCloseable {
         }
         retryingRevocations = true;
         retryPendingRevocation(pending, 0, 0, null);
+    }
+
+    /**
+     * Retries queued revocations after the stream (re)connects, at most once per backoff window,
+     * so an unreachable old computer is not contacted on every reconnect.
+     */
+    private void retryPendingRevocationsAutomatically() {
+        long now = SystemClock.elapsedRealtime();
+        if (retryingRevocations || now < automaticRevocationRetryAt
+                || store.pendingRevocationCount() == 0) return;
+        automaticRevocationRetryAt = now + automaticRevocationBackoffMs;
+        retryPendingRevocations(new BridgeClient.Result<>() {
+            @Override public void success(Integer removed) {
+                if (store.pendingRevocationCount() == 0) {
+                    automaticRevocationBackoffMs = MIN_REVOCATION_RETRY_MS;
+                    automaticRevocationRetryAt = 0;
+                } else {
+                    backOffAutomaticRevocations();
+                }
+            }
+
+            @Override public void failure(String message, boolean unauthorized) {
+                backOffAutomaticRevocations();
+            }
+        });
+    }
+
+    private void backOffAutomaticRevocations() {
+        automaticRevocationBackoffMs = Math.min(MAX_REVOCATION_RETRY_MS,
+                automaticRevocationBackoffMs * 2);
     }
 
     private void retryPendingRevocation(List<SecureStore.PendingRevocation> pending, int index,
@@ -922,7 +1007,13 @@ final class BridgeRepository implements AutoCloseable {
 
             @Override
             public void failure(String message, boolean unauthorized) {
-                if (session.isCurrent(request)) result.failure(message, unauthorized);
+                failure(message, unauthorized, BridgeClient.ErrorCode.NONE);
+            }
+
+            @Override
+            public void failure(String message, boolean unauthorized,
+                                BridgeClient.ErrorCode code) {
+                if (session.isCurrent(request)) result.failure(message, unauthorized, code);
             }
         };
     }

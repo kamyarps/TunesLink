@@ -156,7 +156,8 @@ final class BridgeHttpClient {
                 if (chain == null || chain.length == 0) {
                     throw new CertificateException("Bridge sent no identity");
                 }
-                chain[0].checkValidity();
+                // Trust on first use: the fingerprint is pinned at pairing. A self-signed leaf's
+                // validity period adds nothing, and a slow phone clock must not block pairing.
             }
             @Override public X509Certificate[] getAcceptedIssuers() {
                 return new X509Certificate[0];
@@ -193,7 +194,8 @@ final class BridgeHttpClient {
                     if (chain == null || chain.length == 0) {
                         throw new CertificateException("Bridge sent no identity");
                     }
-                    chain[0].checkValidity();
+                    // The pinned fingerprint is the whole trust decision; checking the validity
+                    // period would only lock out phones whose clock lags a freshly issued cert.
                     if (!expectedFingerprint.equals(fingerprint(chain[0]))) {
                         throw new CertificateException(
                                 "Bridge security identity does not match");

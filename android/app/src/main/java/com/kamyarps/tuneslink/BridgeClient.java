@@ -180,11 +180,68 @@ class BridgeClient extends BridgeClientSupport {
         }
     }
 
+    /** Machine-readable bridge failure category; older bridges send none (NONE). */
+    enum ErrorCode {
+        NONE, PAIRING_RATE_LIMITED, PAIRING_CLOSED, PAIRING_CODE_INCORRECT, PAIRING_DEVICE_LIMIT,
+        PAIRING_SAVE_FAILED, BUSY, ITUNES_BUSY, ITUNES_UNAVAILABLE, NOT_FOUND, INVALID_REQUEST,
+        NOT_PAIRED, SUPERSEDED, BRIDGE_ERROR;
+
+        static ErrorCode fromWire(String code) {
+            return switch (code == null ? "" : code) {
+                case "pairing_rate_limited" -> PAIRING_RATE_LIMITED;
+                case "pairing_closed" -> PAIRING_CLOSED;
+                case "pairing_code_incorrect" -> PAIRING_CODE_INCORRECT;
+                case "pairing_device_limit" -> PAIRING_DEVICE_LIMIT;
+                case "pairing_save_failed" -> PAIRING_SAVE_FAILED;
+                case "busy" -> BUSY;
+                case "itunes_busy" -> ITUNES_BUSY;
+                case "itunes_unavailable" -> ITUNES_UNAVAILABLE;
+                case "not_found" -> NOT_FOUND;
+                case "invalid_request" -> INVALID_REQUEST;
+                case "not_paired" -> NOT_PAIRED;
+                case "superseded" -> SUPERSEDED;
+                case "bridge_error" -> BRIDGE_ERROR;
+                default -> NONE;
+            };
+        }
+    }
+
+    /** A non-2xx bridge response: its English diagnostic plus the typed code, if any. */
+    static final class BridgeFailure extends IOException {
+        final ErrorCode code;
+
+        BridgeFailure(String message, ErrorCode code) {
+            super(message);
+            this.code = code;
+        }
+    }
+
+    static BridgeFailure failureFrom(BridgeHttpClient.Response response, String fallback) {
+        JSONObject body;
+        try {
+            body = parseObject(response.body);
+        } catch (JSONException notJson) {
+            body = new JSONObject();
+        }
+        String message = body.optString("error", "");
+        return new BridgeFailure(message.isBlank() ? fallback : message,
+                ErrorCode.fromWire(body.optString("code", "")));
+    }
+
+    static ErrorCode codeOf(Exception failure) {
+        return failure instanceof BridgeFailure typed ? typed.code : ErrorCode.NONE;
+    }
+
     interface Result<T> {
         void success(T value);
         void failure(String message, boolean unauthorized);
+        /** Receives the typed code as well; the default keeps the legacy two-argument form. */
+        default void failure(String message, boolean unauthorized, ErrorCode code) {
+            failure(message, unauthorized);
+        }
         default void rateLimited(int retryAfterSeconds) {
-            failure("Too many pairing attempts. Try again later.", false);
+            failure("Too many pairing attempts. Try again later.", false,
+                    ErrorCode.PAIRING_RATE_LIMITED);
         }
     }
 
@@ -303,8 +360,9 @@ class BridgeClient extends BridgeClientSupport {
                 if (item == null) continue;
                 String id = item.optString("id", "");
                 if (id.isBlank()) continue;
+                // A missing title stays blank; the presentation layer localizes "Untitled".
                 items.add(new LibraryTrack(id,
-                        item.optString("title", "Untitled"),
+                        item.optString("title", ""),
                         item.optString("artist", ""),
                         item.optString("album", ""),
                         Math.max(0, item.optDouble("duration", 0)),
@@ -333,7 +391,7 @@ class BridgeClient extends BridgeClientSupport {
                 if (id.isBlank()) continue;
                 items.add(new LibraryCollection(
                         id,
-                        item.optString("title", "Untitled"),
+                        item.optString("title", ""),
                         item.optString("subtitle", ""),
                         Math.max(0, item.optInt("trackCount", 0)),
                         item.optString("artworkId", "")));
@@ -347,9 +405,23 @@ class BridgeClient extends BridgeClientSupport {
                 json.optString("revision", ""));
     }
 
-    private enum StreamStatus { DISCONNECTED, UNSUPPORTED, UNAUTHORIZED, IDENTITY_CHANGED }
+    enum StreamStatus { DISCONNECTED, UNSUPPORTED, UNAUTHORIZED, IDENTITY_CHANGED }
     private record StreamResult(StreamStatus status, boolean receivedState, String message) {}
     private static final class StopStreamException extends IOException {}
+
+    /**
+     * Classifies the state-stream response. Only 404/405 (or a 200 that is not an event stream)
+     * mean the bridge predates streaming; a transient 5xx is a disconnect with backoff.
+     * Returns null when the response is a usable event stream.
+     */
+    static StreamStatus streamStatusFor(int status, String contentType) {
+        if (status == 401) return StreamStatus.UNAUTHORIZED;
+        if (status == 404 || status == 405) return StreamStatus.UNSUPPORTED;
+        if (status != 200) return StreamStatus.DISCONNECTED;
+        return contentType != null
+                && contentType.toLowerCase(Locale.ROOT).startsWith("text/event-stream")
+                ? null : StreamStatus.UNSUPPORTED;
+    }
 
     private final ExecutorService executor = Executors.newFixedThreadPool(4);
     private final ExecutorService commandExecutor = Executors.newSingleThreadExecutor();
@@ -359,6 +431,11 @@ class BridgeClient extends BridgeClientSupport {
     private final Handler main = new Handler(Looper.getMainLooper());
     private final AtomicBoolean closed = new AtomicBoolean(false);
     private final AtomicInteger stateGeneration = new AtomicInteger();
+    /** Commands queued under an older epoch are dropped before they start. */
+    private final AtomicInteger commandEpoch = new AtomicInteger();
+    private final Object stateWake = new Object();
+    private boolean stateWakeRequested; // guarded by stateWake
+    private volatile boolean resetStateBackoff;
     private volatile HttpsURLConnection activeStateConnection;
     private volatile Thread stateThread;
 
@@ -504,7 +581,6 @@ class BridgeClient extends BridgeClientSupport {
                         bridge.tlsFingerprint, null, "POST",
                         "/api/pair", request.toString().getBytes(StandardCharsets.UTF_8),
                         cancellation);
-                JSONObject json = parseObject(response.body);
                 if (response.status == 429) {
                     main.post(() -> {
                         if (!closed.get() && !cancellation.isCancelled())
@@ -512,15 +588,13 @@ class BridgeClient extends BridgeClientSupport {
                     });
                     return;
                 }
-                if (response.status != 200) {
-                    throw new IOException(json.optString("error", "Pairing failed"));
-                }
-                String token = json.getString("token");
+                if (response.status != 200) throw failureFrom(response, "Pairing failed");
+                String token = parseObject(response.body).getString("token");
                 if (token.length() < 32) throw new IOException("Bridge returned an invalid token");
                 deliverSuccess(result, token, cancellation);
             } catch (Exception e) {
                 if (!cancellation.isCancelled())
-                    deliverFailure(result, friendly(e), false, cancellation);
+                    deliverFailure(result, friendly(e), false, codeOf(e), cancellation);
             }
         });
         cancellation.setTask(future);
@@ -545,27 +619,36 @@ class BridgeClient extends BridgeClientSupport {
         });
     }
 
-    void command(SecureStore.SavedBridge bridge, String command, Double value,
-                 Result<Boolean> result) {
-        commandExecutor.execute(() -> {
+    /**
+     * Queues a playback command on the ordered command lane. A command that has not started when
+     * it is cancelled, the stream reports a disconnect, or state updates stop is dropped silently;
+     * cancelling a started command abandons its connection and callback.
+     */
+    Cancellation command(SecureStore.SavedBridge bridge, String command, Double value,
+                         Result<Boolean> result) {
+        ConnectionCancellation cancellation = new ConnectionCancellation();
+        int epoch = commandEpoch.get();
+        Future<?> task = commandExecutor.submit(() -> {
+            if (cancellation.isCancelled() || epoch != commandEpoch.get()) return;
             try {
                 JSONObject json = new JSONObject().put("command", command);
                 if (value != null) json.put("value", value);
                 BridgeHttpClient.Response response = request(bridge.host, bridge.port,
-                        bridge.tlsFingerprint, bridge.token,
-                        "POST", "/api/command", json.toString().getBytes(StandardCharsets.UTF_8));
+                        bridge.tlsFingerprint, bridge.token, "POST", "/api/command",
+                        json.toString().getBytes(StandardCharsets.UTF_8), cancellation);
                 if (response.status == 401) {
-                    deliverFailure(result, "This phone is no longer paired", true);
+                    deliverFailure(result, "This phone is no longer paired", true, cancellation);
                 } else if (response.status == 200 || response.status == 204) {
-                    deliverSuccess(result, true);
+                    deliverSuccess(result, true, cancellation);
                 } else {
-                    JSONObject body = parseObject(response.body);
-                    throw new IOException(body.optString("error", "iTunes did not accept that command"));
+                    throw failureFrom(response, "iTunes did not accept that command");
                 }
             } catch (Exception e) {
-                deliverFailure(result, friendly(e), false);
+                deliverFailure(result, friendly(e), false, codeOf(e), cancellation);
             }
         });
+        cancellation.setTask(task);
+        return cancellation;
     }
 
     Cancellation revokePairing(SecureStore.SavedBridge bridge, Result<Boolean> result) {
@@ -614,14 +697,11 @@ class BridgeClient extends BridgeClientSupport {
                     deliverFailure(result, "This phone is no longer paired", true, cancellation);
                     return;
                 }
-                if (response.status != 200) {
-                    JSONObject body = parseObject(response.body);
-                    throw new IOException(body.optString("error", "Library is unavailable"));
-                }
+                if (response.status != 200) throw failureFrom(response, "Library is unavailable");
                 deliverSuccess(result, parseLibraryPage(parseObject(response.body), limit),
                         cancellation);
             } catch (Exception e) {
-                deliverFailure(result, friendly(e), false, cancellation);
+                deliverFailure(result, friendly(e), false, codeOf(e), cancellation);
             }
         });
         cancellation.setTask(future);
@@ -655,14 +735,12 @@ class BridgeClient extends BridgeClientSupport {
                 if (response.status == 404 && !parentId.isEmpty()) {
                     throw new IOException("Update TunesLink Bridge to browse collection albums");
                 }
-                if (response.status != 200) {
-                    JSONObject body = parseObject(response.body);
-                    throw new IOException(body.optString("error", "Library collections are unavailable"));
-                }
+                if (response.status != 200)
+                    throw failureFrom(response, "Library collections are unavailable");
                 deliverSuccess(result,
                         parseLibraryCollectionPage(parseObject(response.body), limit), cancellation);
             } catch (Exception e) {
-                deliverFailure(result, friendly(e), false, cancellation);
+                deliverFailure(result, friendly(e), false, codeOf(e), cancellation);
             }
         });
         cancellation.setTask(future);
@@ -673,7 +751,13 @@ class BridgeClient extends BridgeClientSupport {
                            String collectionId, long sequence, Result<Boolean> result) {
         ConnectionCancellation cancellation = new ConnectionCancellation();
         AtomicBoolean acknowledged = new AtomicBoolean();
+        int epoch = commandEpoch.get();
         Future<?> task = commandExecutor.submit(() -> {
+            // Never sent: nothing to cancel at the bridge, and no callback is expected.
+            if (cancellation.isCancelled() || epoch != commandEpoch.get()) {
+                acknowledged.set(true);
+                return;
+            }
             long started = SystemClock.elapsedRealtime();
             try {
                 JSONObject json = new JSONObject().put("trackId", trackId)
@@ -693,12 +777,11 @@ class BridgeClient extends BridgeClientSupport {
                 } else if (response.status == 200 || response.status == 204) {
                     deliverSuccess(result, true, cancellation);
                 } else {
-                    JSONObject body = parseObject(response.body);
-                    throw new IOException(body.optString("error", "iTunes could not play that song"));
+                    throw failureFrom(response, "iTunes could not play that song");
                 }
             } catch (Exception e) {
                 if (!cancellation.isCancelled())
-                    deliverFailure(result, friendly(e), false, cancellation);
+                    deliverFailure(result, friendly(e), false, codeOf(e), cancellation);
             } finally {
                 Log.i("TunesLinkTiming", "play.http_ms=" +
                         (SystemClock.elapsedRealtime() - started));
@@ -758,23 +841,41 @@ class BridgeClient extends BridgeClientSupport {
     void startStateUpdates(SecureStore.SavedBridge bridge, StateListener listener) {
         int generation = stateGeneration.incrementAndGet();
         disconnectStateConnection();
+        synchronized (stateWake) {
+            stateWakeRequested = false;
+        }
         stateExecutor.execute(() -> runStateUpdates(bridge, listener, generation));
     }
 
     void stopStateUpdates() {
         stateGeneration.incrementAndGet();
+        commandEpoch.incrementAndGet();
         disconnectStateConnection();
+        wakeStateThread();
         Thread thread = stateThread;
         if (thread != null) thread.interrupt();
     }
 
     void requestStateRefresh() {
         // The current bridge pushes command results through the open SSE stream. Interrupting
-        // that read reports a false disconnect; only wake legacy polling or reconnect backoff.
+        // that read reports a false disconnect; only wake legacy polling or reconnect backoff,
+        // and never interrupt a request that is in flight.
         if (activeStateConnection != null) return;
+        wakeStateThread();
+    }
 
-        Thread thread = stateThread;
-        if (thread != null) thread.interrupt();
+    /** A network became available: retry now and restart the reconnect backoff. */
+    void networkAvailable() {
+        if (activeStateConnection != null) return;
+        resetStateBackoff = true;
+        wakeStateThread();
+    }
+
+    private void wakeStateThread() {
+        synchronized (stateWake) {
+            stateWakeRequested = true;
+            stateWake.notifyAll();
+        }
     }
 
     private void runStateUpdates(SecureStore.SavedBridge bridge, StateListener listener,
@@ -782,9 +883,16 @@ class BridgeClient extends BridgeClientSupport {
         stateThread = Thread.currentThread();
         boolean legacyPolling = false;
         int failures = 0;
+        // Connection transitions are reported once, not with every state frame.
+        boolean[] reported = {false};
+        long[] delays = {2_000, 4_000, 8_000, 15_000};
         try {
             while (isStateCurrent(generation)) {
                 Thread.interrupted();
+                if (resetStateBackoff) {
+                    resetStateBackoff = false;
+                    failures = 0;
+                }
                 if (legacyPolling) {
                     try {
                         BridgeHttpClient.Response response = request(bridge.host, bridge.port,
@@ -797,25 +905,24 @@ class BridgeClient extends BridgeClientSupport {
                         if (response.status != 200) throw new IOException("Bridge is not ready");
                         PlayerState state = parsePlayerState(parseObject(response.body));
                         failures = 0;
-                        deliverState(listener, generation, state);
+                        deliverState(listener, generation, state, reported);
                         sleepWhileCurrent(generation, state.playing ? 850 : 2_000);
                     } catch (Exception exception) {
                         if (!isStateCurrent(generation)) return;
                         if (isIdentityFailure(exception)) {
-                            deliverConnection(listener, generation, false,
-                                    IDENTITY_CHANGED_MESSAGE);
+                            deliverConnection(listener, generation, IDENTITY_CHANGED_MESSAGE,
+                                    reported);
                             return;
                         }
                         failures++;
-                        deliverConnection(listener, generation, false, friendly(exception));
-                        long[] delays = {2_000, 4_000, 8_000, 15_000};
+                        deliverConnection(listener, generation, friendly(exception), reported);
                         sleepWhileCurrent(generation,
                                 delays[Math.min(Math.max(0, failures - 1), delays.length - 1)]);
                     }
                     continue;
                 }
 
-                StreamResult outcome = streamState(bridge, listener, generation);
+                StreamResult outcome = streamState(bridge, listener, generation, reported);
                 if (!isStateCurrent(generation)) return;
                 if (outcome.status == StreamStatus.UNSUPPORTED) {
                     legacyPolling = true;
@@ -824,7 +931,7 @@ class BridgeClient extends BridgeClientSupport {
                 }
                 if (outcome.status == StreamStatus.UNAUTHORIZED) return;
                 if (outcome.status == StreamStatus.IDENTITY_CHANGED) {
-                    deliverConnection(listener, generation, false, outcome.message);
+                    deliverConnection(listener, generation, outcome.message, reported);
                     return;
                 }
                 if (outcome.receivedState) {
@@ -833,11 +940,11 @@ class BridgeClient extends BridgeClientSupport {
                     continue;
                 }
                 failures++;
-                deliverConnection(listener, generation, false,
-                        outcome.message == null ? "Reconnecting to the computer" : outcome.message);
-                long[] delays = {2_000, 4_000, 8_000, 15_000};
-                int delayIndex = Math.min(Math.max(0, failures - 1), delays.length - 1);
-                sleepWhileCurrent(generation, delays[delayIndex]);
+                deliverConnection(listener, generation,
+                        outcome.message == null ? "Reconnecting to the computer" : outcome.message,
+                        reported);
+                sleepWhileCurrent(generation,
+                        delays[Math.min(Math.max(0, failures - 1), delays.length - 1)]);
             }
         } finally {
             if (stateThread == Thread.currentThread()) stateThread = null;
@@ -846,7 +953,7 @@ class BridgeClient extends BridgeClientSupport {
     }
 
     private StreamResult streamState(SecureStore.SavedBridge bridge, StateListener listener,
-                                     int generation) {
+                                     int generation, boolean[] reported) {
         HttpsURLConnection connection = null;
         boolean[] receivedState = {false};
         try {
@@ -859,16 +966,14 @@ class BridgeClient extends BridgeClientSupport {
             connection.setRequestProperty("Accept", "text/event-stream");
             connection.setRequestProperty("Authorization", "Bearer " + bridge.token);
             int status = connection.getResponseCode();
-            if (status == 401) {
+            StreamStatus rejected = streamStatusFor(status, connection.getContentType());
+            if (rejected == StreamStatus.UNAUTHORIZED) {
                 deliverUnauthorized(listener, generation, "This phone is no longer paired");
                 return new StreamResult(StreamStatus.UNAUTHORIZED, false, null);
             }
-            String contentType = connection.getContentType();
-            if (status == 404 || status == 405 || contentType == null
-                    || !contentType.toLowerCase(Locale.ROOT).startsWith("text/event-stream")) {
+            if (rejected == StreamStatus.UNSUPPORTED)
                 return new StreamResult(StreamStatus.UNSUPPORTED, false, null);
-            }
-            if (status != 200) throw new IOException("Bridge state stream is unavailable");
+            if (rejected != null) throw new IOException("Bridge state stream is unavailable");
             SseParser parser = new SseParser();
             byte[] buffer = new byte[4096];
             try (InputStream input = connection.getInputStream()) {
@@ -884,7 +989,7 @@ class BridgeClient extends BridgeClientSupport {
                         try {
                             PlayerState state = parsePlayerState(new JSONObject(event.data()));
                             receivedState[0] = true;
-                            deliverState(listener, generation, state);
+                            deliverState(listener, generation, state, reported);
                         } catch (JSONException invalidState) {
                             throw new IOException("Bridge sent an invalid state event", invalidState);
                         }
@@ -906,12 +1011,20 @@ class BridgeClient extends BridgeClientSupport {
         }
     }
 
+    /** Sleeps between polls or reconnects; wakeStateThread() ends the wait early. */
     private void sleepWhileCurrent(int generation, long milliseconds) {
-        if (!isStateCurrent(generation)) return;
-        try {
-            Thread.sleep(milliseconds);
-        } catch (InterruptedException ignored) {
-            Thread.interrupted();
+        long deadline = System.nanoTime() + milliseconds * 1_000_000L;
+        synchronized (stateWake) {
+            try {
+                while (!stateWakeRequested && isStateCurrent(generation)) {
+                    long remaining = (deadline - System.nanoTime()) / 1_000_000L;
+                    if (remaining <= 0) break;
+                    stateWake.wait(remaining);
+                }
+            } catch (InterruptedException stopped) {
+                Thread.interrupted();
+            }
+            stateWakeRequested = false;
         }
     }
 
@@ -925,23 +1038,29 @@ class BridgeClient extends BridgeClientSupport {
         if (connection != null) connection.disconnect();
     }
 
-    private void deliverState(StateListener listener, int generation, PlayerState state) {
+    private void deliverState(StateListener listener, int generation, PlayerState state,
+                              boolean[] reported) {
+        boolean connectedNow = !reported[0];
+        reported[0] = true;
         main.post(() -> {
             if (isStateCurrent(generation)) {
-                listener.connectionChanged(true, null);
+                if (connectedNow) listener.connectionChanged(true, null);
                 listener.state(state);
             }
         });
     }
 
-    private void deliverConnection(StateListener listener, int generation, boolean connected,
-                                   String message) {
+    private void deliverConnection(StateListener listener, int generation, String message,
+                                   boolean[] reported) {
+        reported[0] = false;
+        commandEpoch.incrementAndGet();
         main.post(() -> {
-            if (isStateCurrent(generation)) listener.connectionChanged(connected, message);
+            if (isStateCurrent(generation)) listener.connectionChanged(false, message);
         });
     }
 
     private void deliverUnauthorized(StateListener listener, int generation, String message) {
+        commandEpoch.incrementAndGet();
         main.post(() -> {
             if (isStateCurrent(generation)) listener.unauthorized(message);
         });
@@ -993,10 +1112,15 @@ class BridgeClient extends BridgeClientSupport {
 
     private <T> void deliverFailure(Result<T> result, String message, boolean unauthorized,
                                     ConnectionCancellation cancellation) {
+        deliverFailure(result, message, unauthorized, ErrorCode.NONE, cancellation);
+    }
+
+    private <T> void deliverFailure(Result<T> result, String message, boolean unauthorized,
+                                    ErrorCode code, ConnectionCancellation cancellation) {
         if (closed.get() || cancellation.isCancelled()) return;
         main.post(() -> {
             if (!closed.get() && !cancellation.isCancelled())
-                result.failure(message, unauthorized);
+                result.failure(message, unauthorized, code);
         });
     }
 

@@ -39,18 +39,18 @@
       "average_rgb": [240, 240, 245]
     },
     "android/app/build/reports/device-integration/paired-large-text-player-controls.png": {
-      "hash": "dbe7f81ff00ff00ff00ff81fb7fffafffffffffdfe7ffe7fffffffffffffffff",
-      "average_rgb": [214, 206, 230]
+      "hash": "8195f00ff00ff00ff00ff00ff00fb3fffffffffffffffe6fffffffffffffffff",
+      "average_rgb": [205, 194, 225]
     },
     "android/app/build/reports/device-integration/paired-font-200-landscape.png": {
-      "hash": "ffff7fff77ffffffcbffffffeffffffffffff7fff3fffffffffff7fed3ffdfff",
-      "average_rgb": [241, 241, 243],
+      "hash": "7fffeffff7ffffffcbffffffeffffffffffff7fff3ffffffffffddffdfffffff",
+      "average_rgb": [243, 242, 245],
       "max_hash_distance": 12,
       "max_color_distance": 8
     },
     "android/app/build/reports/device-integration/changed-certificate-rejected.png": {
-      "hash": "00000000000000007ffe4ebe7ffe776e40027ffe40027ffe0000000000000000",
-      "average_rgb": [193, 181, 187]
+      "hash": "00000000000000000000757672265dfe776e7ffe7f027ffe0000000000000000",
+      "average_rgb": [186, 184, 186]
     }
   }
 }

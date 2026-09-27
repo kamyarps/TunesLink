@@ -38,7 +38,12 @@ internal enum ItunesWorkerFailureCategory
     MalformedResponse = 6,
     Internal = 7,
     Cancelled = 8,
-    Unavailable = 9
+    Unavailable = 9,
+    // iTunes rejected the call, usually because it is showing a dialog. The worker is healthy.
+    ItunesBusy = 10,
+    // A COM call failed for a reason that does not affect the connection, such as one track's
+    // artwork failing to save.
+    ComFailure = 11
 }
 
 internal sealed class MediaNotFoundException(string message) : ArgumentException(message);
@@ -68,7 +73,25 @@ internal static class ItunesWorkerProtocol
         category is ItunesWorkerFailureCategory.Validation
             or ItunesWorkerFailureCategory.NotFound
             or ItunesWorkerFailureCategory.Cancelled
-            or ItunesWorkerFailureCategory.Unavailable;
+            or ItunesWorkerFailureCategory.Unavailable
+            or ItunesWorkerFailureCategory.ItunesBusy
+            or ItunesWorkerFailureCategory.ComFailure;
+
+    // Only a dead server or a severed connection makes the worker's COM state unusable. Every
+    // other HRESULT is a failure of one call, so recycling the worker would only lose its caches.
+    internal static ItunesWorkerFailureCategory ClassifyComFailure(int hresult) => hresult switch
+    {
+        unchecked((int)0x80010007) => ItunesWorkerFailureCategory.ItunesTerminated, // RPC_E_SERVER_DIED
+        unchecked((int)0x80010012) => ItunesWorkerFailureCategory.ItunesTerminated, // RPC_E_SERVER_DIED_DNE
+        unchecked((int)0x800706BA) => ItunesWorkerFailureCategory.ItunesTerminated, // RPC_S_SERVER_UNAVAILABLE
+        unchecked((int)0x800706BE) => ItunesWorkerFailureCategory.ItunesTerminated, // RPC_S_CALL_FAILED
+        unchecked((int)0x800706BF) => ItunesWorkerFailureCategory.ItunesTerminated, // RPC_S_CALL_FAILED_DNE
+        unchecked((int)0x80010108) => ItunesWorkerFailureCategory.ComDisconnected, // RPC_E_DISCONNECTED
+        unchecked((int)0x800401FD) => ItunesWorkerFailureCategory.ComDisconnected, // CO_E_OBJNOTCONNECTED
+        unchecked((int)0x80010001) => ItunesWorkerFailureCategory.ItunesBusy, // RPC_E_CALL_REJECTED
+        unchecked((int)0x8001010A) => ItunesWorkerFailureCategory.ItunesBusy, // RPC_E_SERVERCALL_RETRYLATER
+        _ => ItunesWorkerFailureCategory.ComFailure
+    };
 
 }
 

@@ -198,7 +198,9 @@ internal sealed class ItunesWorkerClient : IDisposable
             await process.StandardInput.FlushAsync(operation.Token).ConfigureAwait(false);
             responseTask = responses.ReadLineAsync(CancellationToken.None);
             string? line = await responseTask.WaitAsync(operation.Token).ConfigureAwait(false);
-            if (line is null) throw new IOException("The iTunes worker stopped unexpectedly");
+            if (line is null)
+                throw new ItunesWorkerException(ItunesWorkerFailureCategory.Internal,
+                    "The iTunes worker stopped unexpectedly");
             ItunesWorkerResponse response;
             try
             {
@@ -235,6 +237,11 @@ internal sealed class ItunesWorkerClient : IDisposable
             if (diagnostics && exception is not OperationCanceledException)
                 BridgeDiagnostics.Record("itunes.worker", exception);
             if (entered && terminateOnFailure) TerminateWorker();
+            // A broken worker pipe is a worker failure. Left as an IOException, the HTTP layer
+            // could not tell it apart from the phone's own connection failing.
+            if (exception is IOException)
+                throw new ItunesWorkerException(ItunesWorkerFailureCategory.Internal,
+                    "The iTunes worker stopped unexpectedly", exception);
             throw;
         }
         finally
