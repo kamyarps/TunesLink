@@ -49,8 +49,6 @@ internal object TunesLinkMotion {
     const val AlbumDetailEnter = 220
     const val AlbumDetailExit = 150
     const val ReducedMotionFade = 160
-    const val PlayerShared = 280
-    const val PlayerSharedStiffness = 450f
 }
 
 @Immutable

@@ -27,6 +27,17 @@ The emulator integration suite checks cooldown expiry and command errors across 
 tablet surfaces. Release publishing runs this same suite against the verified source commit,
 then installs the signed, optimized release APK for the viewport and launch smoke checks.
 
+## Manual release checklist
+
+- [ ] On an Android 17 (API 37) device or working emulator, grant local-network permission and
+  verify pairing. Revoke the permission, restart the app, and verify that it prompts again.
+  Grant access again and confirm that the saved connection recovers.
+
+This remains a manual release check until a working API 37 runner/image combination is qualified
+for the [device matrix](../.github/workflows/android-device.yml). The
+[integration script](../scripts/android-emulator-integration.sh) contains the grant, revocation,
+and recovery scenarios; emulator qualification notes are kept in the workflow comments.
+
 ## Live iTunes queue regression
 
 `dotnet run --project test-support/TuneLinkItunesQueueTest --configuration Release -- --run-live`

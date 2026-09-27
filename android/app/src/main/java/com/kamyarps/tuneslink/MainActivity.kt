@@ -304,8 +304,7 @@ private fun TunesLinkApp(
     val browseBackable = browseBackEnabled(backDestination, state.browse, useTabletWorkspace)
     val backHandled = !imeVisible && (showRecoveryDialog || browseBackable ||
         backAction != NavigationBackAction.System)
-    TunesLinkSharedTransitionRoot {
-        BackHandler(enabled = backHandled) {
+    BackHandler(enabled = backHandled) {
         if (showRecoveryDialog) {
             requestRecoveryAction(RecoveryDialogAction.Dismiss)
         } else if (state.modal == null && browseBackable) {
@@ -411,7 +410,6 @@ private fun TunesLinkApp(
                     viewModel = viewModel,
                     showNavigationRail = useNavigationRail,
                     showTabletWorkspace = useTabletWorkspace,
-                    animatedVisibilityScope = this,
                 )
             }
         }
@@ -436,8 +434,8 @@ private fun TunesLinkApp(
         }
     }
 
-        TunesLinkModalHost(state, viewModel)
-        if (showRecoveryDialog) {
+    TunesLinkModalHost(state, viewModel)
+    if (showRecoveryDialog) {
         ConnectionRecoveryDialog(
             availability = availability,
             dismissRequested = recoveryAction != null,
@@ -462,7 +460,6 @@ private fun TunesLinkApp(
                 }
             },
         )
-        }
     }
 }
 
@@ -691,7 +688,6 @@ private fun ConnectedScreen(
     viewModel: TunesLinkViewModel,
     showNavigationRail: Boolean,
     showTabletWorkspace: Boolean,
-    animatedVisibilityScope: androidx.compose.animation.AnimatedVisibilityScope,
 ) {
     val layoutDirection = LocalLayoutDirection.current
     val commandError = state.player.commandError
@@ -727,7 +723,7 @@ private fun ConnectedScreen(
         }
         Box(Modifier.weight(1f)) {
             ConnectedContent(state, destination, topInset, viewModel,
-                showNavigationRail, showTabletWorkspace, animatedVisibilityScope)
+                showNavigationRail, showTabletWorkspace)
         }
     }
 }
@@ -740,7 +736,6 @@ private fun ConnectedContent(
     viewModel: TunesLinkViewModel,
     showNavigationRail: Boolean,
     showTabletWorkspace: Boolean,
-    animatedVisibilityScope: androidx.compose.animation.AnimatedVisibilityScope,
 ) {
     if (showTabletWorkspace) {
         TabletTunesWorkspace(
@@ -780,7 +775,6 @@ private fun ConnectedContent(
                     state,
                     viewModel,
                     Modifier.fillMaxSize(),
-                    animatedVisibilityScope,
                     topInset = topInset,
                 )
                 TunesLinkDestination.Search -> SearchScreen(

@@ -27,15 +27,20 @@ jobs:
         include:
           - api-level: 23
             target: google_apis
+            # This image's old kernel faults in framebuffer setup with 4 GiB RAM.
+            ram-mb: 2048
             run-integration: true
           - api-level: 26
             target: google_apis
+            ram-mb: 4096
             run-integration: false
           - api-level: 31
             target: google_apis
+            ram-mb: 4096
             run-integration: true
           - api-level: 36
             target: google_apis
+            ram-mb: 4096
             run-integration: true
         # API 37 permission scenarios are in the integration script. Qualification
         # on the Windows audit host was blocked by SurfaceFlinger crashes in the
@@ -79,24 +84,34 @@ jobs:
             sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
-      - name: Exercise phone and tablet viewports
-        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
+      - uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4.0.1
         with:
-          api-level: ${{ matrix.api-level }}
-          target: ${{ matrix.target }}
-          arch: x86_64
-          profile: pixel_2
-          ram-size: 4096M
-          heap-size: 512M
-          # The smoke script exercises both enabled and disabled animation policies.
-          disable-animations: false
-          emulator-options: >-
-            -no-window -gpu swiftshader -noaudio -no-boot-anim
-            -camera-back none -camera-front none -no-snapshot-save
-          script: |
-            bash scripts/android-emulator-smoke.sh
-            [ "${{ matrix.run-integration }}" != "true" ] || bash scripts/android-emulator-integration.sh
-            [ -z "${{ inputs.release-artifact }}" ] || bash scripts/android-release-smoke.sh
+          packages: ""
+      - name: Install and configure emulator
+        timeout-minutes: 10
+        env:
+          API_LEVEL: ${{ matrix.api-level }}
+          IMAGE_TARGET: ${{ matrix.target }}
+        run: |
+          image="system-images;android-${API_LEVEL};${IMAGE_TARGET};x86_64"
+          sdkmanager "platform-tools" "emulator" "$image"
+          echo no | avdmanager create avd --force --name tuneslink-ci --package "$image" --device pixel_2
+          printf '\nhw.cpu.ncore=2\nhw.heapSize=512M\n' >> "$HOME/.android/avd/tuneslink-ci.avd/config.ini"
+          "$ANDROID_HOME/emulator/emulator" -version
+      - name: Exercise phone and tablet viewports
+        timeout-minutes: 30
+        env:
+          EMULATOR_RAM_MB: ${{ matrix.ram-mb }}
+          RUN_INTEGRATION: ${{ matrix.run-integration }}
+          RELEASE_ARTIFACT: ${{ inputs.release-artifact }}
+        run: |
+          python3 scripts/android-emulator-run.py --avd tuneslink-ci \
+            --emulator "$ANDROID_HOME/emulator/emulator" --memory "$EMULATOR_RAM_MB" --wipe-data -- \
+            bash -euo pipefail -c '
+              bash scripts/android-emulator-smoke.sh
+              if [[ "$RUN_INTEGRATION" == "true" ]]; then bash scripts/android-emulator-integration.sh; fi
+              if [[ -n "$RELEASE_ARTIFACT" ]]; then bash scripts/android-release-smoke.sh; fi
+            '
       - name: Verify Android visual baselines
         if: matrix.api-level == 36
         run: python3 scripts/android-visual-regression.py
@@ -108,6 +123,7 @@ jobs:
         with:
           name: android-device-api-${{ matrix.api-level }}
           path: |
+            android/app/build/reports/device-emulator
             android/app/build/reports/device-smoke
             android/app/build/reports/device-integration
             android/app/build/reports/device-release-smoke

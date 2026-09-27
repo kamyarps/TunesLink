@@ -3,14 +3,7 @@ package com.kamyarps.tuneslink
 import android.graphics.Bitmap
 import android.content.res.Configuration
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.animation.Crossfade
-import androidx.compose.animation.EnterTransition
-import androidx.compose.animation.ExitTransition
-import androidx.compose.animation.ExperimentalSharedTransitionApi
-import androidx.compose.animation.SharedTransitionLayout
-import androidx.compose.animation.SharedTransitionScope
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.Spring
@@ -94,13 +87,11 @@ import androidx.compose.material3.NavigationRailItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -130,9 +121,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
-private val LocalTunesLinkSharedTransitionScope =
-    staticCompositionLocalOf<SharedTransitionScope?> { null }
-
 private fun Modifier.TunesLinkFocusBorder(
     focused: Boolean,
     color: Color,
@@ -142,40 +130,6 @@ private fun Modifier.TunesLinkFocusBorder(
     focused -> border(width = 2.dp, color = color, shape = shape)
     restingColor != null -> border(width = 1.dp, color = restingColor, shape = shape)
     else -> this
-}
-
-@OptIn(ExperimentalSharedTransitionApi::class)
-@Composable
-internal fun TunesLinkSharedTransitionRoot(content: @Composable () -> Unit) {
-    SharedTransitionLayout {
-        CompositionLocalProvider(LocalTunesLinkSharedTransitionScope provides this) {
-            content()
-        }
-    }
-}
-
-@OptIn(ExperimentalSharedTransitionApi::class)
-@Composable
-internal fun Modifier.tunesLinkPlayerSharedElement(
-    key: String,
-    visibilityScope: AnimatedVisibilityScope,
-): Modifier {
-    val sharedScope = LocalTunesLinkSharedTransitionScope.current
-    if (sharedScope == null || !TunesLinkTheme.motion.spatialEnabled) return this
-    val state = with(sharedScope) { rememberSharedContentState(key) }
-    return with(sharedScope) {
-        this@tunesLinkPlayerSharedElement.sharedElement(
-            sharedContentState = state,
-            animatedVisibilityScope = visibilityScope,
-            boundsTransform = { _, _ ->
-                spring(
-                    dampingRatio = Spring.DampingRatioNoBouncy,
-                    // This critically damped response settles at the 280 ms player contract.
-                    stiffness = TunesLinkMotion.PlayerSharedStiffness,
-                )
-            },
-        )
-    }
 }
 
 @Composable
@@ -580,17 +534,6 @@ internal fun UnifiedPlayerBar(
     insetStart: Boolean = true,
 ) {
     val compactLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
-    val motion = TunesLinkTheme.motion
-    val miniEnter = if (motion.spatialEnabled) {
-        EnterTransition.None
-    } else {
-        fadeIn(tween(TunesLinkMotion.ReducedMotionFade, easing = TunesLinkMotion.EaseOut))
-    }
-    val miniExit = if (motion.spatialEnabled) {
-        ExitTransition.None
-    } else {
-        fadeOut(tween(TunesLinkMotion.ReducedMotionFade, easing = TunesLinkMotion.EaseOut))
-    }
     // Keep the chrome clear of the navigation bar and, in landscape, the camera cutout.
     val insetSides = if (insetStart) {
         WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom
@@ -604,18 +547,15 @@ internal fun UnifiedPlayerBar(
                 WindowInsets.systemBars.union(WindowInsets.displayCutout).only(insetSides),
             ),
     ) {
+        // Remove the footer in the same composition as the destination change.
+        // AnimatedVisibility can retain it (and its space) for child animations.
         if (compactLandscape && (showMiniPlayer || showNavigation)) {
             Row(
                 Modifier.fillMaxWidth().height(80.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                AnimatedVisibility(
-                    visible = showMiniPlayer,
-                    enter = miniEnter,
-                    exit = miniExit,
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                if (showMiniPlayer) {
+                    Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                         MiniPlayerContent(
                             player = player,
                             onOpenPlayer = onOpenPlayer,
@@ -625,7 +565,6 @@ internal fun UnifiedPlayerBar(
                             modifier = Modifier
                                 .widthIn(max = TunesLinkSizes.readableContentMaxWidth)
                                 .fillMaxWidth(),
-                            visibilityScope = this@AnimatedVisibility,
                         )
                     }
                 }
@@ -640,11 +579,7 @@ internal fun UnifiedPlayerBar(
                 }
             }
         } else {
-            AnimatedVisibility(
-                visible = showMiniPlayer,
-                enter = miniEnter,
-                exit = miniExit,
-            ) {
+            if (showMiniPlayer) {
                 Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
                     MiniPlayerContent(
                         player = player,
@@ -655,7 +590,6 @@ internal fun UnifiedPlayerBar(
                         modifier = Modifier
                             .widthIn(max = TunesLinkSizes.readableContentMaxWidth)
                             .fillMaxWidth(),
-                        visibilityScope = this@AnimatedVisibility,
                     )
                 }
             }
@@ -680,7 +614,6 @@ private fun MiniPlayerContent(
     controlsEnabled: Boolean,
     compact: Boolean,
     modifier: Modifier,
-    visibilityScope: AnimatedVisibilityScope,
 ) {
     val openNowPlaying = stringResource(R.string.open_now_playing)
     val playPauseDescription = stringResource(if (player.playing) R.string.pause else R.string.play)
@@ -701,16 +634,10 @@ private fun MiniPlayerContent(
         ArtworkSurface(
             player.artwork,
             playerArtworkDescription(player),
-            Modifier
-                .size(if (compact) 40.dp else 48.dp)
-                .tunesLinkPlayerSharedElement("player-artwork", visibilityScope),
+            Modifier.size(if (compact) 40.dp else 48.dp),
         )
         Spacer(Modifier.width(12.dp))
-        Column(
-            Modifier
-                .weight(1f)
-                .tunesLinkPlayerSharedElement("player-metadata", visibilityScope),
-        ) {
+        Column(Modifier.weight(1f)) {
             Text(
                 player.title.ifBlank { stringResource(R.string.nothing_playing) },
                 style = MaterialTheme.typography.bodyLarge,

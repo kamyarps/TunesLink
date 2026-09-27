@@ -123,7 +123,6 @@ internal fun NowPlayingScreen(
     state: TunesLinkUiState,
     viewModel: TunesLinkViewModel,
     modifier: Modifier,
-    animatedVisibilityScope: androidx.compose.animation.AnimatedVisibilityScope,
     topInset: Dp = 0.dp,
 ) {
     val player = state.player
@@ -168,9 +167,7 @@ internal fun NowPlayingScreen(
                 ArtworkSurface(
                     player.artwork,
                     artworkDescription,
-                    Modifier
-                        .size(artworkSize)
-                        .tunesLinkPlayerSharedElement("player-artwork", animatedVisibilityScope),
+                    Modifier.size(artworkSize),
                     cornerRadius = TunesLinkShapes.artworkLarge,
                     elevated = true,
                 )
@@ -197,10 +194,6 @@ internal fun NowPlayingScreen(
                         viewModel,
                         haptic,
                         Modifier.weight(1f).fillMaxWidth(),
-                        metadataModifier = Modifier.tunesLinkPlayerSharedElement(
-                            "player-metadata",
-                            animatedVisibilityScope,
-                        ),
                         compactHeight = compactHorizontal,
                         centerVertically = true,
                         controlsEnabled = controlsEnabled,
@@ -240,8 +233,7 @@ internal fun NowPlayingScreen(
                         artworkDescription,
                         Modifier
                             .padding(top = 4.dp)
-                            .size(artworkSize)
-                            .tunesLinkPlayerSharedElement("player-artwork", animatedVisibilityScope),
+                            .size(artworkSize),
                         cornerRadius = TunesLinkShapes.artworkLarge,
                         elevated = true,
                     )
@@ -250,10 +242,6 @@ internal fun NowPlayingScreen(
                         viewModel,
                         haptic,
                         Modifier.widthIn(max = 560.dp).fillMaxWidth(),
-                        metadataModifier = Modifier.tunesLinkPlayerSharedElement(
-                            "player-metadata",
-                            animatedVisibilityScope,
-                        ),
                         centerVertically = false,
                         controlsEnabled = controlsEnabled,
                     )
@@ -269,7 +257,6 @@ private fun PlayerDetails(
     viewModel: TunesLinkViewModel,
     haptic: androidx.compose.ui.hapticfeedback.HapticFeedback,
     modifier: Modifier,
-    metadataModifier: Modifier = Modifier,
     compactHeight: Boolean = false,
     centerVertically: Boolean = false,
     controlsEnabled: Boolean = true,
@@ -287,7 +274,7 @@ private fun PlayerDetails(
         verticalArrangement = if (centerVertically) Arrangement.Center else Arrangement.Top,
     ) {
         if (!compactHeight) Spacer(Modifier.height(18.dp))
-        Column(metadataModifier.fillMaxWidth()) {
+        Column(Modifier.fillMaxWidth()) {
             Text(
                 player.title.ifBlank { stringResource(R.string.nothing_playing) },
                 style = MaterialTheme.typography.titleLarge,

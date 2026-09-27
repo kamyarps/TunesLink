@@ -241,16 +241,10 @@ The full workflow runs Android lint and unit tests, debug and release package bu
 release build, formatting verification, bridge self-tests, responsive WinUI layout checks, build
 requirements self-tests, and repository hygiene checks.
 
-CI adds Android emulator coverage on API 23, 26, 31, and 36, rotation and delayed-pagination cases,
-pairing cooldown and playback-error flows, worker-hang recovery, artifact-size budgets, and a
-full-history secret scan. Release publishing requires the device suite for the verified release
-commit and smoke tests of the signed, optimized APK.
-
-API 37 permission flows remain a manual release check pending qualification of a working
-runner/image combination. On the Windows audit host, API 37.0/37.1 images crash in
-SurfaceFlinger before app launch with emulator 37.1.11 and 37.2.10. The integration script
-includes API 37 grant/revocation checks; add that platform to the device matrix after
-validating the environment.
+[CI](https://github.com/kamyarps/TunesLink/actions) adds Android emulator coverage on API 23, 26,
+31, and 36, integration tests, artifact-size budgets, and a full-history secret scan. Release
+publishing requires device validation and smoke tests of the signed, optimized APK. See the
+[manual release checklist](test-support/README.md#manual-release-checklist) for additional checks.
 
 To run the optional integration test against a real iTunes library and current track:
 
