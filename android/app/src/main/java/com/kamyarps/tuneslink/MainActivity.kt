@@ -4,6 +4,7 @@ import android.animation.ValueAnimator
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
 import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
@@ -107,11 +108,16 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        animationsEnabled = ValueAnimator.areAnimatorsEnabled()
+        animationsEnabled = areSystemAnimationsEnabled()
         highContrastEnabled = isHighContrastEnabled()
         enableEdgeToEdge(
             statusBarStyle = SystemBarStyle.auto(Color.Transparent.toArgb(), Color.Transparent.toArgb()),
-            navigationBarStyle = SystemBarStyle.auto(Color.Transparent.toArgb(), Color.Transparent.toArgb()),
+            navigationBarStyle = if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+                // Android 6/7 cannot draw dark navigation buttons over a light canvas.
+                SystemBarStyle.dark(ContextCompat.getColor(this, R.color.app_system_bar_background))
+            } else {
+                SystemBarStyle.auto(Color.Transparent.toArgb(), Color.Transparent.toArgb())
+            },
         )
         setContent {
             TunesLinkDesignTheme(
@@ -146,7 +152,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        animationsEnabled = ValueAnimator.areAnimatorsEnabled()
+        animationsEnabled = areSystemAnimationsEnabled()
         highContrastEnabled = isHighContrastEnabled()
     }
 
@@ -172,6 +178,14 @@ class MainActivity : ComponentActivity() {
         "high_text_contrast_enabled",
         0,
     ) == 1
+
+    private fun areSystemAnimationsEnabled(): Boolean =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            ValueAnimator.areAnimatorsEnabled()
+        } else {
+            Settings.Global.getFloat(contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) != 0f &&
+                !getSystemService(PowerManager::class.java).isPowerSaveMode
+        }
 }
 
 @Composable

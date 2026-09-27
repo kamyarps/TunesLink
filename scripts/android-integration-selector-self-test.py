@@ -133,6 +133,82 @@ shown=false
 dismiss_ime_if_visible
 [[ "$back_count" == 1 ]] || { echo 'Hidden IME caused an unintended Back action' >&2; exit 1; }
 """
+    start = source.index("return_to_library() {")
+    script += source[start : source.index("\n}", start) + 2] + r"""
+# Android 6 can expose navigation semantics behind the keyboard after search
+# is cleared. A tap at Library's coordinates then types a comma into search.
+shown=true
+destination=search
+injected_text=0
+ui_xml=/dev/null
+dump_ui() { :; }
+scrollable_swipe() { return 1; }
+node_center() {
+  case "$*" in
+    'text Midnight Drive') [[ "$destination" == library ]] ;;
+    'text Search your music') [[ "$destination" == search ]] ;;
+    'desc Library') printf '100 900\n' ;;
+    *) return 1 ;;
+  esac
+}
+fake_adb() {
+  case "$*" in
+    'shell dumpsys input_method') printf 'mInputShown=%s\r\n' "$shown" ;;
+    'shell input keyevent 4') shown=false ;;
+    'shell input tap 100 900')
+      if [[ "$shown" == true ]]; then
+        injected_text=$((injected_text + 1))
+      else
+        destination=library
+      fi
+      ;;
+    *) return 2 ;;
+  esac
+}
+return_to_library
+[[ "$destination" == library && "$injected_text" == 0 ]] || {
+  echo 'Library navigation typed into the keyboard after clearing search' >&2; exit 1;
+}
+ui_xml="$(mktemp)"
+trap 'rm -f "$ui_xml"' EXIT
+printf '<node text="Archive Track 061"/>\n' > "$ui_xml"
+destination=archive
+node_center() { [[ "$*" == 'text Midnight Drive' && "$destination" == library ]]; }
+scrollable_swipe() {
+  [[ "$1" == down ]] || return 1
+  destination=library
+}
+return_to_library
+rm -f "$ui_xml"
+trap - EXIT
+"""
+    start = source.index("scroll_until_node() {")
+    script += source[start : source.index("\n}", start) + 2] + r"""
+# Rotation can restore the list past the desired row. At a boundary, the
+# helper must search back through the list instead of swiping the end forever.
+ui_xml="$(mktemp)"
+trap 'rm -f "$ui_xml"' EXIT
+dump_ui() { printf '<row position="%s"/>\n' "$position" > "$ui_xml"; }
+node_center() { [[ "$position" == "$target" ]]; }
+scrollable_swipe() {
+  if [[ "$1" == up ]]; then
+    if (( position < 8 )); then position=$((position + 2)); fi
+  else
+    if (( position > 0 )); then position=$((position - 2)); fi
+  fi
+}
+position=8
+target=6
+scroll_until_node up text target
+position=2
+scroll_until_node down text target
+target=9
+if scroll_until_node up text missing 2>/dev/null; then
+  echo 'Scrolling reported success for a missing row' >&2; exit 1;
+fi
+rm -f "$ui_xml"
+trap - EXIT
+"""
     script += IME.read_text(encoding="utf-8") + r"""
 fake_adb() {
   case "$*" in
@@ -160,7 +236,7 @@ android_emulator_suppress_gboard_first_run fake_adb
   echo 'AOSP keyboard was not preferred over Gboard' >&2; exit 1;
 }
 """
-    result = subprocess.run([bash, "-c", script], capture_output=True, text=True)
+    result = subprocess.run([bash, "-s"], input=script, capture_output=True, text=True)
     if result.returncode != 0:
         raise AssertionError(f"Input helper regression: {result.stderr.strip()}")
 

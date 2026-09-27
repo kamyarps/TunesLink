@@ -9,6 +9,7 @@ reports="${TunesLink_SMOKE_REPORTS:-${workspace}/android/app/build/reports/devic
 ui_node_center_script="${workspace}/scripts/android-ui-node-center.py"
 ui_blocking_script="${workspace}/scripts/android-ui-blocking-foreground.py"
 ui_contract_script="${workspace}/scripts/android-ui-contract.py"
+source "$workspace/scripts/android-emulator-settings.sh"
 
 mkdir -p "$reports"
 
@@ -17,7 +18,7 @@ cleanup() {
   adb shell settings put system accelerometer_rotation 1 >/dev/null 2>&1 || true
   adb shell wm size reset >/dev/null 2>&1 || true
   adb shell wm density reset >/dev/null 2>&1 || true
-  adb shell settings put system font_scale 1.0 >/dev/null 2>&1 || true
+  android_emulator_set_font_scale adb 1.0 >/dev/null 2>&1 || true
   adb shell settings put global window_animation_scale 1 >/dev/null 2>&1 || true
   adb shell settings put global transition_animation_scale 1 >/dev/null 2>&1 || true
   adb shell settings put global animator_duration_scale 1 >/dev/null 2>&1 || true
@@ -122,6 +123,7 @@ launch() {
 }
 
 adb wait-for-device
+android_emulator_prepare_settings adb "$workspace"
 source "$workspace/scripts/android-emulator-ime.sh"
 android_emulator_suppress_gboard_first_run adb
 adb install -r "$apk" >/dev/null
@@ -129,7 +131,7 @@ adb install -r "$apk" >/dev/null
 # app data, so clear it explicitly to avoid a previously paired emulator skipping
 # the welcome screen.
 adb shell pm clear "$package" >/dev/null
-adb shell settings put system font_scale 1.0
+android_emulator_set_font_scale adb 1.0
 adb shell settings put global window_animation_scale 1
 adb shell settings put global transition_animation_scale 1
 adb shell settings put global animator_duration_scale 1
@@ -151,7 +153,7 @@ set_rotation 1
 sleep 2
 capture "phone-landscape" landscape 1
 
-adb shell settings put system font_scale 2.0
+android_emulator_set_font_scale adb 2.0
 set_rotation 0
 launch
 capture "phone-portrait-font-200" portrait 0
@@ -164,7 +166,7 @@ capture "phone-landscape-font-200" landscape 1
 python3 "$ui_contract_script" "${reports}/phone-landscape-font-200.xml" \
   --width 1920 --height 1080 --density 420 --require-scrollable
 
-adb shell settings put system font_scale 1.5
+android_emulator_set_font_scale adb 1.5
 
 adb shell wm size 1600x1000
 adb shell wm density 240

@@ -42,7 +42,7 @@ android {
 
     defaultConfig {
         applicationId = "com.kamyarps.tuneslink"
-        minSdk = 26
+        minSdk = 23
         targetSdk = requiredTargetSdk
         versionCode = 10
         versionName = "1.2.2"
@@ -76,6 +76,7 @@ android {
     }
 
     compileOptions {
+        coreLibraryDesugaringEnabled = true
         sourceCompatibility = JavaVersion.toVersion(requiredJavaVersion)
         targetCompatibility = JavaVersion.toVersion(requiredJavaVersion)
     }
@@ -99,6 +100,8 @@ android {
 }
 
 dependencies {
+    // Backport Base64, streams, and functional interfaces for Android 6 and 7.
+    coreLibraryDesugaring "com.android.tools:desugar_jdk_libs:2.1.5"
     def composeBom = platform("androidx.compose:compose-bom:2026.09.00")
     implementation composeBom
 

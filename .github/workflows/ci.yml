@@ -67,10 +67,10 @@ jobs:
         shell: pwsh
         run: |
           $artifact = "app/build/outputs/apk/release/app-release-unsigned.apk"
-          # The optimized Compose APK is currently about 1.62 MiB. Keep a
+          # Android 6 Java API backports bring the optimized APK to about 1.80 MiB. Keep a
           # deliberately tight ceiling while leaving room for deterministic
           # toolchain metadata changes between hosted runners.
-          $budget = 1.75MB
+          $budget = 1.90MB
           $size = (Get-Item -LiteralPath $artifact).Length
           if ($size -gt $budget) {
             throw "Android release APK is $size bytes; the budget is $budget bytes."

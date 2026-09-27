@@ -11,8 +11,8 @@ trap report_failure ERR
 package="com.kamyarps.tuneslink"
 component="${package}/.MainActivity"
 workspace="${GITHUB_WORKSPACE:-$PWD}"
-apk="${workspace}/android/app/build/outputs/apk/debug/app-debug.apk"
-reports="${workspace}/android/app/build/reports/device-integration"
+apk="${TunesLink_ANDROID_APK:-${workspace}/android/app/build/outputs/apk/debug/app-debug.apk}"
+reports="${TunesLink_INTEGRATION_REPORTS:-${workspace}/android/app/build/reports/device-integration}"
 bridge_project="${workspace}/test-support/TuneLinkDemoBridge/TuneLinkDemoBridge.csproj"
 bridge_config="${RUNNER_TEMP:-/tmp}/TunesLink-demo-bridge-$$"
 bridge_log="${reports}/bridge.log"
@@ -23,6 +23,7 @@ dotnet_command="${DOTNET_COMMAND:-dotnet}"
 adb_command="${ADB_COMMAND:-adb}"
 bridge_port="${TunesLink_BRIDGE_PORT:-45832}"
 bridge_address="${TunesLink_BRIDGE_ADDRESS:-10.0.2.2}"
+source "$workspace/scripts/android-emulator-settings.sh"
 
 mkdir -p "$reports"
 bridge_pid=""
@@ -40,7 +41,7 @@ cleanup() {
     kill "$bridge_pid" >/dev/null 2>&1 || true
     wait "$bridge_pid" >/dev/null 2>&1 || true
   fi
-  "$adb_command" shell settings put system font_scale 1.0 >/dev/null 2>&1 || true
+  android_emulator_set_font_scale "$adb_command" 1.0 >/dev/null 2>&1 || true
   "$adb_command" shell settings put system accelerometer_rotation 1 >/dev/null 2>&1 || true
   "$adb_command" shell wm user-rotation free >/dev/null 2>&1 || true
   "$adb_command" shell wm size reset >/dev/null 2>&1 || true
@@ -266,14 +267,25 @@ scroll_until_node() {
   local direction="$1"
   local mode="$2"
   local value="$3"
+  local previous_ui="" snapshot="" reversed=0
   for _ in $(seq 1 50); do
     dump_ui
     if node_center "$mode" "$value" >/dev/null; then
       return
     fi
+    snapshot="$(cat "$ui_xml")"
+    if [[ "$snapshot" == "$previous_ui" ]]; then
+      # Rotation may restore the viewport past the requested row. Once a swipe
+      # no longer moves it, search the other direction, bounded to one reversal.
+      if (( reversed == 1 )); then break; fi
+      if [[ "$direction" == up ]]; then direction=down; else direction=up; fi
+      reversed=1
+    fi
+    previous_ui="$snapshot"
     if ! scrollable_swipe "$direction"; then
       # Activity recreation briefly shows a non-scrollable reconnecting screen.
       # Wait for the retained destination instead of treating that as a test failure.
+      previous_ui=""
       sleep 1
       continue
     fi
@@ -533,6 +545,9 @@ clear_search() {
 return_to_library() {
   local center=""
 
+  # Older images can expose navigation nodes behind the keyboard after search
+  # is cleared. Dismiss it before tapping so navigation cannot type into IME.
+  dismiss_ime_if_visible
   for _ in $(seq 1 20); do
     dump_ui
 
@@ -545,6 +560,20 @@ return_to_library() {
     if center="$(node_center text "Cancel")"; then
       "$adb_command" shell input tap $center
       sleep 1
+      # Cancel must keep the keyboard dismissed, including on Android 6 where
+      # clearing focus used to refocus the text field and reopen the input method.
+      local ime_hidden=0
+      for _ in $(seq 1 5); do
+        if ! "$adb_command" shell dumpsys input_method | tr -d '\r' | grep 'mInputShown=true' >/dev/null; then
+          ime_hidden=1
+          break
+        fi
+        sleep 1
+      done
+      if (( ime_hidden == 0 )); then
+        printf 'Search Cancel left the keyboard visible.\n' >&2
+        return 1
+      fi
       continue
     fi
     if node_center text "Search your music" >/dev/null ||
@@ -564,7 +593,7 @@ return_to_library() {
     # Leaving Search can restore Songs at the archive page from earlier paging.
     # Midnight Drive is on page one, so scroll instead of re-tapping Library.
     if grep -q 'text="Archive Track' "$ui_xml"; then
-      if ! scrollable_swipe up; then
+      if ! scrollable_swipe down; then
         sleep 1
       fi
       sleep 1
@@ -587,7 +616,7 @@ return_to_library() {
       continue
     fi
 
-    if ! scrollable_swipe up; then
+    if ! scrollable_swipe down; then
       sleep 1
     fi
     sleep 1
@@ -645,6 +674,8 @@ tap_until_log() {
 
 "$adb_command" wait-for-device
 suppress_gboard_first_run
+android_emulator_prepare_settings "$adb_command" "$workspace"
+android_emulator_set_font_scale "$adb_command" 1.0
 "$adb_command" shell settings put system accelerometer_rotation 0 >/dev/null
 set_rotation 0
 "$adb_command" install -r "$apk" >/dev/null
@@ -916,7 +947,7 @@ wait_node text "Midnight Drive" >/dev/null
 wait_orientation landscape 1
 capture "paired-landscape"
 set_rotation 0
-"$adb_command" shell settings put system font_scale 1.5
+android_emulator_set_font_scale "$adb_command" 1.5
 "$adb_command" shell am force-stop "$package"
 "$adb_command" shell am start -W -n "$component" >/dev/null
 wait_node text "Browse Library" >/dev/null
@@ -926,7 +957,7 @@ tap_node desc "Now Playing"
   wait_node desc "iTunes volume, 64%" >/dev/null
 capture "paired-large-text-player-controls"
 tap_node desc "Library"
-"$adb_command" shell settings put system font_scale 2.0
+android_emulator_set_font_scale "$adb_command" 2.0
 set_rotation 1
 "$adb_command" shell am force-stop "$package"
 "$adb_command" shell am start -W -n "$component" >/dev/null
@@ -938,7 +969,7 @@ python3 "$workspace/scripts/android-ui-contract.py" \
   --width 1920 --height 1080 --density 420 --require-scrollable \
   --navigation-rail-width-dp 80
 set_rotation 0
-"$adb_command" shell settings put system font_scale 1.0
+android_emulator_set_font_scale "$adb_command" 1.0
 
 "$adb_command" shell am force-stop "$package"
 "$adb_command" shell am start -W -n "$component" >/dev/null

@@ -70,7 +70,9 @@ final class BridgeHttpClient {
                 }
             }
             int status = connection.getResponseCode();
-            long contentLength = connection.getContentLengthLong();
+            // The response limit fits in an int; this API also exists on Android 6.
+            // Unknown/overflowing lengths are still bounded by readLimited below.
+            int contentLength = connection.getContentLength();
             if (contentLength > MAX_RESPONSE_BYTES) {
                 throw new IOException("Bridge response was unexpectedly large");
             }

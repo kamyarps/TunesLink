@@ -209,9 +209,10 @@ class BridgeClientSupport {
 
     static String urlEncode(String text) {
         try {
-            return java.net.URLEncoder.encode(text, StandardCharsets.UTF_8.toString());
-        } catch (Exception impossible) {
-            return "";
+            // Android 6's Charset.toString() returns "java.nio.charset.CharsetICU[UTF-8]".
+            return java.net.URLEncoder.encode(text, StandardCharsets.UTF_8.name());
+        } catch (java.io.UnsupportedEncodingException impossible) {
+            throw new IllegalStateException("UTF-8 must be available", impossible);
         }
     }
 

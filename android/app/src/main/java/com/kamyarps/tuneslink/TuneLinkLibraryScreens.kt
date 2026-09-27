@@ -1,6 +1,7 @@
 package com.kamyarps.tuneslink
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -44,10 +45,12 @@ import androidx.compose.runtime.key
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.key.key
-import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
@@ -359,12 +362,19 @@ internal fun SearchScreen(state: TunesLinkUiState, viewModel: TunesLinkViewModel
     val library = state.library
     val searchIdentity = library.loadedQuery?.trim()?.lowercase().orEmpty()
     val listState = key(searchIdentity) { rememberLazyListState() }
-    val focusManager = LocalFocusManager.current
+    val searchFocusRequester = remember { FocusRequester() }
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val dismissSearchFocus = {
+        // Clearing all focus can return it to the first text field on Android 6.
+        // Keep focus on the search container while dismissing its input method.
+        searchFocusRequester.requestFocus()
+        keyboardController?.hide()
+    }
 
     LibraryPagination(listState, library.pageCursor(),
         onPrevious = viewModel::loadPrevious, onNext = viewModel::loadMore)
 
-    Column(modifier) {
+    Column(modifier.focusRequester(searchFocusRequester).focusable()) {
         Row(
             Modifier.fillMaxWidth().padding(start = 24.dp, end = 12.dp, top = 12.dp, bottom = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -379,7 +389,7 @@ internal fun SearchScreen(state: TunesLinkUiState, viewModel: TunesLinkViewModel
                 ComputerConnectionAction(state.bridgeName, state.connection, viewModel::showConnectionDetails)
             } else {
                 TunesLinkTonalAction(stringResource(R.string.cancel), {
-                    focusManager.clearFocus()
+                    dismissSearchFocus()
                     viewModel.cancelSearch()
                 })
             }
@@ -404,7 +414,7 @@ internal fun SearchScreen(state: TunesLinkUiState, viewModel: TunesLinkViewModel
             shape = RoundedCornerShape(16.dp),
             colors = tunesLinkTextFieldColors(),
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-            keyboardActions = KeyboardActions(onSearch = { focusManager.clearFocus() }),
+            keyboardActions = KeyboardActions(onSearch = { dismissSearchFocus() }),
         )
         Spacer(Modifier.height(8.dp))
         when {

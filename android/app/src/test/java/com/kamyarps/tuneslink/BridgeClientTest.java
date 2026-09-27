@@ -22,6 +22,14 @@ public final class BridgeClientTest {
             "00112233445566778899AABBCCDDEEFF00112233445566778899AABBCCDDEEFF";
 
     @Test
+    public void queryEncodingPreservesCollectionNamesAndUnicodeSearches() {
+        assertEquals("playlists", BridgeClient.urlEncode("playlists"));
+        assertEquals("Bj%C3%B6rk+%26+AC%2FDC+%2B+%F0%9F%8E%B5",
+                BridgeClient.urlEncode("Bj\u00f6rk & AC/DC + \ud83c\udfb5"));
+        assertEquals("", BridgeClient.urlEncode(""));
+    }
+
+    @Test
     public void fingerprintValidationRejectsMalformedValues() {
         assertTrue(BridgeClient.isValidFingerprint(FINGERPRINT));
         assertTrue(BridgeClient.isValidFingerprint(FINGERPRINT.toLowerCase()));

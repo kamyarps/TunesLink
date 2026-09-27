@@ -66,7 +66,7 @@ port-forward its ports or expose the bridge to the internet.
 
 ### To use TunesLink
 
-- Android 8.0 (API 26) or newer;
+- Android 6.0 (API 23) or newer;
 - Windows 11 x64, or a Windows 10 x64 release supported by .NET 10;
 - iTunes Legacy for Windows with COM automation;
 - both devices on the same trusted private Wi-Fi or Ethernet network.
@@ -241,7 +241,7 @@ The full workflow runs Android lint and unit tests, debug and release package bu
 release build, formatting verification, bridge self-tests, responsive WinUI layout checks, build
 requirements self-tests, and repository hygiene checks.
 
-CI adds Android emulator coverage on API 26, 31, and 36, rotation and delayed-pagination cases,
+CI adds Android emulator coverage on API 23, 26, 31, and 36, rotation and delayed-pagination cases,
 pairing cooldown and playback-error flows, worker-hang recovery, artifact-size budgets, and a
 full-history secret scan. Release publishing requires the device suite for the verified release
 commit and smoke tests of the signed, optimized APK.

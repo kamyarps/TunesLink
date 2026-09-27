@@ -25,6 +25,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - api-level: 23
+            target: google_apis
+            run-integration: true
           - api-level: 26
             target: google_apis
             run-integration: false
