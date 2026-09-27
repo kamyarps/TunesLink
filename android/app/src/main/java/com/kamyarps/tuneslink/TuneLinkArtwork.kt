@@ -28,11 +28,11 @@ internal fun rememberLibraryArtwork(artworkId: String, size: Int, viewModel: Tun
         if (artworkId.isBlank()) return@LaunchedEffect
         lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
             while (isActive) {
-                val request = viewModel.requestArtwork(artworkId, size, object : BridgeClient.Result<Bitmap> {
+                val request = viewModel.requestArtwork(artworkId, size, object : BridgeRepository.ArtworkResult {
                     override fun success(value: Bitmap?) { artwork = value }
                     override fun failure(message: String, unauthorized: Boolean) = Unit
                 })
-                try { delay(ArtworkDiskCache.MAX_AGE_MS) }
+                try { delay(ArtworkDiskCache.REFRESH_INTERVAL_MS) }
                 finally { request.cancel() }
             }
         }

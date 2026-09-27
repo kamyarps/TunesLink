@@ -45,6 +45,11 @@ final class BridgeRepository implements AutoCloseable {
         }
     }
 
+    /** A saved cover may arrive before the refresh succeeds or fails. */
+    interface ArtworkResult extends BridgeClient.Result<Bitmap> {
+        default void cached(Bitmap bitmap) { success(bitmap); }
+    }
+
     static final class Relocation {
         enum Status { RELOCATED, IDENTITY_CHANGED }
 
@@ -74,10 +79,10 @@ final class BridgeRepository implements AutoCloseable {
     }
 
     private static final class ArtworkObserver {
-        final BridgeClient.Result<Bitmap> result;
+        final ArtworkResult result;
         boolean cancelled;
 
-        ArtworkObserver(BridgeClient.Result<Bitmap> result) {
+        ArtworkObserver(ArtworkResult result) {
             this.result = result;
         }
     }
@@ -87,6 +92,7 @@ final class BridgeRepository implements AutoCloseable {
         final ArrayList<ArtworkObserver> observers = new ArrayList<>();
         BridgeClient.Cancellation networkRequest = BridgeClient.Cancellation.NONE;
         ArtworkDiskCache.Handle diskRequest = () -> { };
+        Bitmap preview;
 
         PendingArtwork(BridgeSession.Request request) {
             this.request = request;
@@ -735,20 +741,21 @@ final class BridgeRepository implements AutoCloseable {
 
     Bitmap cachedArtwork(String artworkId, int size) {
         SecureStore.SavedBridge bridge = current;
-        return bridge == null ? null : freshArtwork(
+        CachedArtwork cached = bridge == null ? null : retainedArtwork(
                 BridgeSession.artworkCacheKey(bridge, artworkId, size));
+        return cached == null ? null : cached.bitmap();
     }
 
-    private Bitmap freshArtwork(String key) {
+    private CachedArtwork retainedArtwork(String key) {
         CachedArtwork cached = artworkCache.get(key);
         if (cached == null) return null;
-        if (ArtworkDiskCache.isFresh(cached.fetchedAt(), System.currentTimeMillis()))
-            return cached.bitmap();
+        if (ArtworkDiskCache.isRetained(cached.fetchedAt(), System.currentTimeMillis()))
+            return cached;
         artworkCache.remove(key);
         return null;
     }
 
-    RequestHandle getArtwork(String artworkId, int size, BridgeClient.Result<Bitmap> result) {
+    RequestHandle getArtwork(String artworkId, int size, ArtworkResult result) {
         BridgeSession.Request request = capture();
         if (request == null) return RequestHandle.NONE;
         String cacheKey = BridgeSession.artworkCacheKey(request.bridge, artworkId, size);
@@ -759,9 +766,9 @@ final class BridgeRepository implements AutoCloseable {
             return RequestHandle.NONE;
         }
         if (missingAt != null) missingArtwork.remove(cacheKey);
-        Bitmap cached = freshArtwork(cacheKey);
-        if (cached != null) {
-            result.success(cached);
+        CachedArtwork cached = retainedArtwork(cacheKey);
+        if (cached != null && ArtworkDiskCache.isFresh(cached.fetchedAt(), System.currentTimeMillis())) {
+            result.success(cached.bitmap());
             return RequestHandle.NONE;
         }
         PendingArtwork pending = pendingArtwork.get(cacheKey);
@@ -769,13 +776,17 @@ final class BridgeRepository implements AutoCloseable {
         if (pending != null) {
             PendingArtwork joined = pending;
             joined.observers.add(observer);
+            if (joined.preview != null) result.cached(joined.preview);
             return () -> cancelArtworkObserver(cacheKey, joined, observer);
         }
         pending = new PendingArtwork(request);
         pending.observers.add(observer);
         pendingArtwork.put(cacheKey, pending);
         PendingArtwork started = pending;
-        if (artworkDiskCache != null) {
+        if (cached != null) {
+            deliverCachedArtwork(started, cached.bitmap());
+            startArtworkNetwork(cacheKey, artworkId, size, started);
+        } else if (artworkDiskCache != null) {
             started.diskRequest = artworkDiskCache.load(
                     BridgeSession.cacheScope(request.bridge), cacheKey, (bitmap, fetchedAt) -> {
                         if (pendingArtwork.get(cacheKey) != started
@@ -784,10 +795,16 @@ final class BridgeRepository implements AutoCloseable {
                             startArtworkNetwork(cacheKey, artworkId, size, started);
                             return;
                         }
-                        if (!pendingArtwork.remove(cacheKey, started)) return;
                         artworkCache.put(cacheKey, new CachedArtwork(bitmap, fetchedAt));
-                        for (ArtworkObserver target : new ArrayList<>(started.observers)) {
-                            if (!target.cancelled) target.result.success(bitmap);
+                        if (ArtworkDiskCache.isFresh(fetchedAt, System.currentTimeMillis())) {
+                            if (!pendingArtwork.remove(cacheKey, started)) return;
+                            for (ArtworkObserver target : new ArrayList<>(started.observers)) {
+                                if (!target.cancelled && session.isCurrent(started.request))
+                                    target.result.success(bitmap);
+                            }
+                        } else {
+                            deliverCachedArtwork(started, bitmap);
+                            startArtworkNetwork(cacheKey, artworkId, size, started);
                         }
                     });
         } else {
@@ -796,8 +813,17 @@ final class BridgeRepository implements AutoCloseable {
         return () -> cancelArtworkObserver(cacheKey, started, observer);
     }
 
+    private void deliverCachedArtwork(PendingArtwork pending, Bitmap bitmap) {
+        pending.preview = bitmap;
+        for (ArtworkObserver target : new ArrayList<>(pending.observers)) {
+            if (!target.cancelled && session.isCurrent(pending.request)) target.result.cached(bitmap);
+        }
+    }
+
     private void startArtworkNetwork(String cacheKey, String artworkId, int size,
                                      PendingArtwork started) {
+        // A cached callback may cancel the final observer or change the paired computer.
+        if (pendingArtwork.get(cacheKey) != started || !session.isCurrent(started.request)) return;
         started.networkRequest = client.getArtwork(started.request.bridge, artworkId, size,
                 new BridgeClient.Result<>() {
             @Override
@@ -810,10 +836,13 @@ final class BridgeRepository implements AutoCloseable {
                     if (artworkDiskCache != null) artworkDiskCache.save(
                             BridgeSession.cacheScope(started.request.bridge), cacheKey, bitmap);
                 } else {
+                    artworkCache.remove(cacheKey);
+                    if (artworkDiskCache != null) artworkDiskCache.remove(
+                            BridgeSession.cacheScope(started.request.bridge), cacheKey);
                     missingArtwork.put(cacheKey, SystemClock.elapsedRealtime());
                 }
                 for (ArtworkObserver target : new ArrayList<>(started.observers)) {
-                    if (!target.cancelled) target.result.success(bitmap);
+                    if (!target.cancelled && session.isCurrent(started.request)) target.result.success(bitmap);
                 }
             }
 
@@ -822,7 +851,8 @@ final class BridgeRepository implements AutoCloseable {
                 if (!pendingArtwork.remove(cacheKey, started)
                         || !session.isCurrent(started.request)) return;
                 for (ArtworkObserver target : new ArrayList<>(started.observers)) {
-                    if (!target.cancelled) target.result.failure(message, unauthorized);
+                    if (!target.cancelled && session.isCurrent(started.request))
+                        target.result.failure(message, unauthorized);
                 }
             }
         });

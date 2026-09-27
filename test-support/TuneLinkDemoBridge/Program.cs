@@ -27,7 +27,8 @@ internal static class Program
         using PortableDemoController media = new(libraryDelay,
             args.Contains("--large-library", StringComparer.OrdinalIgnoreCase),
             ValueAfter(args, "--library-fault-file"),
-            ValueAfter(args, "--playback-fault-file"));
+            ValueAfter(args, "--playback-fault-file"),
+            ValueAfter(args, "--artwork-fault-file"));
         using PlaybackStateHub stateHub = new(media);
         using BridgeServer server = new(security, identity, media, stateHub, options);
         try

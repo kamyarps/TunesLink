@@ -264,16 +264,17 @@ internal fun TunesLinkViewModel.loadArtwork(artworkId: String) {
         artworkLoaded(artworkId, null)
         return
     }
-    repository.cachedArtwork(artworkId, TunesLinkViewModel.ARTWORK_SIZE)?.let { bitmap ->
-        artworkLoaded(artworkId, bitmap)
-        return
-    }
     // Not due again until this request settles.
     artworkDueAt = Long.MAX_VALUE
     mutableState.update {
         it.copy(player = it.player.copy(artworkState = ArtworkLoadState.Loading(it.player.artwork)))
     }
-    artworkRequest = repository.getArtwork(artworkId, TunesLinkViewModel.ARTWORK_SIZE, object : BridgeClient.Result<Bitmap> {
+    artworkRequest = repository.getArtwork(artworkId, TunesLinkViewModel.ARTWORK_SIZE, object : BridgeRepository.ArtworkResult {
+        override fun cached(bitmap: Bitmap) {
+            // A saved cover does not settle the refresh or reset its retry backoff.
+            if (mutableState.value.player.artworkId == artworkId) displayArtwork(artworkId, bitmap)
+        }
+
         override fun success(value: Bitmap?) {
             if (mutableState.value.player.artworkId == artworkId) artworkLoaded(artworkId, value)
         }
@@ -297,7 +298,11 @@ internal fun TunesLinkViewModel.loadArtwork(artworkId: String) {
 
 private fun TunesLinkViewModel.artworkLoaded(artworkId: String, bitmap: Bitmap?) {
     artworkFailures = 0
-    artworkDueAt = System.currentTimeMillis() + ArtworkDiskCache.MAX_AGE_MS
+    artworkDueAt = System.currentTimeMillis() + ArtworkDiskCache.REFRESH_INTERVAL_MS
+    displayArtwork(artworkId, bitmap)
+}
+
+private fun TunesLinkViewModel.displayArtwork(artworkId: String, bitmap: Bitmap?) {
     mutableState.update {
         it.copy(
             player = it.player.copy(

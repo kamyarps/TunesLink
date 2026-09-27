@@ -7,6 +7,7 @@ Optional scenarios:
 - `--large-library`: 720 songs, including a 120-track album and 601 albums/artists/genres. Scroll past the Android 480-item window and back to the beginning to verify forward and backward pagination. Expand **A Long Album** on a tablet to verify track paging inside the album detail.
 - `--library-fault-file <path>`: while this file exists, library requests fail while playback state stays available. Open an uncached album to verify the error and retry UI. Remove the file and retry to recover. This option is confined to the demo harness.
 - `--playback-fault-file <path>`: while this file exists, song selections and playback commands fail. Verify the shared error banner in Library, Search, Now Playing, and the tablet workspace, then dismiss it or remove the file and retry.
+- `--artwork-fault-file <path>`: while this file exists, cover downloads fail. Device integration tests age saved covers by a day, restart the app, and verify that cached artwork survives refresh failures and recovers afterward.
 - `--library-delay-ms <milliseconds>`: delay the first continuation request for songs/search to verify loading states and cancellation.
 - `--legacy-state`: disable the state stream to exercise polling fallback.
 

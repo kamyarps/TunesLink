@@ -1,7 +1,6 @@
 package com.kamyarps.tuneslink
 
 import android.app.Application
-import android.graphics.Bitmap
 import android.os.SystemClock
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
@@ -124,8 +123,8 @@ internal class TunesLinkViewModel(
                 if (canRefresh) refreshArtworkIfDue(current.player.artworkId, current.player.artworkId)
                 val wait = if (canRefresh) {
                     (artworkDueAt - System.currentTimeMillis())
-                        .coerceIn(1_000L, ArtworkDiskCache.MAX_AGE_MS)
-                } else ArtworkDiskCache.MAX_AGE_MS
+                        .coerceIn(1_000L, ArtworkDiskCache.REFRESH_INTERVAL_MS)
+                } else ArtworkDiskCache.REFRESH_INTERVAL_MS
                 delay(wait)
             }
         }
@@ -933,14 +932,10 @@ internal class TunesLinkViewModel(
     internal fun requestArtwork(
         artworkId: String,
         size: Int,
-        result: BridgeClient.Result<Bitmap>,
+        result: BridgeRepository.ArtworkResult,
     ): BridgeRepository.RequestHandle {
         if (artworkId.isBlank()) {
             result.success(null)
-            return BridgeRepository.RequestHandle.NONE
-        }
-        repository.cachedArtwork(artworkId, size)?.let {
-            result.success(it)
             return BridgeRepository.RequestHandle.NONE
         }
         return repository.getArtwork(artworkId, size, result)

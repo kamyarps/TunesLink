@@ -95,14 +95,14 @@ class StateLayerRepositoryTest {
         BridgeRepository(client, pairedStore()).use { repository ->
             var second: BridgeRepository.RequestHandle = BridgeRepository.RequestHandle.NONE
             var delivered = 0
-            repository.getArtwork("art", 900, object : BridgeClient.Result<Bitmap> {
+            repository.getArtwork("art", 900, object : BridgeRepository.ArtworkResult {
                 override fun success(value: Bitmap?) {
                     delivered++
                     second.cancel()
                 }
                 override fun failure(message: String, unauthorized: Boolean) = fail(message)
             })
-            second = repository.getArtwork("art", 900, object : BridgeClient.Result<Bitmap> {
+            second = repository.getArtwork("art", 900, object : BridgeRepository.ArtworkResult {
                 override fun success(value: Bitmap?) { delivered++ }
                 override fun failure(message: String, unauthorized: Boolean) = fail(message)
             })

@@ -32,6 +32,7 @@ if [[ "${TunesLink_BRIDGE_EXTERNAL:-0}" != "1" ]]; then
     --port "$bridge_port" --discovery-port 0 --pair-code 123456 \
     --library-delay-ms 1800 \
     --playback-fault-file "${bridge_config}.playback-fault" \
+    --artwork-fault-file "${bridge_config}.artwork-fault" \
     --config-directory "$bridge_config" >"$bridge_log" 2>&1 &
   bridge_pid=$!
 fi
@@ -977,6 +978,72 @@ android_emulator_set_font_scale "$adb_command" 1.0
 "$adb_command" shell am start -W -n "$component" >/dev/null
 wait_node text "Golden Static" >/dev/null
 capture "restored-pairing"
+
+# Cold launches must display yesterday's covers even when the bridge cannot refresh them.
+# This operates only on the disposable debug app's private cache, never a user's library.
+if [[ -n "$bridge_pid" ]]; then
+  tap_node text "Songs"
+  tap_node text "Golden Static"
+  # The current song's row also has a "Now Playing" icon description; use the tab's text.
+  tap_node text "Now Playing"
+  wait_node desc "iTunes volume" >/dev/null
+  wait_node desc "Artwork for Golden Static" >/dev/null
+  # DemoLibrary identifies tracks by the first 20 hex digits of their title's SHA-256.
+  player_artwork_line="artwork:$(printf %s 'Golden Static' | sha256sum | cut -c1-20):900"
+  player_fault_line="artwork-fault:${player_artwork_line#artwork:}"
+  "$adb_command" shell am force-stop "$package"
+  cache_epoch="$(date -u -d '1 day ago' '+%s')"
+  # Android 6's touch needs an explicit fractional second to set the supplied date.
+  cache_stamp="$(date -u -d "@$cache_epoch" '+%Y-%m-%dT%H:%M:%S.0Z')"
+  cache_times="$("$adb_command" shell "run-as $package sh -c 'touch -d $cache_stamp cache/artwork-v1/*.jpg && stat -c %Y cache/artwork-v1/*.jpg'" | tr -d '\r')"
+  # Old ADB shells do not propagate command failures; verify the actual timestamps too.
+  awk -v expected="$cache_epoch" '$0 != expected { exit 1 } END { if (NR == 0) exit 1 }' <<< "$cache_times"
+  touch "${bridge_config}.artwork-fault"
+  for attempt in 1 2; do
+    faults_before="$(bridge_line_count "$player_fault_line")"
+    "$adb_command" shell am start -W -n "$component" >/dev/null
+    # Let the restored Library settle before looking up its navigation controls.
+    wait_node text "Browse Library" >/dev/null
+    sleep 1
+    tap_node text "Now Playing"
+    wait_node desc "iTunes volume" >/dev/null
+    wait_node desc "Artwork for Golden Static" >/dev/null
+    capture "cached-artwork-refresh-failed-${attempt}"
+    (( $(bridge_line_count "$player_fault_line") > faults_before ))
+    tap_node desc "Library"
+    wait_node text "Browse Library" >/dev/null
+    tap_node text "Songs"
+    wait_node text "Golden Static" >/dev/null
+    capture "cached-library-artwork-${attempt}"
+    "$adb_command" shell am force-stop "$package"
+  done
+  rm -f "${bridge_config}.artwork-fault"
+  artwork_before="$(bridge_line_count "$player_artwork_line")"
+  "$adb_command" shell am start -W -n "$component" >/dev/null
+  wait_node text "Browse Library" >/dev/null
+  sleep 1
+  tap_node text "Now Playing"
+  wait_node desc "iTunes volume" >/dev/null
+  wait_node desc "Artwork for Golden Static" >/dev/null
+  for _ in $(seq 1 20); do
+    (( $(bridge_line_count "$player_artwork_line") > artwork_before )) && break
+    sleep 0.2
+  done
+  (( $(bridge_line_count "$player_artwork_line") > artwork_before ))
+  capture "cached-artwork-refresh-recovered"
+  # A fresh disk hit must not download the same cover again on the next cold launch.
+  artwork_before="$(bridge_line_count "$player_artwork_line")"
+  "$adb_command" shell am force-stop "$package"
+  "$adb_command" shell am start -W -n "$component" >/dev/null
+  wait_node text "Browse Library" >/dev/null
+  sleep 1
+  tap_node text "Now Playing"
+  wait_node desc "iTunes volume" >/dev/null
+  wait_node desc "Artwork for Golden Static" >/dev/null
+  [[ "$(bridge_line_count "$player_artwork_line")" -eq "$artwork_before" ]]
+  capture "cached-artwork-fresh-relaunch"
+  tap_node desc "Library"
+fi
 
 if (( sdk_int >= 37 )); then
   "$adb_command" shell pm revoke "$package" \

@@ -19,9 +19,14 @@ import java.util.concurrent.atomic.AtomicBoolean;
 /** Private, bounded second-level artwork cache. Android may evict it under storage pressure. */
 final class ArtworkDiskCache implements AutoCloseable {
     private static final long MAX_BYTES = 128L * 1024 * 1024;
-    static final long MAX_AGE_MS = 5L * 60 * 1000;
+    static final long REFRESH_INTERVAL_MS = 5L * 60 * 1000;
+    static final long MAX_AGE_MS = 30L * 24 * 60 * 60 * 1000;
 
     static boolean isFresh(long fetchedAt, long now) {
+        return now >= fetchedAt && now - fetchedAt < REFRESH_INTERVAL_MS;
+    }
+
+    static boolean isRetained(long fetchedAt, long now) {
         return now >= fetchedAt && now - fetchedAt < MAX_AGE_MS;
     }
 
@@ -47,7 +52,7 @@ final class ArtworkDiskCache implements AutoCloseable {
                 File file = file(scope, key);
                 long now = System.currentTimeMillis();
                 if (file.isFile()) {
-                    if (isFresh(file.lastModified(), now)) {
+                    if (isRetained(file.lastModified(), now)) {
                         BitmapFactory.Options bounds = new BitmapFactory.Options();
                         bounds.inJustDecodeBounds = true;
                         BitmapFactory.decodeFile(file.getAbsolutePath(), bounds);
@@ -102,6 +107,10 @@ final class ArtworkDiskCache implements AutoCloseable {
         });
     }
 
+    void remove(String scope, String key) {
+        if (!closed.get()) executeBestEffort(() -> file(scope, key).delete());
+    }
+
     private void executeBestEffort(Runnable operation) {
         try {
             executor.execute(() -> {
@@ -118,8 +127,8 @@ final class ArtworkDiskCache implements AutoCloseable {
         long now = System.currentTimeMillis();
         long total = 0;
         for (File file : files) {
-            if (!isFresh(file.lastModified(), now)) file.delete();
-            else total += file.length();
+            if (!isRetained(file.lastModified(), now) && file.delete()) continue;
+            total += file.length();
         }
         if (total <= MAX_BYTES) return;
         Arrays.sort(files, Comparator.comparingLong(File::lastModified));

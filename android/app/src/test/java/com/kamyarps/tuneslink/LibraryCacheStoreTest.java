@@ -87,8 +87,19 @@ public final class LibraryCacheStoreTest {
     public void artworkReadsNeverExtendFreshnessAndClockRollbackExpiresEntries() {
         long fetchedAt = 1000;
         assertTrue(ArtworkDiskCache.isFresh(fetchedAt, fetchedAt));
-        assertTrue(ArtworkDiskCache.isFresh(fetchedAt, fetchedAt + ArtworkDiskCache.MAX_AGE_MS - 1));
-        assertFalse(ArtworkDiskCache.isFresh(fetchedAt, fetchedAt + ArtworkDiskCache.MAX_AGE_MS));
+        assertTrue(ArtworkDiskCache.isFresh(fetchedAt, fetchedAt + ArtworkDiskCache.REFRESH_INTERVAL_MS - 1));
+        assertFalse(ArtworkDiskCache.isFresh(fetchedAt, fetchedAt + ArtworkDiskCache.REFRESH_INTERVAL_MS));
         assertFalse(ArtworkDiskCache.isFresh(fetchedAt, fetchedAt - 1));
+    }
+
+    @Test
+    public void yesterdayArtworkRemainsDisplayableButNeedsRefresh() {
+        long fetchedAt = 1000;
+        long nextDay = fetchedAt + 24L * 60 * 60 * 1000;
+        assertTrue(ArtworkDiskCache.isRetained(fetchedAt, nextDay));
+        assertFalse(ArtworkDiskCache.isFresh(fetchedAt, nextDay));
+        assertTrue(ArtworkDiskCache.isRetained(fetchedAt, fetchedAt + ArtworkDiskCache.MAX_AGE_MS - 1));
+        assertFalse(ArtworkDiskCache.isRetained(fetchedAt, fetchedAt + ArtworkDiskCache.MAX_AGE_MS));
+        assertFalse(ArtworkDiskCache.isRetained(fetchedAt, fetchedAt - 1));
     }
 }
