@@ -93,11 +93,18 @@ jobs:
           API_LEVEL: ${{ matrix.api-level }}
           IMAGE_TARGET: ${{ matrix.target }}
         run: |
+          # Share one explicit AVD location across creation, configuration, and launch.
+          export ANDROID_AVD_HOME="$RUNNER_TEMP/tuneslink-avd"
+          echo "ANDROID_AVD_HOME=$ANDROID_AVD_HOME" >> "$GITHUB_ENV"
           image="system-images;android-${API_LEVEL};${IMAGE_TARGET};x86_64"
           sdkmanager "platform-tools" "emulator" "$image"
-          echo no | avdmanager create avd --force --name tuneslink-ci --package "$image" --device pixel_2
-          printf '\nhw.cpu.ncore=2\nhw.heapSize=512M\n' >> "$HOME/.android/avd/tuneslink-ci.avd/config.ini"
-          "$ANDROID_HOME/emulator/emulator" -version
+          mkdir -p "$ANDROID_AVD_HOME"
+          avd_path="$ANDROID_AVD_HOME/tuneslink-ci.avd"
+          echo no | avdmanager create avd --force --name tuneslink-ci --package "$image" --device pixel_2 --path "$avd_path"
+          test -s "$avd_path/config.ini"
+          printf '\nhw.cpu.ncore=2\nhw.heapSize=512M\n' >> "$avd_path/config.ini"
+          "$ANDROID_HOME/emulator/emulator" -list-avds | grep -Fx tuneslink-ci
+          "$ANDROID_HOME/emulator/emulator" -no-window -version
       - name: Exercise phone and tablet viewports
         timeout-minutes: 30
         env:
