@@ -1,5 +1,12 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
+
+report_failure() {
+  local status=$?
+  printf 'Smoke check failed at line %s: %s\n' "${BASH_LINENO[0]}" "$BASH_COMMAND" >&2
+  exit "$status"
+}
+trap report_failure ERR
 
 package="com.kamyarps.tuneslink"
 component="${package}/.MainActivity"

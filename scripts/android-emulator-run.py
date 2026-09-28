@@ -5,6 +5,7 @@ import argparse
 from datetime import datetime, timezone
 import os
 from pathlib import Path
+import re
 import signal
 import subprocess
 import sys
@@ -56,19 +57,37 @@ def bounded_command(command, timeout, log):
         log.flush()
 
 
+def framework_booted(output):
+    properties = dict(re.findall(r"^\[([^\]]+)\]: \[([^\]]*)\]$", output or "", re.MULTILINE))
+    # API 23 sets boot_completed in the temporary CryptKeeper framework too.
+    # Wait for /data encryption and the restart into the full framework before
+    # installing anything: that restart discards the temporary /data contents.
+    return (properties.get("sys.boot_completed") == "1"
+            and properties.get("vold.decrypt", "") in ("", "trigger_restart_framework")
+            and properties.get("init.svc.encrypt", "") in ("", "stopped"))
+
+
 def wait_for_boot(adb, emulator, timeout, log):
     deadline = time.monotonic() + timeout
+
+    def probe(command):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise BootFailure(f"Emulator did not become ready within {timeout}s")
+        return bounded_command(adb + command, min(10, remaining), log)
+
     while True:
         if emulator.poll() is not None:
             raise BootFailure(f"Emulator exited during boot (code {emulator.returncode})")
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            raise BootFailure(f"Emulator did not boot within {timeout}s")
-        result = bounded_command(adb + ["shell", "getprop", "sys.boot_completed"],
-                                 min(10, remaining), log)
-        if result == "1":
-            print("Emulator booted.", flush=True)
-            return
+        if framework_booted(probe(["shell", "getprop"])):
+            # API 23's adb shell can report exit code 0 for a failed command.
+            # Require a real package-manager result, then recheck boot state in
+            # case Android restarted while the framework command was running.
+            package = probe(["shell", "pm", "path", "android"])
+            if (package and any(line.startswith("package:") for line in package.splitlines())
+                    and framework_booted(probe(["shell", "getprop"]))):
+                print("Emulator booted; encryption finished and package manager ready.", flush=True)
+                return
         time.sleep(min(2, max(0, deadline - time.monotonic())))
 
 

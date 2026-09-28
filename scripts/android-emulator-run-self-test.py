@@ -19,6 +19,12 @@ launcher = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(launcher)
 
 
+BOOTED = "[sys.boot_completed]: [1]\n"
+ENCRYPTING = BOOTED + "[vold.decrypt]: [trigger_restart_min_framework]\n[init.svc.encrypt]: [running]\n"
+ENCRYPTED = BOOTED + "[vold.decrypt]: [trigger_restart_framework]\n[init.svc.encrypt]: [stopped]\n"
+ANDROID_PACKAGE = "package:/system/framework/framework-res.apk"
+
+
 class EmulatorRunnerTests(unittest.TestCase):
     def test_hung_adb_command_is_terminated(self):
         log = io.StringIO()
@@ -44,9 +50,50 @@ class EmulatorRunnerTests(unittest.TestCase):
         self.assertEqual([call.args[1] for call in calls.call_args_list], [10, 10, 1])
 
     def test_boot_succeeds_after_offline_probe(self):
-        with patch.object(launcher, "bounded_command", side_effect=[None, "", "1"]), \
+        with patch.object(launcher, "bounded_command", side_effect=[None, "", BOOTED, ANDROID_PACKAGE, BOOTED]), \
                 patch.object(launcher.time, "sleep"):
             launcher.wait_for_boot(["adb"], Mock(poll=lambda: None), 30, io.StringIO())
+
+    def test_encryption_framework_is_not_ready_even_with_boot_completed(self):
+        for state in ("trigger_encryption", "trigger_restart_min_framework", "trigger_shutdown_framework",
+                      "trigger_reset_main", "trigger_post_fs_data", "trigger_load_persist_props"):
+            with self.subTest(state=state):
+                self.assertFalse(launcher.framework_booted(BOOTED + f"[vold.decrypt]: [{state}]\n"))
+        self.assertFalse(launcher.framework_booted(BOOTED + "[init.svc.encrypt]: [running]\n"))
+        self.assertFalse(launcher.framework_booted(BOOTED + "[init.svc.encrypt]: [restarting]\n"))
+
+    def test_waits_for_encryption_restart_before_probing_package_manager(self):
+        outputs = [ENCRYPTING, "[sys.boot_completed]: [0]\n", ENCRYPTED, ANDROID_PACKAGE, ENCRYPTED]
+        with patch.object(launcher, "bounded_command", side_effect=outputs) as calls, \
+                patch.object(launcher.time, "sleep"):
+            launcher.wait_for_boot(["adb"], Mock(poll=lambda: None), 180, io.StringIO())
+        self.assertEqual([call.args[0] for call in calls.call_args_list], [
+            ["adb", "shell", "getprop"], ["adb", "shell", "getprop"], ["adb", "shell", "getprop"],
+            ["adb", "shell", "pm", "path", "android"], ["adb", "shell", "getprop"],
+        ])
+
+    def test_waits_for_package_manager_and_rechecks_boot_after_it_responds(self):
+        outputs = [BOOTED, None, BOOTED, "Error: package manager unavailable", BOOTED, ANDROID_PACKAGE,
+                   ENCRYPTING, ENCRYPTED, ANDROID_PACKAGE, ENCRYPTED]
+        with patch.object(launcher, "bounded_command", side_effect=outputs) as calls, \
+                patch.object(launcher.time, "sleep"):
+            launcher.wait_for_boot(["adb"], Mock(poll=lambda: None), 180, io.StringIO())
+        self.assertEqual(calls.call_count, len(outputs))
+
+    def test_package_manager_probes_share_boot_deadline(self):
+        clock = [0.0]
+        def probe(command, timeout, log):
+            clock[0] += timeout
+            return BOOTED if command[-1] == "getprop" else None
+        def sleep(seconds):
+            clock[0] += seconds
+        with patch.object(launcher.time, "monotonic", side_effect=lambda: clock[0]), \
+                patch.object(launcher.time, "sleep", side_effect=sleep), \
+                patch.object(launcher, "bounded_command", side_effect=probe) as calls:
+            with self.assertRaises(launcher.BootFailure):
+                launcher.wait_for_boot(["adb"], Mock(poll=lambda: None), 25, io.StringIO())
+        self.assertEqual(clock[0], 25)
+        self.assertEqual([call.args[1] for call in calls.call_args_list], [10, 10, 3])
 
     def test_emulator_exit_fails_without_waiting_for_deadline(self):
         with self.assertRaisesRegex(launcher.BootFailure, "code 7"):
