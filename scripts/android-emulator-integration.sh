@@ -204,13 +204,14 @@ node_center() {
 
 scrollable_swipe() {
   local direction="$1"
+  local precision="${2:-fast}"
   local coordinates
-  if ! coordinates="$(python3 - "$ui_xml" "$direction" <<'PY'
+  if ! coordinates="$(python3 - "$ui_xml" "$direction" "$precision" <<'PY'
 import re
 import sys
 import xml.etree.ElementTree as ET
 
-path, direction = sys.argv[1:]
+path, direction, precision = sys.argv[1:]
 root = ET.parse(path).getroot()
 candidates = []
 for node in root.iter("node"):
@@ -232,7 +233,9 @@ if not candidates:
 # CI swipe the rail forever while waiting for page-two tracks.
 _, left, top, right, bottom = max(candidates)
 x = (left + right) // 2
-padding = max(24, (bottom - top) // 5)
+# A short, slow drag keeps adjacent UI dumps overlapping. The normal paging
+# swipe can fling past an exact row on Android 6 after Activity recreation.
+padding = max(24, (bottom - top) // (3 if precision == "precise" else 5))
 upper = top + padding
 lower = bottom - padding
 if direction == "up":
@@ -243,7 +246,11 @@ PY
 )"; then
     return 1
   fi
-  "$adb_command" shell input swipe $coordinates 250
+  if [[ "$precision" == precise ]]; then
+    "$adb_command" shell input swipe $coordinates 650
+  else
+    "$adb_command" shell input swipe $coordinates 250
+  fi
 }
 
 scroll_until_bridge_line() {
@@ -268,7 +275,7 @@ scroll_until_node() {
   local direction="$1"
   local mode="$2"
   local value="$3"
-  local previous_ui="" snapshot="" reversed=0
+  local previous_ui="" snapshot="" reversed=0 stalled=0
   for _ in $(seq 1 50); do
     dump_ui
     if node_center "$mode" "$value" >/dev/null; then
@@ -276,14 +283,22 @@ scroll_until_node() {
     fi
     snapshot="$(cat "$ui_xml")"
     if [[ "$snapshot" == "$previous_ui" ]]; then
-      # Rotation may restore the viewport past the requested row. Once a swipe
-      # no longer moves it, search the other direction, bounded to one reversal.
+      # The bridge may have returned the next page before the phone has applied
+      # it. An unchanged viewport at the page boundary is not yet the list end.
+      stalled=$((stalled + 1))
+      if (( stalled < 8 )); then
+        sleep 1
+        continue
+      fi
       if (( reversed == 1 )); then break; fi
       if [[ "$direction" == up ]]; then direction=down; else direction=up; fi
       reversed=1
+      stalled=0
+    else
+      stalled=0
     fi
     previous_ui="$snapshot"
-    if ! scrollable_swipe "$direction"; then
+    if ! scrollable_swipe "$direction" precise; then
       # Activity recreation briefly shows a non-scrollable reconnecting screen.
       # Wait for the retained destination instead of treating that as a test failure.
       previous_ui=""

@@ -202,6 +202,30 @@ target=6
 scroll_until_node up text target
 position=2
 scroll_until_node down text target
+# A bridge response can be logged while Android is still applying page two.
+# Do not turn back at the old page boundary before the new rows appear.
+position=8
+target=10
+page_loaded=0
+remaining_load_ticks=6
+dump_ui() { printf '<row position="%s" loaded="%s"/>\n' "$position" "$page_loaded" > "$ui_xml"; }
+sleep() {
+  if (( remaining_load_ticks > 0 )); then
+    remaining_load_ticks=$((remaining_load_ticks - 1))
+    if (( remaining_load_ticks == 0 )); then page_loaded=1; fi
+  fi
+}
+scrollable_swipe() {
+  if [[ "$1" == up ]]; then
+    if (( page_loaded == 1 && position < 10 )); then position=$((position + 2)); fi
+  else
+    if (( position > 0 )); then position=$((position - 2)); fi
+  fi
+}
+scroll_until_node up text target
+[[ "$position" == 10 ]] || { echo 'Delayed page was skipped' >&2; exit 1; }
+page_loaded=1
+remaining_load_ticks=0
 target=9
 if scroll_until_node up text missing 2>/dev/null; then
   echo 'Scrolling reported success for a missing row' >&2; exit 1;
@@ -234,6 +258,32 @@ available_imes="$available_imes"$'\n'"$aosp"
 android_emulator_suppress_gboard_first_run fake_adb
 [[ "$selected_ime" == "$aosp" && "$disabled_ime" == "$gboard" ]] || {
   echo 'AOSP keyboard was not preferred over Gboard' >&2; exit 1;
+}
+"""
+    start = source.index("scrollable_swipe() {")
+    script += source[start : source.index("\n}", start) + 2] + r"""
+ui_xml="$(mktemp)"
+swipe_calls="$(mktemp)"
+trap 'rm -f "$ui_xml" "$swipe_calls"' EXIT
+cat > "$ui_xml" <<'XML'
+<hierarchy>
+  <node scrollable="true" bounds="[0,0][100,1848]" />
+  <node scrollable="true" bounds="[0,220][1080,1459]" />
+</hierarchy>
+XML
+adb_command=fake_adb
+fake_adb() { printf '%s\n' "$*" >> "$swipe_calls"; }
+scrollable_swipe up precise
+scrollable_swipe down precise
+scrollable_swipe up
+[[ "$(sed -n '1p' "$swipe_calls")" == 'shell input swipe 540 1046 540 633 650' ]] || {
+  echo 'Precise swipe did not use a short, slow drag in the list' >&2; exit 1;
+}
+[[ "$(sed -n '2p' "$swipe_calls")" == 'shell input swipe 540 633 540 1046 650' ]] || {
+  echo 'Precise reverse swipe used the wrong bounds' >&2; exit 1;
+}
+[[ "$(sed -n '3p' "$swipe_calls")" == 'shell input swipe 540 1212 540 467 250' ]] || {
+  echo 'Paging swipe no longer reaches the end of the list' >&2; exit 1;
 }
 """
     result = subprocess.run([bash, "-s"], input=script, capture_output=True, text=True)
