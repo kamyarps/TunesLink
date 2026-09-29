@@ -29,21 +29,42 @@ fi
 
 # The fresh-install smoke test above leaves the release APK installed. Replace it
 # with the previous public APK, then verify that Android upgrades it in place.
+package_app_id() {
+  # Android 16 reports appId where older releases reported userId.
+  sed -nE '/^[[:space:]]*(userId|appId)=[0-9]+/{
+    s/^[[:space:]]*(userId|appId)=([0-9]+).*/\2/
+    p
+    q
+  }' <<< "$1"
+}
+
+package_first_install() {
+  sed -n '/^[[:space:]]*firstInstallTime=/{
+    s/^[[:space:]]*firstInstallTime=//
+    p
+    q
+  }' <<< "$1"
+}
+
 adb uninstall com.kamyarps.tuneslink >/dev/null
 adb install "$previous_apk" >/dev/null
 adb shell am start -W -n com.kamyarps.tuneslink/.MainActivity >/dev/null
 before="$(adb shell dumpsys package com.kamyarps.tuneslink)"
-before_uid="$(sed -n 's/^[[:space:]]*userId=\([0-9]*\).*/\1/p' <<< "$before" | head -n 1)"
-before_install="$(sed -n 's/^[[:space:]]*firstInstallTime=//p' <<< "$before" | head -n 1)"
-test -n "$before_uid"
-test -n "$before_install"
+before_app_id="$(package_app_id "$before")"
+before_install="$(package_first_install "$before")"
+if [[ -z "$before_app_id" || -z "$before_install" ]]; then
+  printf 'Could not read app ID or first install time before upgrade on API %s.\n' "$device_sdk" >&2
+  exit 1
+fi
 
 adb install -r "$TunesLink_ANDROID_APK" >/dev/null
 after="$(adb shell dumpsys package com.kamyarps.tuneslink)"
-after_uid="$(sed -n 's/^[[:space:]]*userId=\([0-9]*\).*/\1/p' <<< "$after" | head -n 1)"
-after_install="$(sed -n 's/^[[:space:]]*firstInstallTime=//p' <<< "$after" | head -n 1)"
-test "$after_uid" = "$before_uid"
-test "$after_install" = "$before_install"
+after_app_id="$(package_app_id "$after")"
+after_install="$(package_first_install "$after")"
+if [[ "$after_app_id" != "$before_app_id" || "$after_install" != "$before_install" ]]; then
+  printf 'Upgrade changed app identity or first install time on API %s.\n' "$device_sdk" >&2
+  exit 1
+fi
 adb shell am start -W -n com.kamyarps.tuneslink/.MainActivity >/dev/null
 printf 'Published APK upgraded in place on API %s; app identity and install time stayed intact.\n' \
   "$device_sdk"
