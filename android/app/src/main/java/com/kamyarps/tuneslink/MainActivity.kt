@@ -56,10 +56,6 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Computer
-import androidx.compose.material.icons.rounded.Lock
-import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -530,14 +526,14 @@ private fun WelcomeScreen(
                         label = discoveryLabel,
                         onClick = onDiscover,
                         enabled = state.connection !is ConnectionState.Discovering,
-                        icon = Icons.Rounded.Search,
+                        icon = TuneLinkIcons.Search,
                         modifier = Modifier.weight(1f),
                     )
                     TunesLinkSecondaryButton(
                         label = stringResource(R.string.enter_address),
                         onClick = onManual,
                         modifier = Modifier.weight(1f),
-                        icon = Icons.Rounded.Computer,
+                        icon = TuneLinkIcons.Computer,
                     )
                 }
             } else {
@@ -545,7 +541,7 @@ private fun WelcomeScreen(
                     label = discoveryLabel,
                     onClick = onDiscover,
                     enabled = state.connection !is ConnectionState.Discovering,
-                    icon = Icons.Rounded.Search,
+                    icon = TuneLinkIcons.Search,
                     modifier = Modifier.widthIn(max = 460.dp).fillMaxWidth(),
                 )
                 Spacer(Modifier.height(8.dp))
@@ -553,7 +549,7 @@ private fun WelcomeScreen(
                     label = stringResource(R.string.enter_address),
                     onClick = onManual,
                     modifier = Modifier.widthIn(max = 460.dp).fillMaxWidth(),
-                    icon = Icons.Rounded.Computer,
+                    icon = TuneLinkIcons.Computer,
                 )
             }
             state.returnComputer?.let { computer ->
@@ -624,7 +620,7 @@ internal fun ComputerChoice(
             .padding(14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(Icons.Rounded.Computer, contentDescription = null, tint = TunesLinkTheme.colors.secondaryText)
+        Icon(TuneLinkIcons.Computer, contentDescription = null, tint = TunesLinkTheme.colors.secondaryText)
         Spacer(Modifier.width(12.dp))
         Column {
             Text(bridge.name, style = MaterialTheme.typography.bodyLarge, color = TunesLinkTheme.colors.primaryText)
@@ -645,7 +641,7 @@ private fun PermissionScreen(padding: PaddingValues, onContinue: () -> Unit) {
         verticalArrangement = Arrangement.Center,
     ) {
         Icon(
-            Icons.Rounded.Lock,
+            TuneLinkIcons.Lock,
             contentDescription = null,
             tint = TunesLinkTheme.colors.accentText,
             modifier = Modifier.size(44.dp),

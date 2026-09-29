@@ -58,19 +58,6 @@ import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.selection.selectableGroup
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Album
-import androidx.compose.material.icons.rounded.ErrorOutline
-import androidx.compose.material.icons.rounded.Home
-import androidx.compose.material.icons.rounded.LibraryMusic
-import androidx.compose.material.icons.rounded.MoreHoriz
-import androidx.compose.material.icons.rounded.MusicNote
-import androidx.compose.material.icons.rounded.Pause
-import androidx.compose.material.icons.rounded.PlayArrow
-import androidx.compose.material.icons.rounded.Search
-import androidx.compose.material.icons.rounded.Settings
-import androidx.compose.material.icons.rounded.SkipNext
-import androidx.compose.material.icons.rounded.SkipPrevious
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -397,7 +384,7 @@ private fun ArtworkPlaceholder(modifier: Modifier) {
         contentAlignment = Alignment.Center,
     ) {
         Icon(
-            Icons.Rounded.MusicNote,
+            TuneLinkIcons.MusicNote,
             contentDescription = null,
             tint = colors.secondaryText.copy(alpha = 0.72f),
             modifier = Modifier.fillMaxSize(0.42f),
@@ -425,7 +412,7 @@ internal fun TransportCluster(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         TransportButton(
-            Icons.Rounded.SkipPrevious,
+            TuneLinkIcons.SkipPrevious,
             previousDescription,
             onPrevious,
             large = false,
@@ -433,7 +420,7 @@ internal fun TransportCluster(
             enabled = enabled,
         )
         TransportButton(
-            if (player.playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+            if (player.playing) TuneLinkIcons.Pause else TuneLinkIcons.PlayArrow,
             if (player.playing) pauseDescription else playDescription,
             onPlayPause,
             large = true,
@@ -441,7 +428,7 @@ internal fun TransportCluster(
             enabled = enabled,
         )
         TransportButton(
-            Icons.Rounded.SkipNext,
+            TuneLinkIcons.SkipNext,
             nextDescription,
             onNext,
             large = false,
@@ -669,7 +656,7 @@ private fun MiniPlayerContent(
                 label = "Player bar play pause",
             ) { playing ->
                 Icon(
-                    if (playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                    if (playing) TuneLinkIcons.Pause else TuneLinkIcons.PlayArrow,
                     contentDescription = null,
                     // An explicit tint overrides IconButton's disabled colour; dim it ourselves.
                     tint = TunesLinkTheme.colors.primaryText.copy(
@@ -703,14 +690,14 @@ private fun DestinationActions(
         windowInsets = WindowInsets(0, 0, 0, 0),
     ) {
         DestinationAction(
-            Icons.Rounded.LibraryMusic,
+            TuneLinkIcons.LibraryMusic,
             stringResource(R.string.library),
             destination == TunesLinkDestination.Library,
             onLibrary,
             Modifier.weight(1f),
         )
         DestinationAction(
-            Icons.Rounded.Album,
+            TuneLinkIcons.Album,
             visibleNowPlayingLabel,
             destination == TunesLinkDestination.NowPlaying,
             onPlayer,
@@ -718,7 +705,7 @@ private fun DestinationActions(
             accessibilityLabel = nowPlayingLabel,
         )
         DestinationAction(
-            Icons.Rounded.Search,
+            TuneLinkIcons.Search,
             stringResource(R.string.search),
             destination == TunesLinkDestination.Search,
             onSearch,
@@ -816,21 +803,21 @@ internal fun TunesLinkDestinationRail(
         windowInsets = WindowInsets(top = topInset),
     ) {
         RailDestinationAction(
-            icon = Icons.Rounded.LibraryMusic,
+            icon = TuneLinkIcons.LibraryMusic,
             label = stringResource(R.string.library),
             selected = destination == TunesLinkDestination.Library,
             onClick = onLibrary,
             showLabel = showLabels,
         )
         RailDestinationAction(
-            icon = Icons.Rounded.Album,
+            icon = TuneLinkIcons.Album,
             label = stringResource(R.string.now_playing),
             selected = destination == TunesLinkDestination.NowPlaying,
             onClick = onPlayer,
             showLabel = showLabels,
         )
         RailDestinationAction(
-            icon = Icons.Rounded.Search,
+            icon = TuneLinkIcons.Search,
             label = stringResource(R.string.search),
             selected = destination == TunesLinkDestination.Search,
             onClick = onSearch,

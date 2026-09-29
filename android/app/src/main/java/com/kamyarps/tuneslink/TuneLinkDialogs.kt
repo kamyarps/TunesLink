@@ -24,11 +24,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.CheckCircle
-import androidx.compose.material.icons.rounded.Computer
-import androidx.compose.material.icons.rounded.ErrorOutline
-import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -116,14 +111,14 @@ internal fun ConnectionRecoveryDialog(
             availability.detailRes,
             *availability.detailArguments.toTypedArray(),
         ),
-        titleIcon = Icons.Rounded.ErrorOutline,
+        titleIcon = TuneLinkIcons.ErrorOutline,
         titleIconTint = TunesLinkTheme.colors.danger,
         content = {
             TunesLinkTonalAction(
                 label = stringResource(R.string.choose_another_computer),
                 onClick = onChooseAnother,
                 modifier = Modifier.fillMaxWidth(),
-                icon = Icons.Rounded.Computer,
+                icon = TuneLinkIcons.Computer,
             )
         },
         confirmLabel = availability.primaryLabelRes?.let { stringResource(it) }
@@ -232,7 +227,7 @@ private fun PairingDialog(
             PairingPhase.Submitting -> stringResource(R.string.pairing)
             PairingPhase.Success -> stringResource(R.string.connected)
         },
-        confirmIcon = if (state.pairing.phase == PairingPhase.Success) Icons.Rounded.CheckCircle else null,
+        confirmIcon = if (state.pairing.phase == PairingPhase.Success) TuneLinkIcons.CheckCircle else null,
         onConfirm = submitPairing,
         confirmEnabled = state.pairing.canSubmit,
         confirmLoading = state.pairing.phase == PairingPhase.Submitting,
@@ -262,7 +257,7 @@ private fun ConnectionDetailsDialog(state: TunesLinkUiState, viewModel: TunesLin
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 DetailRow(stringResource(R.string.address), state.bridgeAddress)
                 HorizontalDivider(color = TunesLinkTheme.colors.separator)
-                TunesLinkTonalAction(stringResource(R.string.privacy), viewModel::showPrivacy, Modifier.fillMaxWidth(), Icons.Rounded.Lock)
+                TunesLinkTonalAction(stringResource(R.string.privacy), viewModel::showPrivacy, Modifier.fillMaxWidth(), TuneLinkIcons.Lock)
                 if (state.connection !is ConnectionState.Connected) {
                     TunesLinkTonalAction(
                         stringResource(if (pairingRequired) R.string.pair_again else R.string.reconnect),

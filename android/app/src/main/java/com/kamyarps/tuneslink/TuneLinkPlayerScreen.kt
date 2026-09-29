@@ -21,12 +21,6 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.VolumeDown
-import androidx.compose.material.icons.automirrored.rounded.VolumeUp
-import androidx.compose.material.icons.rounded.Repeat
-import androidx.compose.material.icons.rounded.RepeatOne
-import androidx.compose.material.icons.rounded.Shuffle
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -334,7 +328,7 @@ private fun PlayerDetails(
             Modifier.widthIn(max = 520.dp).fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Icon(Icons.AutoMirrored.Rounded.VolumeDown, null, tint = TunesLinkTheme.colors.secondaryText, modifier = Modifier.size(18.dp))
+            Icon(TuneLinkIcons.VolumeDown, null, tint = TunesLinkTheme.colors.secondaryText, modifier = Modifier.size(18.dp))
             TunesLinkSlider(
                 value = volumeValue,
                 onValueChange = {
@@ -353,7 +347,7 @@ private fun PlayerDetails(
                 semanticsState = stringResource(R.string.volume_state, volumeValue.toInt()),
                 modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
             )
-            Icon(Icons.AutoMirrored.Rounded.VolumeUp, null, tint = TunesLinkTheme.colors.secondaryText, modifier = Modifier.size(18.dp))
+            Icon(TuneLinkIcons.VolumeUp, null, tint = TunesLinkTheme.colors.secondaryText, modifier = Modifier.size(18.dp))
         }
         if (!player.iTunesAvailable) {
             Text(
@@ -457,7 +451,7 @@ internal fun ShuffleToggle(
     onClick: () -> Unit,
 ) {
     PlaybackModeToggle(
-        icon = Icons.Rounded.Shuffle,
+        icon = TuneLinkIcons.Shuffle,
         description = stringResource(
             if (player.shuffleEnabled) R.string.turn_shuffle_off else R.string.turn_shuffle_on,
         ),
@@ -477,7 +471,7 @@ internal fun RepeatToggle(
     onClick: () -> Unit,
 ) {
     PlaybackModeToggle(
-        icon = if (player.repeatMode == RepeatMode.One) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat,
+        icon = if (player.repeatMode == RepeatMode.One) TuneLinkIcons.RepeatOne else TuneLinkIcons.Repeat,
         description = when (player.repeatMode) {
             RepeatMode.Off -> stringResource(R.string.turn_repeat_all_on)
             RepeatMode.All -> stringResource(R.string.turn_repeat_one_on)

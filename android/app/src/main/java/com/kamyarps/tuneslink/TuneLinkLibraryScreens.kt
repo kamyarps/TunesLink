@@ -23,19 +23,6 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.ArrowBack
-import androidx.compose.material.icons.automirrored.rounded.PlaylistPlay
-import androidx.compose.material.icons.rounded.Album
-import androidx.compose.material.icons.rounded.ChevronLeft
-import androidx.compose.material.icons.rounded.ChevronRight
-import androidx.compose.material.icons.rounded.Clear
-import androidx.compose.material.icons.rounded.Computer
-import androidx.compose.material.icons.rounded.Equalizer
-import androidx.compose.material.icons.rounded.MusicNote
-import androidx.compose.material.icons.rounded.Person
-import androidx.compose.material.icons.rounded.Search
-import androidx.compose.material.icons.rounded.WifiOff
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -103,7 +90,7 @@ internal fun LibraryBrowseScreen(
         ) {
             if (browse.canNavigateUp) {
                 IconButton(onClick = { viewModel.navigateUpLibrary() }) {
-                    Icon(Icons.AutoMirrored.Rounded.ArrowBack, stringResource(R.string.back))
+                    Icon(TuneLinkIcons.ArrowBack, stringResource(R.string.back))
                 }
             } else {
                 Spacer(Modifier.width(12.dp))
@@ -400,11 +387,11 @@ internal fun libraryCountLabel(kind: LibraryBrowseKind?, total: Int): String =
     pluralStringResource(kind.countPlural(), total, total)
 
 private fun LibraryBrowseKind.icon() = when (this) {
-    LibraryBrowseKind.Playlists -> Icons.AutoMirrored.Rounded.PlaylistPlay
-    LibraryBrowseKind.Artists -> Icons.Rounded.Person
-    LibraryBrowseKind.Albums -> Icons.Rounded.Album
-    LibraryBrowseKind.Songs -> Icons.Rounded.MusicNote
-    LibraryBrowseKind.Genres -> Icons.Rounded.Equalizer
+    LibraryBrowseKind.Playlists -> TuneLinkIcons.PlaylistPlay
+    LibraryBrowseKind.Artists -> TuneLinkIcons.Person
+    LibraryBrowseKind.Albums -> TuneLinkIcons.Album
+    LibraryBrowseKind.Songs -> TuneLinkIcons.MusicNote
+    LibraryBrowseKind.Genres -> TuneLinkIcons.Equalizer
 }
 
 @Composable
@@ -454,11 +441,11 @@ internal fun SearchScreen(state: TunesLinkUiState, viewModel: TunesLinkViewModel
                 .padding(horizontal = 24.dp)
                 .onFocusChanged { viewModel.setSearchActive(it.isFocused) },
             placeholder = { Text(stringResource(R.string.search_library)) },
-            leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null) },
+            leadingIcon = { Icon(TuneLinkIcons.Search, contentDescription = null) },
             trailingIcon = {
                 if (library.editingQuery.isNotEmpty()) {
                     IconButton(onClick = { viewModel.updateSearchQuery("") }) {
-                        Icon(Icons.Rounded.Clear, stringResource(R.string.clear_search))
+                        Icon(TuneLinkIcons.Clear, stringResource(R.string.clear_search))
                     }
                 }
             },
@@ -610,7 +597,7 @@ internal fun ComputerConnectionAction(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(
-            if (connected) Icons.Rounded.Computer else Icons.Rounded.WifiOff,
+            if (connected) TuneLinkIcons.Computer else TuneLinkIcons.WifiOff,
             null,
             tint = statusColor,
             modifier = Modifier.size(16.dp),
@@ -645,9 +632,9 @@ private fun TrackArtwork(track: TrackUiState, viewModel: TunesLinkViewModel) =
 @Composable
 private fun trailingChevronIcon(): ImageVector =
     if (LocalLayoutDirection.current == LayoutDirection.Rtl) {
-        Icons.Rounded.ChevronLeft
+        TuneLinkIcons.ChevronLeft
     } else {
-        Icons.Rounded.ChevronRight
+        TuneLinkIcons.ChevronRight
     }
 
 @Composable

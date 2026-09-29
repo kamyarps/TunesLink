@@ -48,25 +48,6 @@ import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.PlaylistPlay
-import androidx.compose.material.icons.automirrored.rounded.VolumeDown
-import androidx.compose.material.icons.rounded.Album
-import androidx.compose.material.icons.rounded.Clear
-import androidx.compose.material.icons.rounded.Computer
-import androidx.compose.material.icons.rounded.Equalizer
-import androidx.compose.material.icons.rounded.ExpandLess
-import androidx.compose.material.icons.rounded.MusicNote
-import androidx.compose.material.icons.rounded.Pause
-import androidx.compose.material.icons.rounded.Person
-import androidx.compose.material.icons.rounded.PlayArrow
-import androidx.compose.material.icons.rounded.Search
-import androidx.compose.material.icons.rounded.Repeat
-import androidx.compose.material.icons.rounded.RepeatOne
-import androidx.compose.material.icons.rounded.Shuffle
-import androidx.compose.material.icons.rounded.SkipNext
-import androidx.compose.material.icons.rounded.SkipPrevious
-import androidx.compose.material.icons.rounded.WifiOff
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -203,14 +184,14 @@ private fun TabletWorkspaceHeader(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     TabletTransportButton(
-                        Icons.Rounded.SkipPrevious,
+                        TuneLinkIcons.SkipPrevious,
                         stringResource(R.string.previous_song),
                         controlsEnabled,
                         compact = compactWidth,
                         onClick = viewModel::previous,
                     )
                     TabletTransportButton(
-                        if (state.player.playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                        if (state.player.playing) TuneLinkIcons.Pause else TuneLinkIcons.PlayArrow,
                         stringResource(if (state.player.playing) R.string.pause else R.string.play),
                         controlsEnabled,
                         emphasized = true,
@@ -218,7 +199,7 @@ private fun TabletWorkspaceHeader(
                         onClick = viewModel::togglePlayback,
                     )
                     TabletTransportButton(
-                        Icons.Rounded.SkipNext,
+                        TuneLinkIcons.SkipNext,
                         stringResource(R.string.next_song),
                         controlsEnabled,
                         compact = compactWidth,
@@ -267,11 +248,11 @@ private fun TabletWorkspaceHeader(
                             }
                         },
                     placeholder = { Text(stringResource(R.string.search)) },
-                    leadingIcon = { Icon(Icons.Rounded.Search, null) },
+                    leadingIcon = { Icon(TuneLinkIcons.Search, null) },
                     trailingIcon = if (state.library.editingQuery.isNotEmpty()) {
                         {
                             IconButton(onClick = { viewModel.updateSearchQuery("") }) {
-                                Icon(Icons.Rounded.Clear, stringResource(R.string.clear_search))
+                                Icon(TuneLinkIcons.Clear, stringResource(R.string.clear_search))
                             }
                         }
                     } else null,
@@ -351,7 +332,7 @@ private fun TabletVolumeControl(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(
-            Icons.AutoMirrored.Rounded.VolumeDown,
+            TuneLinkIcons.VolumeDown,
             contentDescription = null,
             tint = TunesLinkTheme.colors.secondaryText,
             modifier = Modifier.size(16.dp),
@@ -501,7 +482,7 @@ private fun TabletConnectionButton(state: TunesLinkUiState, onClick: () -> Unit)
     ) {
         Box {
             Icon(
-                if (connected) Icons.Rounded.Computer else Icons.Rounded.WifiOff,
+                if (connected) TuneLinkIcons.Computer else TuneLinkIcons.WifiOff,
                 null,
                 tint = if (connected) TunesLinkTheme.colors.secondaryText else TunesLinkTheme.colors.danger,
                 modifier = Modifier.size(24.dp),
@@ -944,7 +925,7 @@ private fun TabletExpandedAlbum(
                     TunesLinkTonalAction(
                         label = stringResource(R.string.collapse_album),
                         onClick = onCollapse,
-                        icon = Icons.Rounded.ExpandLess,
+                        icon = TuneLinkIcons.ExpandLess,
                         modifier = Modifier.padding(top = 8.dp),
                     )
                 }
@@ -1505,9 +1486,9 @@ private fun LibraryBrowseKind.selectionHint(): Int = when (this) {
 }
 
 private fun LibraryBrowseKind.tabletIcon(): ImageVector = when (this) {
-    LibraryBrowseKind.Playlists -> Icons.AutoMirrored.Rounded.PlaylistPlay
-    LibraryBrowseKind.Artists -> Icons.Rounded.Person
-    LibraryBrowseKind.Albums -> Icons.Rounded.Album
-    LibraryBrowseKind.Songs -> Icons.Rounded.MusicNote
-    LibraryBrowseKind.Genres -> Icons.Rounded.Equalizer
+    LibraryBrowseKind.Playlists -> TuneLinkIcons.PlaylistPlay
+    LibraryBrowseKind.Artists -> TuneLinkIcons.Person
+    LibraryBrowseKind.Albums -> TuneLinkIcons.Album
+    LibraryBrowseKind.Songs -> TuneLinkIcons.MusicNote
+    LibraryBrowseKind.Genres -> TuneLinkIcons.Equalizer
 }
