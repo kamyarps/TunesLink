@@ -64,6 +64,7 @@ internal fun LibraryBrowseScreen(
     modifier: Modifier,
 ) {
     val browse = state.browse
+    val artworkSource = rememberLibraryArtworkSource(viewModel)
     val browseIdentity = browse.selectedCollection?.let { "${it.kind.name}:${it.id}" }
         ?: browse.kind?.name
         ?: "root"
@@ -196,10 +197,10 @@ internal fun LibraryBrowseScreen(
                     ) { row ->
                         when (row) {
                             is LibraryBrowseRow.AlbumHeading ->
-                                LibraryAlbumHeading(row, viewModel)
+                                LibraryAlbumHeading(row, artworkSource)
                             is LibraryBrowseRow.Song -> TrackRow(
                                 row.track,
-                                viewModel,
+                                artworkSource,
                                 enabled = state.playbackControlsEnabled,
                                 pending = state.player.pending(PlaybackAction.PlayTrack) != null &&
                                     state.player.trackId == row.track.id,
@@ -217,7 +218,7 @@ internal fun LibraryBrowseScreen(
                     ) { _, track ->
                         TrackRow(
                             track,
-                            viewModel,
+                            artworkSource,
                             enabled = state.playbackControlsEnabled,
                             pending = state.player.pending(PlaybackAction.PlayTrack) != null &&
                                 state.player.trackId == track.id,
@@ -232,7 +233,7 @@ internal fun LibraryBrowseScreen(
                         key = { _, collection -> collection.id },
                         contentType = { _, _ -> "collection" },
                     ) { _, collection ->
-                        LibraryCollectionRow(collection, viewModel) {
+                        LibraryCollectionRow(collection, artworkSource) {
                             viewModel.openPhoneLibraryCollection(collection,
                                 listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset)
                         }
@@ -274,7 +275,7 @@ private fun LibraryCategoryRow(kind: LibraryBrowseKind, onClick: () -> Unit) {
 @Composable
 private fun LibraryCollectionRow(
     collection: LibraryCollectionUiState,
-    viewModel: TunesLinkViewModel,
+    artworkSource: LibraryArtworkSource,
     onClick: () -> Unit,
 ) {
     Row(
@@ -285,7 +286,7 @@ private fun LibraryCollectionRow(
             .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        CollectionArtwork(collection, viewModel)
+        CollectionArtwork(collection, artworkSource)
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             Text(
@@ -311,12 +312,12 @@ private fun LibraryCollectionRow(
 }
 
 @Composable
-private fun CollectionArtwork(collection: LibraryCollectionUiState, viewModel: TunesLinkViewModel) =
-    BrowseArtwork(collection.artworkId, viewModel)
+private fun CollectionArtwork(collection: LibraryCollectionUiState, artworkSource: LibraryArtworkSource) =
+    BrowseArtwork(collection.artworkId, artworkSource)
 
 @Composable
-private fun BrowseArtwork(artworkId: String, viewModel: TunesLinkViewModel) {
-    val artwork = rememberLibraryArtwork(artworkId, 128, viewModel)
+private fun BrowseArtwork(artworkId: String, artworkSource: LibraryArtworkSource) {
+    val artwork = rememberLibraryArtwork(artworkId, 128, artworkSource)
     // Row artwork is decorative: the row already speaks its title.
     ArtworkSurface(artwork, description = null, Modifier.size(TunesLinkSizes.compactArtwork))
 }
@@ -324,7 +325,7 @@ private fun BrowseArtwork(artworkId: String, viewModel: TunesLinkViewModel) {
 @Composable
 private fun LibraryAlbumHeading(
     heading: LibraryBrowseRow.AlbumHeading,
-    viewModel: TunesLinkViewModel,
+    artworkSource: LibraryArtworkSource,
 ) {
     Row(
         modifier = Modifier
@@ -333,7 +334,7 @@ private fun LibraryAlbumHeading(
             .semantics(mergeDescendants = true) { heading() },
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        BrowseArtwork(heading.artworkId, viewModel)
+        BrowseArtwork(heading.artworkId, artworkSource)
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             Text(
@@ -397,6 +398,7 @@ private fun LibraryBrowseKind.icon() = when (this) {
 @Composable
 internal fun SearchScreen(state: TunesLinkUiState, viewModel: TunesLinkViewModel, modifier: Modifier) {
     val library = state.library
+    val artworkSource = rememberLibraryArtworkSource(viewModel)
     val searchIdentity = library.loadedQuery?.trim()?.lowercase().orEmpty()
     val listState = key(searchIdentity) { rememberLazyListState() }
     val searchFocusRequester = remember { FocusRequester() }
@@ -524,7 +526,7 @@ internal fun SearchScreen(state: TunesLinkUiState, viewModel: TunesLinkViewModel
                 ) { _, track ->
                     TrackRow(
                         track,
-                        viewModel = viewModel,
+                        artworkSource = artworkSource,
                         enabled = state.playbackControlsEnabled,
                         pending = state.player.pending(PlaybackAction.PlayTrack) != null &&
                             state.player.trackId == track.id,
@@ -626,8 +628,8 @@ internal fun ComputerConnectionAction(
 }
 
 @Composable
-private fun TrackArtwork(track: TrackUiState, viewModel: TunesLinkViewModel) =
-    BrowseArtwork(track.artworkId, viewModel)
+private fun TrackArtwork(track: TrackUiState, artworkSource: LibraryArtworkSource) =
+    BrowseArtwork(track.artworkId, artworkSource)
 
 @Composable
 private fun trailingChevronIcon(): ImageVector =
@@ -640,7 +642,7 @@ private fun trailingChevronIcon(): ImageVector =
 @Composable
 private fun TrackRow(
     track: TrackUiState,
-    viewModel: TunesLinkViewModel,
+    artworkSource: LibraryArtworkSource,
     enabled: Boolean,
     pending: Boolean,
     current: Boolean,
@@ -663,7 +665,7 @@ private fun TrackRow(
             .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        TrackArtwork(track, viewModel)
+        TrackArtwork(track, artworkSource)
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             Text(

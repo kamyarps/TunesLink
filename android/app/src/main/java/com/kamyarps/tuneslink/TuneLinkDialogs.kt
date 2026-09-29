@@ -67,7 +67,6 @@ import androidx.compose.ui.window.DialogWindowProvider
 import androidx.compose.ui.layout.Layout
 import androidx.core.view.WindowCompat
 import androidx.core.graphics.get
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlin.math.max
@@ -80,16 +79,49 @@ internal fun TunesLinkModalHost(state: TunesLinkUiState, viewModel: TunesLinkVie
     val dismissRequested = state.modalPresentation?.dismissRequested == true
     when (val modal = state.modal) {
         null -> Unit
-        TunesLinkModal.ManualAddress -> ManualAddressDialog(state, viewModel, dismissRequested)
-        is TunesLinkModal.Pairing -> PairingDialog(
-            state,
-            modal.bridge,
-            viewModel,
-            dismissRequested,
+        TunesLinkModal.ManualAddress -> ManualAddressDialog(
+            address = state.manualAddress,
+            error = state.manualAddressError,
+            busy = state.manualResolutionBusy,
+            dismissRequested = dismissRequested,
+            onDismiss = viewModel::closeModal,
+            onDismissComplete = viewModel::completeModalDismiss,
+            onAddressChange = viewModel::updateManualAddress,
+            onConnect = viewModel::resolveManualAddress,
         )
-        TunesLinkModal.ConnectionDetails -> ConnectionDetailsDialog(state, viewModel, dismissRequested)
-        TunesLinkModal.Privacy -> PrivacyDialog(viewModel, dismissRequested)
-        TunesLinkModal.ForgetConfirmation -> ForgetDialog(state.bridgeName, viewModel, dismissRequested)
+        is TunesLinkModal.Pairing -> PairingDialog(
+            pairing = state.pairing,
+            bridge = modal.bridge,
+            dismissRequested = dismissRequested,
+            onDismiss = viewModel::closeModal,
+            onDismissComplete = viewModel::completeModalDismiss,
+            onCodeChange = viewModel::updatePairingCode,
+            onPair = viewModel::pair,
+        )
+        TunesLinkModal.ConnectionDetails -> ConnectionDetailsDialog(
+            computer = state.bridgeName,
+            address = state.bridgeAddress,
+            connection = state.connection,
+            dismissRequested = dismissRequested,
+            onDismiss = viewModel::closeModal,
+            onDismissComplete = viewModel::completeModalDismiss,
+            onPrivacy = viewModel::showPrivacy,
+            onPairAgain = viewModel::pairAgain,
+            onTryAgain = viewModel::tryAgain,
+            onForgetRequest = viewModel::requestForget,
+        )
+        TunesLinkModal.Privacy -> PrivacyDialog(
+            dismissRequested, viewModel::closeModal, viewModel::completeModalDismiss,
+        )
+        TunesLinkModal.ForgetConfirmation -> ForgetDialog(
+            computer = state.bridgeName,
+            error = state.forgetError,
+            busy = state.forgetBusy,
+            dismissRequested = dismissRequested,
+            onDismiss = viewModel::closeModal,
+            onDismissComplete = viewModel::completeModalDismiss,
+            onForget = viewModel::forget,
+        )
     }
 }
 
@@ -129,27 +161,36 @@ internal fun ConnectionRecoveryDialog(
 }
 
 @Composable
-private fun ManualAddressDialog(state: TunesLinkUiState, viewModel: TunesLinkViewModel, dismissRequested: Boolean) {
+private fun ManualAddressDialog(
+    address: String,
+    error: String?,
+    busy: Boolean,
+    dismissRequested: Boolean,
+    onDismiss: () -> Unit,
+    onDismissComplete: () -> Unit,
+    onAddressChange: (String) -> Unit,
+    onConnect: () -> Unit,
+) {
     val requester = remember { FocusRequester() }
     LaunchedEffect(Unit) { requester.requestFocus() }
     TunesLinkAlertDialog(
-        onDismiss = viewModel::closeModal,
+        onDismiss = onDismiss,
         dismissRequested = dismissRequested,
-        onDismissComplete = viewModel::completeModalDismiss,
+        onDismissComplete = onDismissComplete,
         title = stringResource(R.string.manual_address_title),
         detail = stringResource(R.string.manual_address_detail),
         content = {
             OutlinedTextField(
-                value = state.manualAddress,
-                onValueChange = viewModel::updateManualAddress,
+                value = address,
+                onValueChange = onAddressChange,
                 label = { Text(stringResource(R.string.ipv4_address)) },
                 placeholder = { Text("192.168.1.20") },
-                supportingText = state.manualAddressError?.let { error -> { Text(error, color = TunesLinkTheme.colors.danger) } },
-                isError = state.manualAddressError != null,
+                supportingText = error?.let { { Text(it, color = TunesLinkTheme.colors.danger) } },
+                isError = error != null,
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Go),
                 keyboardActions = KeyboardActions(onGo = {
-                    if (!state.manualResolutionBusy) viewModel.resolveManualAddress()
+                    if (!busy) onConnect()
                 }),
                 colors = tunesLinkTextFieldColors(),
                 shape = RoundedCornerShape(16.dp),
@@ -157,21 +198,24 @@ private fun ManualAddressDialog(state: TunesLinkUiState, viewModel: TunesLinkVie
             )
         },
         confirmLabel = stringResource(
-            if (state.manualResolutionBusy) R.string.connecting else R.string.connect,
+            if (busy) R.string.connecting else R.string.connect,
         ),
-        onConfirm = viewModel::resolveManualAddress,
-        confirmEnabled = !state.manualResolutionBusy,
-        confirmLoading = state.manualResolutionBusy,
+        onConfirm = onConnect,
+        confirmEnabled = !busy,
+        confirmLoading = busy,
         dismissLabel = stringResource(R.string.cancel),
     )
 }
 
 @Composable
 private fun PairingDialog(
-    state: TunesLinkUiState,
+    pairing: PairingUiState,
     bridge: BridgeClient.BridgeInfo,
-    viewModel: TunesLinkViewModel,
     dismissRequested: Boolean,
+    onDismiss: () -> Unit,
+    onDismissComplete: () -> Unit,
+    onCodeChange: (String) -> Unit,
+    onPair: () -> Unit,
 ) {
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
@@ -180,38 +224,38 @@ private fun PairingDialog(
     val submitPairing = {
         focusManager.clearFocus(force = true)
         keyboardController?.hide()
-        if (state.pairing.canSubmit) viewModel.pair()
+        if (pairing.canSubmit) onPair()
     }
     TunesLinkAlertDialog(
-        onDismiss = viewModel::closeModal,
+        onDismiss = onDismiss,
         dismissRequested = dismissRequested,
-        onDismissComplete = viewModel::completeModalDismiss,
+        onDismissComplete = onDismissComplete,
         title = stringResource(R.string.pair_with, bridge.name),
         detail = stringResource(R.string.pair_detail),
         dialogMaxWidth = 440.dp,
         content = {
             Column {
                 OutlinedTextField(
-                    value = state.pairing.code,
-                    onValueChange = viewModel::updatePairingCode,
+                    value = pairing.code,
+                    onValueChange = onCodeChange,
                     label = { Text(stringResource(R.string.six_digit_code)) },
                     placeholder = { Text("000000") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword, imeAction = ImeAction.Done),
                     keyboardActions = KeyboardActions(onDone = { submitPairing() }),
                     singleLine = true,
-                    isError = state.pairing.codeError != null,
-                    enabled = state.pairing.phase == PairingPhase.Editing,
-                    supportingText = if (state.pairing.retryAfterSeconds > 0) {
+                    isError = pairing.codeError != null,
+                    enabled = pairing.phase == PairingPhase.Editing,
+                    supportingText = if (pairing.retryAfterSeconds > 0) {
                         { Text(pluralStringResource(R.plurals.pairing_cooldown,
-                            state.pairing.retryAfterSeconds, state.pairing.retryAfterSeconds)) }
-                    } else state.pairing.codeError?.let { error -> { Text(error, color = TunesLinkTheme.colors.danger) } },
+                            pairing.retryAfterSeconds, pairing.retryAfterSeconds)) }
+                    } else pairing.codeError?.let { error -> { Text(error, color = TunesLinkTheme.colors.danger) } },
                     colors = tunesLinkTextFieldColors(),
                     shape = RoundedCornerShape(16.dp),
                     modifier = Modifier.fillMaxWidth().focusRequester(requester),
                 )
                 // Failures that are not about the code itself, such as pairing not being open
                 // on the computer, are shown apart from the field so the code isn't marked wrong.
-                state.pairing.message?.let { message ->
+                pairing.message?.let { message ->
                     Spacer(Modifier.height(8.dp))
                     Text(
                         message,
@@ -222,30 +266,41 @@ private fun PairingDialog(
                 }
             }
         },
-        confirmLabel = when (state.pairing.phase) {
+        confirmLabel = when (pairing.phase) {
             PairingPhase.Editing -> stringResource(R.string.pair_securely)
             PairingPhase.Submitting -> stringResource(R.string.pairing)
             PairingPhase.Success -> stringResource(R.string.connected)
         },
-        confirmIcon = if (state.pairing.phase == PairingPhase.Success) TuneLinkIcons.CheckCircle else null,
+        confirmIcon = if (pairing.phase == PairingPhase.Success) TuneLinkIcons.CheckCircle else null,
         onConfirm = submitPairing,
-        confirmEnabled = state.pairing.canSubmit,
-        confirmLoading = state.pairing.phase == PairingPhase.Submitting,
+        confirmEnabled = pairing.canSubmit,
+        confirmLoading = pairing.phase == PairingPhase.Submitting,
         dismissLabel = stringResource(R.string.cancel),
     )
 }
 
 @Composable
-private fun ConnectionDetailsDialog(state: TunesLinkUiState, viewModel: TunesLinkViewModel, dismissRequested: Boolean) {
-    val availability = ConnectionAvailability.from(state.connection)
-    val pairingRequired = state.connection is ConnectionState.Unauthorized ||
-        state.connection is ConnectionState.IdentityChanged
+private fun ConnectionDetailsDialog(
+    computer: String,
+    address: String,
+    connection: ConnectionState,
+    dismissRequested: Boolean,
+    onDismiss: () -> Unit,
+    onDismissComplete: () -> Unit,
+    onPrivacy: () -> Unit,
+    onPairAgain: () -> Unit,
+    onTryAgain: () -> Unit,
+    onForgetRequest: () -> Unit,
+) {
+    val availability = ConnectionAvailability.from(connection)
+    val pairingRequired = connection is ConnectionState.Unauthorized ||
+        connection is ConnectionState.IdentityChanged
     TunesLinkAlertDialog(
-        onDismiss = viewModel::closeModal,
+        onDismiss = onDismiss,
         dismissRequested = dismissRequested,
-        onDismissComplete = viewModel::completeModalDismiss,
-        title = state.bridgeName.ifBlank { stringResource(R.string.connection_default) },
-        detail = if (state.connection is ConnectionState.Connected) {
+        onDismissComplete = onDismissComplete,
+        title = computer.ifBlank { stringResource(R.string.connection_default) },
+        detail = if (connection is ConnectionState.Connected) {
             stringResource(R.string.connection_detail)
         } else {
             stringResource(
@@ -255,27 +310,27 @@ private fun ConnectionDetailsDialog(state: TunesLinkUiState, viewModel: TunesLin
         },
         content = {
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                DetailRow(stringResource(R.string.address), state.bridgeAddress)
+                DetailRow(stringResource(R.string.address), address)
                 HorizontalDivider(color = TunesLinkTheme.colors.separator)
-                TunesLinkTonalAction(stringResource(R.string.privacy), viewModel::showPrivacy, Modifier.fillMaxWidth(), TuneLinkIcons.Lock)
-                if (state.connection !is ConnectionState.Connected) {
+                TunesLinkTonalAction(stringResource(R.string.privacy), onPrivacy, Modifier.fillMaxWidth(), TuneLinkIcons.Lock)
+                if (connection !is ConnectionState.Connected) {
                     TunesLinkTonalAction(
                         stringResource(if (pairingRequired) R.string.pair_again else R.string.reconnect),
-                        if (pairingRequired) viewModel::pairAgain else viewModel::tryAgain,
+                        if (pairingRequired) onPairAgain else onTryAgain,
                         Modifier.fillMaxWidth(),
                     )
                 }
                 HorizontalDivider(color = TunesLinkTheme.colors.separator)
                 TunesLinkTonalAction(
                     stringResource(R.string.forget_computer),
-                    viewModel::requestForget,
+                    onForgetRequest,
                     Modifier.fillMaxWidth(),
                     color = TunesLinkTheme.colors.danger,
                 )
             }
         },
         confirmLabel = stringResource(R.string.done),
-        onConfirm = viewModel::closeModal,
+        onConfirm = onDismiss,
     )
 }
 
@@ -288,11 +343,15 @@ private fun DetailRow(label: String, value: String) {
 }
 
 @Composable
-private fun PrivacyDialog(viewModel: TunesLinkViewModel, dismissRequested: Boolean) {
+private fun PrivacyDialog(
+    dismissRequested: Boolean,
+    onDismiss: () -> Unit,
+    onDismissComplete: () -> Unit,
+) {
     TunesLinkAlertDialog(
-        onDismiss = viewModel::closeModal,
+        onDismiss = onDismiss,
         dismissRequested = dismissRequested,
-        onDismissComplete = viewModel::completeModalDismiss,
+        onDismissComplete = onDismissComplete,
         title = stringResource(R.string.privacy),
         detail = stringResource(R.string.privacy_detail),
         content = {
@@ -303,26 +362,33 @@ private fun PrivacyDialog(viewModel: TunesLinkViewModel, dismissRequested: Boole
             )
         },
         confirmLabel = stringResource(R.string.done),
-        onConfirm = viewModel::closeModal,
+        onConfirm = onDismiss,
     )
 }
 
 @Composable
-private fun ForgetDialog(computer: String, viewModel: TunesLinkViewModel, dismissRequested: Boolean) {
-    val state by viewModel.state.collectAsStateWithLifecycle()
+private fun ForgetDialog(
+    computer: String,
+    error: String?,
+    busy: Boolean,
+    dismissRequested: Boolean,
+    onDismiss: () -> Unit,
+    onDismissComplete: () -> Unit,
+    onForget: () -> Unit,
+) {
     TunesLinkAlertDialog(
-        onDismiss = viewModel::closeModal,
+        onDismiss = onDismiss,
         dismissRequested = dismissRequested,
-        onDismissComplete = viewModel::completeModalDismiss,
+        onDismissComplete = onDismissComplete,
         title = stringResource(R.string.forget_computer_title),
         detail = stringResource(
             R.string.forget_computer_detail,
             computer.ifBlank { stringResource(R.string.this_computer) },
         ),
         content = {
-            state.forgetError?.let { error ->
+            error?.let { message ->
                 Text(
-                    error,
+                    message,
                     style = MaterialTheme.typography.bodyMedium,
                     color = TunesLinkTheme.colors.danger,
                     modifier = Modifier.semantics { liveRegion = LiveRegionMode.Assertive },
@@ -330,10 +396,10 @@ private fun ForgetDialog(computer: String, viewModel: TunesLinkViewModel, dismis
             }
         },
         confirmLabel = stringResource(
-            if (state.forgetBusy) R.string.removing else R.string.forget_computer_confirm,
+            if (busy) R.string.removing else R.string.forget_computer_confirm,
         ),
-        onConfirm = viewModel::forget,
-        confirmEnabled = !state.forgetBusy,
+        onConfirm = onForget,
+        confirmEnabled = !busy,
         dismissLabel = stringResource(R.string.cancel),
         destructive = true,
     )

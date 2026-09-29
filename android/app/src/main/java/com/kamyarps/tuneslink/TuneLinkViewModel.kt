@@ -929,18 +929,6 @@ internal class TunesLinkViewModel(
         mutableState.update(TunesLinkUiState::afterTransientCancellation)
     }
 
-    internal fun requestArtwork(
-        artworkId: String,
-        size: Int,
-        result: BridgeRepository.ArtworkResult,
-    ): BridgeRepository.RequestHandle {
-        if (artworkId.isBlank()) {
-            result.success(null)
-            return BridgeRepository.RequestHandle.NONE
-        }
-        return repository.getArtwork(artworkId, size, result)
-    }
-
     private fun updateBridge(name: String, host: String, port: Int) {
         mutableState.update {
             it.copy(

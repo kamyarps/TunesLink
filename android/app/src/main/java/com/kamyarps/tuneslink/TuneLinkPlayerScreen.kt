@@ -65,6 +65,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.graphics.get
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlin.math.abs
@@ -120,6 +121,8 @@ internal fun NowPlayingScreen(
     topInset: Dp = 0.dp,
 ) {
     val player = state.player
+    val playbackSamples = rememberPlaybackSamples(viewModel)
+    val playbackActions = rememberPlaybackActions(viewModel)
     val haptic = LocalHapticFeedback.current
     val controlsEnabled = state.playbackControlsEnabled
     val ambient = remember(player.artwork) { player.artwork?.let(::averageArtworkColor) }
@@ -185,7 +188,8 @@ internal fun NowPlayingScreen(
                     }
                     PlayerDetails(
                         player,
-                        viewModel,
+                        playbackSamples,
+                        playbackActions,
                         haptic,
                         Modifier.weight(1f).fillMaxWidth(),
                         compactHeight = compactHorizontal,
@@ -233,7 +237,8 @@ internal fun NowPlayingScreen(
                     )
                     PlayerDetails(
                         player,
-                        viewModel,
+                        playbackSamples,
+                        playbackActions,
                         haptic,
                         Modifier.widthIn(max = 560.dp).fillMaxWidth(),
                         centerVertically = false,
@@ -248,7 +253,8 @@ internal fun NowPlayingScreen(
 @Composable
 private fun PlayerDetails(
     player: PlayerUiState,
-    viewModel: TunesLinkViewModel,
+    playbackSamples: PlaybackSamples,
+    actions: PlaybackActions,
     haptic: androidx.compose.ui.hapticfeedback.HapticFeedback,
     modifier: Modifier,
     compactHeight: Boolean = false,
@@ -286,12 +292,12 @@ private fun PlayerDetails(
         }
         Spacer(Modifier.height(if (compactHeight) 2.dp else 12.dp))
         PlaybackProgress(
-            viewModel = viewModel,
+            samples = playbackSamples,
             trackId = player.trackId,
             duration = player.duration,
             enabled = controlsEnabled && player.duration > 0,
             onSeek = { position, draggedTrackId ->
-                viewModel.seek(position, draggedTrackId)
+                actions.seek(position, draggedTrackId)
                 haptic.performHapticFeedback(HapticFeedbackType.Confirm)
             },
             modifier = Modifier.widthIn(max = 520.dp).fillMaxWidth(),
@@ -305,13 +311,13 @@ private fun PlayerDetails(
                 player = player,
                 enabled = controlsEnabled,
                 size = TunesLinkSizes.minimumTarget,
-                onClick = viewModel::toggleShuffle,
+                onClick = actions.toggleShuffle,
             )
             TransportCluster(
                 player,
-                onPrevious = viewModel::previous,
-                onPlayPause = viewModel::togglePlayback,
-                onNext = viewModel::next,
+                onPrevious = actions.previous,
+                onPlayPause = actions.togglePlayback,
+                onNext = actions.next,
                 modifier = Modifier.weight(1f),
                 compact = compactHeight,
                 enabled = controlsEnabled,
@@ -320,7 +326,7 @@ private fun PlayerDetails(
                 player = player,
                 enabled = controlsEnabled,
                 size = TunesLinkSizes.minimumTarget,
-                onClick = viewModel::cycleRepeat,
+                onClick = actions.cycleRepeat,
             )
         }
         Spacer(Modifier.height(if (compactHeight) 2.dp else 16.dp))
@@ -337,7 +343,7 @@ private fun PlayerDetails(
                 },
                 onValueChangeFinished = {
                     adjustingVolume = false
-                    viewModel.setVolume(volumeValue.toInt())
+                    actions.setVolume(volumeValue.toInt())
                     haptic.performHapticFeedback(HapticFeedbackType.Confirm)
                 },
                 valueRange = 0f..100f,
@@ -369,7 +375,7 @@ private fun PlayerDetails(
  */
 @Composable
 internal fun PlaybackProgress(
-    viewModel: TunesLinkViewModel,
+    samples: PlaybackSamples,
     trackId: String,
     duration: Double,
     enabled: Boolean,
@@ -377,7 +383,7 @@ internal fun PlaybackProgress(
     modifier: Modifier = Modifier,
     inline: Boolean = false,
 ) {
-    val position = rememberPlaybackPosition(viewModel)
+    val position = rememberPlaybackPosition(samples)
     var seeking by remember(trackId) { mutableStateOf(false) }
     var seekValue by remember(trackId) { mutableFloatStateOf(0f) }
     // The song the finger started on. A drag that outlives its song must not seek the next one.
@@ -636,6 +642,45 @@ internal data class PlaybackPositionSample(
     val live: Boolean,
 )
 
+/** A narrow stream for the scrubber, kept separate from the root UI state collection. */
+internal class PlaybackSamples(
+    val updates: Flow<PlaybackPositionSample>,
+    val initial: PlaybackPositionSample,
+)
+
+@Composable
+internal fun rememberPlaybackSamples(viewModel: TunesLinkViewModel): PlaybackSamples =
+    remember(viewModel) {
+        PlaybackSamples(
+            viewModel.state.map(TunesLinkUiState::playbackSample).distinctUntilChanged(),
+            viewModel.state.value.playbackSample(),
+        )
+    }
+
+internal class PlaybackActions(
+    val previous: () -> Unit,
+    val togglePlayback: () -> Unit,
+    val next: () -> Unit,
+    val toggleShuffle: () -> Unit,
+    val cycleRepeat: () -> Unit,
+    val seek: (Double, String) -> Unit,
+    val setVolume: (Int) -> Unit,
+)
+
+@Composable
+internal fun rememberPlaybackActions(viewModel: TunesLinkViewModel): PlaybackActions =
+    remember(viewModel) {
+        PlaybackActions(
+            viewModel::previous,
+            viewModel::togglePlayback,
+            viewModel::next,
+            viewModel::toggleShuffle,
+            viewModel::cycleRepeat,
+            viewModel::seek,
+            viewModel::setVolume,
+        )
+    }
+
 internal fun TunesLinkUiState.playbackSample(): PlaybackPositionSample = PlaybackPositionSample(
     trackId = player.trackId,
     position = player.position,
@@ -716,14 +761,10 @@ internal class PlaybackPositionState {
 }
 
 @Composable
-internal fun rememberPlaybackPosition(viewModel: TunesLinkViewModel): PlaybackPositionState {
-    val samples = remember(viewModel) {
-        viewModel.state.map(TunesLinkUiState::playbackSample).distinctUntilChanged()
-    }
-    val initial = remember(viewModel) { viewModel.state.value.playbackSample() }
-    val sample by samples.collectAsStateWithLifecycle(initial)
-    val positionState = remember(viewModel) {
-        PlaybackPositionState().also { it.accept(initial, SystemClock.elapsedRealtime()) }
+internal fun rememberPlaybackPosition(samples: PlaybackSamples): PlaybackPositionState {
+    val sample by samples.updates.collectAsStateWithLifecycle(samples.initial)
+    val positionState = remember(samples) {
+        PlaybackPositionState().also { it.accept(samples.initial, SystemClock.elapsedRealtime()) }
     }
     LaunchedEffect(positionState, sample) {
         positionState.accept(sample, SystemClock.elapsedRealtime())

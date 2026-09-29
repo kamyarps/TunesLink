@@ -718,71 +718,58 @@ private fun ConnectedScreen(
             }
         }
         Box(Modifier.weight(1f)) {
-            ConnectedContent(state, destination, topInset, viewModel,
-                showNavigationRail, showTabletWorkspace)
-        }
-    }
-}
-
-@Composable
-private fun ConnectedContent(
-    state: TunesLinkUiState,
-    destination: TunesLinkDestination,
-    topInset: Dp,
-    viewModel: TunesLinkViewModel,
-    showNavigationRail: Boolean,
-    showTabletWorkspace: Boolean,
-) {
-    if (showTabletWorkspace) {
-        TabletTunesWorkspace(
-            state = state,
-            destination = destination,
-            viewModel = viewModel,
-            modifier = Modifier.fillMaxSize().padding(top = topInset),
-        )
-        return
-    }
-    Row(modifier = Modifier.fillMaxSize()) {
-        if (showNavigationRail) {
-            TunesLinkDestinationRail(
-                destination = destination,
-                onLibrary = { viewModel.navigate(TunesLinkDestination.Library) },
-                onPlayer = { viewModel.navigate(TunesLinkDestination.NowPlaying) },
-                onSearch = { viewModel.navigate(TunesLinkDestination.Search) },
-                modifier = Modifier
-                    .width(TunesLinkSizes.navigationRailWidth)
-                    .fillMaxHeight(),
-                topInset = topInset,
-            )
-        }
-        Box(Modifier.weight(1f).fillMaxHeight()) {
-            when (destination) {
-                TunesLinkDestination.Library -> LibraryBrowseScreen(
-                    state,
-                    viewModel,
-                    Modifier
-                        .padding(top = topInset)
-                        .widthIn(max = TunesLinkSizes.readableContentMaxWidth)
-                        .fillMaxWidth()
-                        .fillMaxHeight()
-                        .align(Alignment.Center),
+            if (showTabletWorkspace) {
+                TabletTunesWorkspace(
+                    state = state,
+                    destination = destination,
+                    viewModel = viewModel,
+                    modifier = Modifier.fillMaxSize().padding(top = topInset),
                 )
-                TunesLinkDestination.NowPlaying -> NowPlayingScreen(
-                    state,
-                    viewModel,
-                    Modifier.fillMaxSize(),
-                    topInset = topInset,
-                )
-                TunesLinkDestination.Search -> SearchScreen(
-                    state,
-                    viewModel,
-                    Modifier
-                        .padding(top = topInset)
-                        .widthIn(max = TunesLinkSizes.readableContentMaxWidth)
-                        .fillMaxWidth()
-                        .fillMaxHeight()
-                        .align(Alignment.Center),
-                )
+            } else {
+                Row(modifier = Modifier.fillMaxSize()) {
+                    if (showNavigationRail) {
+                        TunesLinkDestinationRail(
+                            destination = destination,
+                            onLibrary = { viewModel.navigate(TunesLinkDestination.Library) },
+                            onPlayer = { viewModel.navigate(TunesLinkDestination.NowPlaying) },
+                            onSearch = { viewModel.navigate(TunesLinkDestination.Search) },
+                            modifier = Modifier
+                                .width(TunesLinkSizes.navigationRailWidth)
+                                .fillMaxHeight(),
+                            topInset = topInset,
+                        )
+                    }
+                    Box(Modifier.weight(1f).fillMaxHeight()) {
+                        when (destination) {
+                            TunesLinkDestination.Library -> LibraryBrowseScreen(
+                                state,
+                                viewModel,
+                                Modifier
+                                    .padding(top = topInset)
+                                    .widthIn(max = TunesLinkSizes.readableContentMaxWidth)
+                                    .fillMaxWidth()
+                                    .fillMaxHeight()
+                                    .align(Alignment.Center),
+                            )
+                            TunesLinkDestination.NowPlaying -> NowPlayingScreen(
+                                state,
+                                viewModel,
+                                Modifier.fillMaxSize(),
+                                topInset = topInset,
+                            )
+                            TunesLinkDestination.Search -> SearchScreen(
+                                state,
+                                viewModel,
+                                Modifier
+                                    .padding(top = topInset)
+                                    .widthIn(max = TunesLinkSizes.readableContentMaxWidth)
+                                    .fillMaxWidth()
+                                    .fillMaxHeight()
+                                    .align(Alignment.Center),
+                            )
+                        }
+                    }
+                }
             }
         }
     }
