@@ -57,6 +57,7 @@ jobs:
     with:
       ref: ${{ needs.validate.outputs.source-sha }}
       release-artifact: TunesLink-android-signed
+      release-tag: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
 
   android:
     name: Signed Android release
@@ -114,9 +115,33 @@ jobs:
           ./gradlew --no-daemon --warning-mode all --dependency-verification strict
           :app:lintRelease :app:testDebugUnitTest :app:assembleRelease
       - name: Verify Android signature
-        run: >-
-          "$ANDROID_HOME/build-tools/${{ steps.requirements.outputs.build_tools }}/apksigner"
-          verify --verbose android/app/build/outputs/apk/release/app-release.apk
+        run: |
+          apk=android/app/build/outputs/apk/release/app-release.apk
+          tools="$ANDROID_HOME/build-tools/${{ steps.requirements.outputs.build_tools }}"
+          min_sdk="$("$tools/aapt" dump badging "$apk" | sed -n "s/^sdkVersion:'\([0-9]*\)'/\1/p")"
+          test -n "$min_sdk"
+          "$tools/apksigner" verify --min-sdk-version "$min_sdk" --verbose "$apk"
+      - name: Check compatibility with the previous GitHub APK
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
+        run: |
+          $releases = gh release list --repo $env:GITHUB_REPOSITORY --limit 100 `
+            --json tagName,isDraft,isPrerelease | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw "Could not list previous GitHub releases." }
+          $previous = $releases | Where-Object {
+            -not $_.isDraft -and -not $_.isPrerelease -and $_.tagName -ne $env:RELEASE_TAG
+          } | Select-Object -First 1
+          if ($null -ne $previous) {
+            New-Item -ItemType Directory -Force artifacts/previous | Out-Null
+            gh release download $previous.tagName --repo $env:GITHUB_REPOSITORY `
+              --pattern TunesLink.apk --dir artifacts/previous
+            if ($LASTEXITCODE -ne 0) { throw "Could not download $($previous.tagName) APK." }
+            ./scripts/check-android-upgrade.ps1 `
+              -PreviousApk artifacts/previous/TunesLink.apk `
+              -NewApk android/app/build/outputs/apk/release/app-release.apk
+          }
       - name: Stage public APK
         run: |
           mkdir -p artifacts/release

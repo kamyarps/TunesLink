@@ -27,9 +27,14 @@ fails during queue activation and verifies that the user's global mute setting i
 The emulator integration suite checks cooldown expiry and command errors across phone and
 tablet surfaces. Release publishing runs this same suite against the verified source commit,
 then installs the signed, optimized release APK for the viewport and launch smoke checks.
+When a previous GitHub APK exists, the release workflow also checks its package ID, signing
+certificate, and version code, then installs it on compatible emulators and upgrades to the new
+signed APK without removing the installation.
 
 ## Manual release checklist
 
+- [ ] On a phone paired with the previous GitHub release, open the new `TunesLink.apk` from a
+  browser or file manager. Confirm that Android offers an update and the pairing still works.
 - [ ] On an Android 17 (API 37) device or working emulator, grant local-network permission and
   verify pairing. Revoke the permission, restart the app, and verify that it prompts again.
   Grant access again and confirm that the saved connection recovers.

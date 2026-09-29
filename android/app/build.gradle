@@ -50,6 +50,9 @@ android {
 
     signingConfigs {
         release {
+            // Android 6 (API 23) requires the v1 JAR signature; newer devices use v2.
+            enableV1Signing = true
+            enableV2Signing = true
             if (environmentSigningConfigured) {
                 storeFile = file(environmentKeystore)
                 storePassword = System.getenv("TunesLink_ANDROID_STORE_PASSWORD")

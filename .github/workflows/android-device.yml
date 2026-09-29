@@ -11,6 +11,10 @@ on:
         description: Optional signed APK artifact from the calling release workflow
         default: ""
         type: string
+      release-tag:
+        description: Tag of the signed APK under test
+        default: ""
+        type: string
 
 permissions:
   contents: read
@@ -78,6 +82,25 @@ jobs:
         run: >-
           gh run download "$GITHUB_RUN_ID" --name "$RELEASE_ARTIFACT"
           --repo "$GITHUB_REPOSITORY" --dir artifacts/device-release
+      - name: Download the previous published APK for upgrade testing
+        if: inputs.release-artifact != ''
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release-tag }}
+        run: |
+          $releases = gh release list --repo $env:GITHUB_REPOSITORY --limit 100 `
+            --json tagName,isDraft,isPrerelease | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw "Could not list previous GitHub releases." }
+          $previous = $releases | Where-Object {
+            -not $_.isDraft -and -not $_.isPrerelease -and $_.tagName -ne $env:RELEASE_TAG
+          } | Select-Object -First 1
+          if ($null -ne $previous) {
+            New-Item -ItemType Directory -Force artifacts/device-previous | Out-Null
+            gh release download $previous.tagName --repo $env:GITHUB_REPOSITORY `
+              --pattern TunesLink.apk --dir artifacts/device-previous
+            if ($LASTEXITCODE -ne 0) { throw "Could not download $($previous.tagName) APK." }
+          }
       - name: Enable KVM access
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' |

@@ -111,6 +111,14 @@ Windows notification area by default. Choose **Exit** from its tray icon to stop
 You normally pair only once. Pair again if the Android app is reset, the bridge identity changes,
 or that device is removed from **Paired phones** in the Windows bridge.
 
+### Update Android
+
+Download the newer `TunesLink.apk` from [GitHub Releases](https://github.com/kamyarps/TunesLink/releases)
+and open it on the same device. Android should offer to update the installed app while keeping
+its pairing and other app data. You do not need to uninstall the old version. GitHub does not
+automatically notify the app or install updates, so repeat this step when a new release appears.
+Use the release APK: a locally built APK signed with another key cannot update a GitHub release.
+
 ## How it works
 
 The Android app discovers the bridge over UDP or connects to its private IPv4 address manually.
