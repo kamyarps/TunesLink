@@ -99,6 +99,18 @@ public final class SecureStoreTest {
     }
 
     @Test
+    public void repairingAfterCertificateChangeDoesNotQueueAnUnreachableRevocation() throws Exception {
+        SecureStore store = new SecureStore(new MemoryBackend(), new PassthroughCrypto());
+        store.save(info("bridge-1", "192.168.1.10"), TOKEN);
+
+        store.save(new BridgeClient.BridgeInfo("bridge-1", "PC", "192.168.1.10", 45832,
+                FINGERPRINT.replace('0', '9')), TOKEN + "replacement");
+
+        assertEquals(TOKEN + "replacement", store.load().token);
+        assertEquals(0, store.pendingRevocationCount());
+    }
+
+    @Test
     public void fullQueueRejectsForgetWithoutClearingActivePairing() throws Exception {
         SecureStore store = new SecureStore(new MemoryBackend(), new PassthroughCrypto());
         for (int index = 0; index < SecureStore.MAX_PENDING_REVOCATIONS; index++) {

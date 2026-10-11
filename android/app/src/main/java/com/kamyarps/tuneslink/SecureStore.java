@@ -142,7 +142,10 @@ final class SecureStore {
                 bridge.port, bridge.tlsFingerprint, token));
         State old = readStateForMutation();
         ArrayList<PendingRevocation> pending = new ArrayList<>(old.pending);
-        if (old.active != null && !sameBridgeIdentity(old.active, saved)) {
+        // Pairing again with the same computer replaces this phone's old authorization there
+        // (it is keyed by this phone's client id), so only another computer's needs revoking.
+        // Queuing it would also pin it to a certificate that computer may no longer present.
+        if (old.active != null && !old.active.id.equals(saved.id)) {
             if (pending.size() >= MAX_PENDING_REVOCATIONS) {
                 throw new IllegalStateException(
                         "Pending revocation queue is full. Retry an earlier removal first.");
@@ -361,11 +364,6 @@ final class SecureStore {
         return left != null && right != null && left.id.equals(right.id)
                 && left.tlsFingerprint.equals(right.tlsFingerprint)
                 && left.token.equals(right.token);
-    }
-
-    private static boolean sameBridgeIdentity(SavedBridge left, SavedBridge right) {
-        return left != null && right != null && left.id.equals(right.id)
-                && left.tlsFingerprint.equals(right.tlsFingerprint);
     }
 
     private static final class SharedPreferencesBackend implements Backend {

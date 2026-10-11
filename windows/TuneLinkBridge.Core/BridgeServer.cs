@@ -318,6 +318,9 @@ internal sealed partial class BridgeServer : IDisposable
             }
             catch (OperationCanceledException) { }
             catch (IOException) { }
+            // A browser or port scanner speaking plain HTTP fails the handshake. Any LAN host can
+            // cause that at will, so logging it would let one flood out the real diagnostics.
+            catch (AuthenticationException) when (secureStream?.IsAuthenticated != true) { }
             catch (Exception exception)
             {
                 BridgeDiagnostics.Record("network.request", exception, options.ConfigDirectory);

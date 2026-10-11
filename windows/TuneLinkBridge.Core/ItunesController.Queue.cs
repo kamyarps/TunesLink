@@ -166,10 +166,11 @@ internal sealed partial class ItunesController
             // Never change persistent, global mute while in a killable COM worker. A hung
             // PlayFirstTrack call can prevent any finally block from restoring the user's setting.
             playlist.PlayFirstTrack();
+            // The playlist is playing now, so a failure below must not delete it.
+            activated = true;
             if (!playing) app.Pause();
             if (position > 0) app.PlayerPosition = position;
             SetProperty(playlist, "Shuffle", shuffle);
-            activated = true;
             int playlistId = ReadInt((object)playlist, "PlaylistID");
             // A failed or cancelled replacement must leave the playing queue's build intact.
             int generation = AbandonQueueBuild();
@@ -268,6 +269,8 @@ internal sealed partial class ItunesController
             return;
         }
         build.Next = next;
+        // The retry limit is for one dialog that stays open, not every one over a long build.
+        build.BusyRetries = 0;
         bool complete = next >= build.Queue.Order.Length;
         if (complete || Stopwatch.GetElapsedTime(build.SavedAt) >= QueueSaveInterval)
         {
@@ -455,6 +458,11 @@ internal sealed partial class ItunesController
         return true;
     }
 
+    /// <summary>How far through its order the queue's songs have been added to the playlist.</summary>
+    private int QueuedThrough(ManagedQueue queue) =>
+        queueBuild is { } build && ReferenceEquals(build.Queue, queue) ? build.Next
+            : queue.Next >= 0 ? queue.Next : queue.Order.Length;
+
     private static bool TrackExists(object appObject, string trackId)
     {
         dynamic? track = ResolveTrack(appObject, trackId);
@@ -475,8 +483,11 @@ internal sealed partial class ItunesController
         // The queue holds the songs before the selection only with shuffle or repeat all, and its
         // order is shuffled only if shuffle was on when it was built. Any other change is a
         // playlist setting, so the queue, and a build still underway, stay as they are.
+        // Shuffle reorders only the songs already queued, so turning it on while a build is still
+        // adding the rest must shuffle those too.
         if ((shuffle || repeat == "all") == (originalShuffle || originalRepeat == "all")
-            && !(originalShuffle && !shuffle))
+            && !(originalShuffle && !shuffle)
+            && !(shuffle && !originalShuffle && QueuedThrough(active) < active.Order.Length))
         {
             if (shuffle != originalShuffle) SetCurrentPlaylistProperty(appObject, "Shuffle", shuffle);
             if (repeat != originalRepeat)
@@ -494,6 +505,9 @@ internal sealed partial class ItunesController
     private void RetargetManagedQueue(object appObject, ManagedQueue active, int current,
         bool shuffle, bool originalShuffle, string repeat, CancellationToken cancellationToken)
     {
+        // Songs a build underway has not reached yet are missing from the playlist without having
+        // been deleted. In a shuffled build they are scattered through collection order.
+        HashSet<int> unqueued = [.. active.Order.Skip(QueuedThrough(active))];
         int generation = AbandonQueueBuild();
         dynamic app = appObject;
         dynamic? playlist = null;
@@ -515,9 +529,9 @@ internal sealed partial class ItunesController
             int position = entries.IndexOf(current);
             if (position < 0 || entries.Contains(-1))
                 throw new MediaUnavailableException("Playback changed while updating the queue; try again");
-            // Songs the playlist holds now. One of the collection's songs missing from it was
-            // deleted from the library (or never added yet) rather than dropped below.
-            HashSet<int> present = [.. entries];
+            // Songs the playlist holds now or will. Any other song of the collection missing from
+            // it was deleted from the library rather than dropped below.
+            HashSet<int> present = [.. entries, .. unqueued];
 
             SetProperty(playlist, "SongRepeat", repeat == "one" ? 1 : repeat == "all" ? 2 : 0);
             List<int> upcoming;

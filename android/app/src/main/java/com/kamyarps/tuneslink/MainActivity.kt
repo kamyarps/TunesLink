@@ -65,6 +65,8 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -226,7 +228,8 @@ private fun TunesLinkApp(
     }
     val appFocusRequester = remember { FocusRequester() }
     val availability = ConnectionAvailability.from(state.connection)
-    var dismissedRecoveryKind by remember { mutableStateOf<ConnectionAvailabilityKind?>(null) }
+    // Saved so "Not now" survives rotation and other configuration changes.
+    var dismissedRecoveryKind by rememberSaveable { mutableStateOf<ConnectionAvailabilityKind?>(null) }
     var recoveryAction by remember(availability.kind) {
         mutableStateOf<RecoveryDialogAction?>(null)
     }
@@ -686,6 +689,7 @@ private fun ConnectedScreen(
     showTabletWorkspace: Boolean,
 ) {
     val layoutDirection = LocalLayoutDirection.current
+    val destinations = rememberSaveableStateHolder()
     val commandError = state.player.commandError
     // The top inset is applied by each destination so Now Playing can draw its ambient
     // background full-bleed behind the status bar. Consuming the scaffold padding lets
@@ -740,33 +744,36 @@ private fun ConnectedScreen(
                         )
                     }
                     Box(Modifier.weight(1f).fillMaxHeight()) {
-                        when (destination) {
-                            TunesLinkDestination.Library -> LibraryBrowseScreen(
-                                state,
-                                viewModel,
-                                Modifier
-                                    .padding(top = topInset)
-                                    .widthIn(max = TunesLinkSizes.readableContentMaxWidth)
-                                    .fillMaxWidth()
-                                    .fillMaxHeight()
-                                    .align(Alignment.Center),
-                            )
-                            TunesLinkDestination.NowPlaying -> NowPlayingScreen(
-                                state,
-                                viewModel,
-                                Modifier.fillMaxSize(),
-                                topInset = topInset,
-                            )
-                            TunesLinkDestination.Search -> SearchScreen(
-                                state,
-                                viewModel,
-                                Modifier
-                                    .padding(top = topInset)
-                                    .widthIn(max = TunesLinkSizes.readableContentMaxWidth)
-                                    .fillMaxWidth()
-                                    .fillMaxHeight()
-                                    .align(Alignment.Center),
-                            )
+                        // Each destination keeps its scroll position while another one is shown.
+                        destinations.SaveableStateProvider(destination.name) {
+                            when (destination) {
+                                TunesLinkDestination.Library -> LibraryBrowseScreen(
+                                    state,
+                                    viewModel,
+                                    Modifier
+                                        .padding(top = topInset)
+                                        .widthIn(max = TunesLinkSizes.readableContentMaxWidth)
+                                        .fillMaxWidth()
+                                        .fillMaxHeight()
+                                        .align(Alignment.Center),
+                                )
+                                TunesLinkDestination.NowPlaying -> NowPlayingScreen(
+                                    state,
+                                    viewModel,
+                                    Modifier.fillMaxSize(),
+                                    topInset = topInset,
+                                )
+                                TunesLinkDestination.Search -> SearchScreen(
+                                    state,
+                                    viewModel,
+                                    Modifier
+                                        .padding(top = topInset)
+                                        .widthIn(max = TunesLinkSizes.readableContentMaxWidth)
+                                        .fillMaxWidth()
+                                        .fillMaxHeight()
+                                        .align(Alignment.Center),
+                                )
+                            }
                         }
                     }
                 }

@@ -39,7 +39,7 @@ internal sealed class NetworkAddressSelector : IDisposable
     public NetworkAddressSelector(TimeProvider? timeProvider = null)
     {
         this.timeProvider = timeProvider ?? TimeProvider.System;
-        debounce = new(_ => Refresh(), null, Timeout.Infinite, Timeout.Infinite);
+        debounce = new(_ => RefreshFromTimer(), null, Timeout.Infinite, Timeout.Infinite);
         NetworkChange.NetworkAddressChanged += NetworkAddressChanged;
         Refresh();
     }
@@ -93,6 +93,17 @@ internal sealed class NetworkAddressSelector : IDisposable
             }
         }
         if (changed) Changed?.Invoke();
+    }
+
+    // An exception escaping a timer callback ends the process; adapter enumeration can fail while
+    // adapters change, and the next change schedules another refresh.
+    private void RefreshFromTimer()
+    {
+        try { Refresh(); }
+        catch (Exception exception)
+        {
+            BridgeDiagnostics.Record("network.refresh", exception);
+        }
     }
 
     /// <summary>Refreshes on a pool thread, so callers never wait on adapter enumeration.</summary>

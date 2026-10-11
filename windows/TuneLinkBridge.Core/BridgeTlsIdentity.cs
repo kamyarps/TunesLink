@@ -75,6 +75,14 @@ internal sealed class BridgeTlsIdentity : IDisposable
                             loaded.Dispose();
                             loaded = protectedIdentity;
                         }
+                        catch (Exception exception) when (exception is IOException
+                                                              or UnauthorizedAccessException)
+                        {
+                            // The identity itself is fine; keep it and protect it at the next start
+                            // rather than making every phone pair again.
+                            BridgeDiagnostics.Record("tls.identity_migrate", exception,
+                                Path.GetDirectoryName(path));
+                        }
                         catch
                         {
                             loaded.Dispose();
@@ -86,6 +94,16 @@ internal sealed class BridgeTlsIdentity : IDisposable
                 }
                 loaded.Dispose();
                 File.Move(path, path + ".expired", true);
+            }
+            // A file that cannot be read, for example while a backup or antivirus scanner holds
+            // it, is not damaged. Replacing it would make every phone pair again, so the bridge
+            // fails to start instead, as it does for an unreadable configuration.
+            catch (Exception exception) when (exception is IOException
+                                                  or UnauthorizedAccessException)
+            {
+                BridgeDiagnostics.Record("tls.identity_read", exception,
+                    Path.GetDirectoryName(path));
+                throw;
             }
             catch (Exception exception)
             {

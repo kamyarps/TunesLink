@@ -147,6 +147,19 @@ class TunesLinkLayoutBehaviorTest {
         assertFalse(state.copy(connection = ConnectionState.Connecting).playbackSample().live)
     }
 
+    @Test
+    fun playbackSamplesHoldUntilASelectedSongStarts() {
+        val play = PendingMutation(1, PlaybackAction.PlayTrack, PlaybackAction.PlayTrack.playerFields(),
+            expectedTrackId = "next", startedAtMillis = 0)
+        val state = TunesLinkUiState(
+            connection = ConnectionState.Connected("PC"),
+            player = PlayerUiState(playing = true, position = 0.0, trackId = "next",
+                pendingMutations = mapOf(PlaybackAction.PlayTrack to play)),
+        )
+        // A large collection can take seconds to start; the scrubber waits at 0:00 meanwhile.
+        assertTrue(state.playbackSample().held)
+    }
+
     private fun sample(
         trackId: String = "track",
         position: Double,

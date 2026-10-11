@@ -21,6 +21,7 @@ internal static partial class BridgeSelfTest
         await TestModeChangesInPlaceAsync(Path.Combine(root, "queue-in-place"));
         await TestRepeatOffAfterWrappingAsync(Path.Combine(root, "queue-repeat-wrapped"));
         await TestExpiredIndexRefreshesInBackgroundAsync(Path.Combine(root, "index-refresh"));
+        await TestFirstIndexSurvivesRequestTimeoutAsync(Path.Combine(root, "index-first"));
     }
 
     private static void TestLongCollectionIds(string directory)
@@ -159,6 +160,37 @@ internal static partial class BridgeSelfTest
         LibraryPage songs = await controller.GetLibraryAsync("", 0, 60);
         Ensure(songs.Total == ItunesController.LibraryRefreshBatch * 3 + 1,
             "songs come from the refreshed index");
+    }
+
+    private static async Task TestFirstIndexSurvivesRequestTimeoutAsync(string directory)
+    {
+        // A first index of a large library can outlast one request. Its progress must carry on
+        // in the background instead of every retry starting the whole read again.
+        QueueAppProbe app = new(20_000);
+        using ItunesController controller = FakeComController(directory, app);
+        FieldInfo refresh = typeof(ItunesController).GetField("libraryRefresh",
+            BindingFlags.Instance | BindingFlags.NonPublic)!;
+        bool interrupted = false;
+        for (int delay = 1; delay <= 1024 && !interrupted; delay *= 2)
+        {
+            using CancellationTokenSource timeout = new(TimeSpan.FromMilliseconds(delay));
+            try
+            {
+                await controller.GetCollectionsAsync("albums", "", 0, 60, timeout.Token);
+                break;
+            }
+            catch (OperationCanceledException)
+            {
+                interrupted = refresh.GetValue(controller) is not null;
+            }
+        }
+        Ensure(interrupted, "a request that runs out of time leaves the first index reading");
+        await WaitUntilAsync(() => refresh.GetValue(controller) is null,
+            "the first index finishes in the background without another request");
+        LibraryCollectionPage albums = await controller.GetCollectionsAsync("albums", "", 0, 60);
+        LibraryPage songs = await controller.GetLibraryAsync("", 0, 60);
+        Ensure(albums.Total == 1 && songs.Total == 20_000,
+            "the index finished in the background holds the whole library");
     }
 
     private static async Task TestProgressiveQueueAsync(string directory)

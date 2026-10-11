@@ -173,6 +173,8 @@ final class BridgeRepository implements AutoCloseable {
     }
 
     boolean secureStorageRequiresRecovery() {
+        // Read again: a Keystore failure at startup may have been transient.
+        if (store.requiresRecovery()) store.pendingRevocations();
         return store.requiresRecovery();
     }
 
@@ -963,6 +965,19 @@ final class BridgeRepository implements AutoCloseable {
             return;
         }
         SecureStore.PendingRevocation item = pending.get(index);
+        SecureStore.SavedBridge active = current;
+        if (active != null && active.id.equals(item.bridge.id)) {
+            // Pairing with that computer again already replaced this authorization there; its
+            // old certificate may be gone, so contacting it could never succeed.
+            try {
+                store.removePendingRevocation(item.revocationId);
+                retryPendingRevocation(pending, index + 1, removed + 1, firstFailure);
+            } catch (Exception persistenceFailure) {
+                retryPendingRevocation(pending, index + 1, removed,
+                        firstFailure == null ? "Could not save revocation cleanup" : firstFailure);
+            }
+            return;
+        }
         client.revokePairing(item.bridge, new BridgeClient.Result<>() {
             @Override public void success(Boolean ignored) {
                 try {

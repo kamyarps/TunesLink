@@ -33,6 +33,7 @@
     <string name="songs">Songs</string>
     <string name="genres">Genres</string>
     <string name="song">Song</string>
+    <string name="track_number_column">#</string>
     <string name="artist">Artist</string>
     <string name="album">Album</string>
     <string name="time">Time</string>

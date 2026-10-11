@@ -184,6 +184,43 @@ class StateLayerViewModelTest {
         assertEquals("abba", vm.announcedResultQuery)
     }
 
+    @Test fun aFailedSearchNeverShowsThePreviousQuerysRowsAsItsResults() {
+        val client = FakeClient()
+        val vm = testViewModel(BridgeRepository(client, pairedStore()), TunesLinkUiState(
+            connection = ConnectionState.Connected("PC"),
+            library = LibraryUiState(editingQuery = "abbaz", loadedQuery = "abba",
+                items = listOf(track("t1")), total = 1, resultsQuery = "abba")))
+        vm.commitSearch("abbaz")
+        // The previous rows may stay up while the new query loads...
+        assertEquals(1, vm.mutableState.value.library.items.size)
+        assertNotNull(client.library)
+        // ...but never as the failed query's results, and returning to Search retries it.
+        val library = vm.mutableState.value.library.failedSearch("abbaz", "Offline", null)
+        assertTrue(library.items.isEmpty())
+        assertEquals("abbaz", library.loadedQuery)
+        assertNotNull(library.error)
+        assertTrue(library.searchNeedsCommit())
+    }
+
+    @Test fun searchesStayWithinTheBridgeLimitWithoutSplittingACharacter() {
+        assertEquals("abba", boundedSearchQuery("abba"))
+        assertEquals(120, boundedSearchQuery("a".repeat(500)).length)
+        val emoji = "a".repeat(119) + "🎵"
+        assertEquals("a".repeat(119), boundedSearchQuery(emoji))
+    }
+
+    @Test fun aFailedRefreshKeepsTheSameQuerysRows() {
+        val client = FakeClient()
+        val vm = testViewModel(BridgeRepository(client, pairedStore()), TunesLinkUiState(
+            connection = ConnectionState.Connected("PC"),
+            library = LibraryUiState(editingQuery = "abba", loadedQuery = "abba",
+                items = listOf(track("t1")), total = 1, resultsQuery = "abba")))
+        vm.commitSearch("abba")
+        val library = vm.mutableState.value.library.failedSearch("abba", "Offline", null)
+        assertEquals(1, library.items.size)
+        assertEquals("Offline", library.error)
+    }
+
     @Test fun retryingAFailedNextPageLoadsThatPageNotTheFirst() {
         val client = FakeClient()
         val vm = testViewModel(BridgeRepository(client, pairedStore()), TunesLinkUiState(

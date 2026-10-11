@@ -56,6 +56,9 @@ $versions = @(
     $androidMatch.Groups[1].Value,
     (Get-TunesLinkProjectVersion -Path `
         (Join-Path $root "windows\TuneLinkBridge.WinUI\TuneLinkBridge.WinUI.csproj")),
+    # Core supplies the version the bridge reports to phones.
+    (Get-TunesLinkProjectVersion -Path `
+        (Join-Path $root "windows\TuneLinkBridge.Core\TuneLinkBridge.Core.csproj")),
     (Get-TunesLinkProjectVersion -Path `
         (Join-Path $root "test-support\TuneLinkDemoBridge\TuneLinkDemoBridge.csproj"))
 )

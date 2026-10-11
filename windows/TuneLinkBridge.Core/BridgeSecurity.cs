@@ -14,6 +14,7 @@ internal sealed class BridgeSecurity
     internal const int MaxFailedAttemptsPerCode = 10;
     private const int ConfigReadAttempts = 5;
     private static readonly TimeSpan ConfigReadRetryDelay = TimeSpan.FromMilliseconds(100);
+    private static readonly TimeSpan LastSeenInterval = TimeSpan.FromMinutes(5);
     private const int MaxLoadablePairedDevices = 12;
     private static readonly JsonSerializerOptions ConfigurationJson = new()
     {
@@ -57,6 +58,7 @@ internal sealed class BridgeSecurity
     private string pairCode;
     private DateTimeOffset pairCodeExpiresAt;
     private int failedAttempts;
+    private DateTimeOffset lastSeenWriteFailedAt = DateTimeOffset.MinValue;
     private volatile bool pairingOpen = true;
 
     public event Action? Changed;
@@ -210,15 +212,20 @@ internal sealed class BridgeSecurity
         {
             PairedDevice? match = FindDeviceLocked(supplied);
             if (match is null) return false;
-            if (timeProvider.GetUtcNow() - match.LastSeenAt > TimeSpan.FromMinutes(5))
+            DateTimeOffset now = timeProvider.GetUtcNow();
+            // Every request and stream event validates its token, so a configuration that cannot
+            // be written is retried at the same interval rather than on each one.
+            if (now - match.LastSeenAt > LastSeenInterval
+                && now - lastSeenWriteFailedAt > LastSeenInterval)
             {
                 Configuration proposed = Clone(configuration);
                 PairedDevice? proposedMatch = proposed.Devices.FirstOrDefault(device =>
                     string.Equals(device.TokenHash, match.TokenHash, StringComparison.Ordinal));
                 if (proposedMatch is not null)
                 {
-                    proposedMatch.LastSeenAt = timeProvider.GetUtcNow();
+                    proposedMatch.LastSeenAt = now;
                     if (TrySaveConfiguration(proposed)) configuration = proposed;
+                    else lastSeenWriteFailedAt = now;
                 }
             }
             return true;

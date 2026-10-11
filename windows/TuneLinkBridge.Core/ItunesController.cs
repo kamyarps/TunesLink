@@ -252,7 +252,7 @@ internal sealed partial class ItunesController : IMediaController
         string filter = id;
         object app = GetITunes();
         LibrarySnapshot snapshot = UsableLibrarySnapshot(app, cancellationToken)
-            ?? BuildAndPersistLibrarySnapshot(app, cancellationToken);
+            ?? ReadFirstLibrarySnapshot(app, cancellationToken);
         HashSet<string> albumKeys = new(StringComparer.OrdinalIgnoreCase);
         for (int index = 0; index < snapshot.Tracks.Length; index++)
         {
@@ -594,8 +594,9 @@ internal sealed partial class ItunesController : IMediaController
     {
         COMException com => ItunesWorkerProtocol.ClassifyComFailure(com.HResult)
             == ItunesWorkerFailureCategory.ComFailure,
-        IOException or UnauthorizedAccessException or InvalidCastException
-            or Microsoft.CSharp.RuntimeBinder.RuntimeBinderException => true,
+        // A temporary file that cannot be written or read is this computer's problem, and the
+        // phone keeps its cached cover only when the failure is not reported as missing artwork.
+        InvalidCastException or Microsoft.CSharp.RuntimeBinder.RuntimeBinderException => true,
         _ => false,
     };
 
@@ -1061,7 +1062,7 @@ internal sealed partial class ItunesController : IMediaController
         int offset, int limit, CancellationToken cancellationToken)
     {
         LibrarySnapshot snapshot = UsableLibrarySnapshot(appObject, cancellationToken)
-            ?? BuildAndPersistLibrarySnapshot(appObject, cancellationToken);
+            ?? ReadFirstLibrarySnapshot(appObject, cancellationToken);
         IEnumerable<LibraryCollection> filtered = kind switch
         {
             "artists" => snapshot.Artists,
@@ -1073,14 +1074,6 @@ internal sealed partial class ItunesController : IMediaController
             filtered = filtered.Where(item => LibraryGrouping.Matches(item.Title, term)
                 || LibraryGrouping.Matches(item.Subtitle, term));
         return PageCollections(filtered.ToArray(), offset, limit, snapshot.Revision);
-    }
-
-    private LibrarySnapshot BuildLibrarySnapshot(object appObject,
-        CancellationToken cancellationToken)
-    {
-        using LibrarySnapshotBuilder builder = new(this, appObject, cancellationToken);
-        while (!builder.Read(int.MaxValue, cancellationToken)) { }
-        return builder.Complete();
     }
 
     private static void AddCollection(Dictionary<string, CollectionAccumulator> groups,
@@ -1353,14 +1346,6 @@ internal sealed partial class ItunesController : IMediaController
     internal static bool IsFresh(DateTimeOffset fetchedAt, DateTimeOffset now, TimeSpan lifetime) =>
         now >= fetchedAt && now - fetchedAt < lifetime;
 
-    private LibrarySnapshot BuildAndPersistLibrarySnapshot(object appObject,
-        CancellationToken cancellationToken)
-    {
-        LibrarySnapshot snapshot = BuildLibrarySnapshot(appObject, cancellationToken);
-        PersistLibrarySnapshot(snapshot);
-        return snapshot;
-    }
-
     private void PersistLibrarySnapshot(LibrarySnapshot snapshot)
     {
         librarySnapshot = snapshot;
@@ -1562,7 +1547,7 @@ internal sealed partial class ItunesController : IMediaController
     {
         dynamic app = appObject;
         try { return app.GetITObjectByID(locator.SourceId, locator.PlaylistId, 0, 0); }
-        catch { return null; }
+        catch (Exception exception) when (!IsItunesUnreachable(exception)) { return null; }
     }
 
     private static (bool ShuffleEnabled, string RepeatMode) ReadPlaybackModes(object appObject)
@@ -1800,8 +1785,16 @@ internal sealed partial class ItunesController : IMediaController
             return app.GetITObjectByID(locator.SourceId, locator.PlaylistId,
                 locator.TrackId, locator.DatabaseId);
         }
-        catch { return null; }
+        catch (Exception exception) when (!IsItunesUnreachable(exception)) { return null; }
     }
+
+    /// <summary>
+    /// A busy, closing, or disconnected iTunes says nothing about whether an item exists, so it
+    /// must not be reported as a deleted song, playlist, or missing artwork.
+    /// </summary>
+    private static bool IsItunesUnreachable(Exception exception) =>
+        exception is System.Runtime.InteropServices.COMException com
+        && ItunesWorkerProtocol.ClassifyComFailure(com.HResult) != ItunesWorkerFailureCategory.ComFailure;
 
     private ArtworkData? FreshArtwork(string key) =>
         artworkCache.TryGetValue(key, out ArtworkData? cached)

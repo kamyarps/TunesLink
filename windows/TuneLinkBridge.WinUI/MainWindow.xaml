@@ -171,8 +171,8 @@
                         <Viewbox x:Name="PhoneCheckMark" Width="34" Height="34"
                                  Canvas.Left="305.5" Canvas.Top="108">
                             <Grid Width="44" Height="44">
-                                <Ellipse Stroke="#FFFFFFFF" StrokeThickness="2.5" />
-                                <Path Stroke="#FFFFFFFF" StrokeThickness="3"
+                                <Ellipse Stroke="{ThemeResource ScreenGlyphBrush}" StrokeThickness="2.5" />
+                                <Path Stroke="{ThemeResource ScreenGlyphBrush}" StrokeThickness="3"
                                       StrokeStartLineCap="Round" StrokeEndLineCap="Round"
                                       StrokeLineJoin="Round"
                                       Data="M 13.5 22.5 L 19.5 28.5 L 30.5 15.5" />
@@ -212,8 +212,9 @@
                         </Border>
                         <Border x:Name="ItunesStatusChip" Style="{StaticResource ChipStyle}" HorizontalAlignment="Center">
                             <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                                <FontIcon x:Name="ItunesStatusIndicator" Glyph="&#xEC61;"
-                                          FontSize="15" Foreground="{ThemeResource SuccessBrush}"
+                                <!-- Neutral until the first status result: checking is not success. -->
+                                <FontIcon x:Name="ItunesStatusIndicator" Glyph="&#xEA3A;"
+                                          FontSize="15" Foreground="{ThemeResource SecondaryTextBrush}"
                                           VerticalAlignment="Center" />
                                 <TextBlock x:Name="ItunesStatusText" x:Uid="ItunesStatus"
                                            Text="Checking iTunes…"
@@ -232,16 +233,16 @@
                                   Click="PairAnother_Click">
                         <ToggleButton.Resources>
                             <ResourceDictionary>
-                                <!-- Light and dark keep the brand gradient in every state. High
+                                <!-- Light and dark keep the brand gradient in every state, darkened on hover and press. High
                                      contrast uses the system highlight pair instead: white text on
                                      the gradient is unreadable against user-chosen colors. -->
                                 <ResourceDictionary.ThemeDictionaries>
                                     <ResourceDictionary x:Key="Default">
-                                        <StaticResource x:Key="ToggleButtonBackgroundPointerOver" ResourceKey="BrandBrush" />
-                                        <StaticResource x:Key="ToggleButtonBackgroundPressed" ResourceKey="BrandBrush" />
+                                        <StaticResource x:Key="ToggleButtonBackgroundPointerOver" ResourceKey="BrandHoverBrush" />
+                                        <StaticResource x:Key="ToggleButtonBackgroundPressed" ResourceKey="BrandPressedBrush" />
                                         <StaticResource x:Key="ToggleButtonBackgroundChecked" ResourceKey="BrandBrush" />
-                                        <StaticResource x:Key="ToggleButtonBackgroundCheckedPointerOver" ResourceKey="BrandBrush" />
-                                        <StaticResource x:Key="ToggleButtonBackgroundCheckedPressed" ResourceKey="BrandBrush" />
+                                        <StaticResource x:Key="ToggleButtonBackgroundCheckedPointerOver" ResourceKey="BrandHoverBrush" />
+                                        <StaticResource x:Key="ToggleButtonBackgroundCheckedPressed" ResourceKey="BrandPressedBrush" />
                                         <SolidColorBrush x:Key="ToggleButtonForegroundPointerOver" Color="#FFFFFFFF" />
                                         <SolidColorBrush x:Key="ToggleButtonForegroundPressed" Color="#FFFFFFFF" />
                                         <SolidColorBrush x:Key="ToggleButtonForegroundChecked" Color="#FFFFFFFF" />
@@ -249,11 +250,11 @@
                                         <SolidColorBrush x:Key="ToggleButtonForegroundCheckedPressed" Color="#FFFFFFFF" />
                                     </ResourceDictionary>
                                     <ResourceDictionary x:Key="Light">
-                                        <StaticResource x:Key="ToggleButtonBackgroundPointerOver" ResourceKey="BrandBrush" />
-                                        <StaticResource x:Key="ToggleButtonBackgroundPressed" ResourceKey="BrandBrush" />
+                                        <StaticResource x:Key="ToggleButtonBackgroundPointerOver" ResourceKey="BrandHoverBrush" />
+                                        <StaticResource x:Key="ToggleButtonBackgroundPressed" ResourceKey="BrandPressedBrush" />
                                         <StaticResource x:Key="ToggleButtonBackgroundChecked" ResourceKey="BrandBrush" />
-                                        <StaticResource x:Key="ToggleButtonBackgroundCheckedPointerOver" ResourceKey="BrandBrush" />
-                                        <StaticResource x:Key="ToggleButtonBackgroundCheckedPressed" ResourceKey="BrandBrush" />
+                                        <StaticResource x:Key="ToggleButtonBackgroundCheckedPointerOver" ResourceKey="BrandHoverBrush" />
+                                        <StaticResource x:Key="ToggleButtonBackgroundCheckedPressed" ResourceKey="BrandPressedBrush" />
                                         <SolidColorBrush x:Key="ToggleButtonForegroundPointerOver" Color="#FFFFFFFF" />
                                         <SolidColorBrush x:Key="ToggleButtonForegroundPressed" Color="#FFFFFFFF" />
                                         <SolidColorBrush x:Key="ToggleButtonForegroundChecked" Color="#FFFFFFFF" />

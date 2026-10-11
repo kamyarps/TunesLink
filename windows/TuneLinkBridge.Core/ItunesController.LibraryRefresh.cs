@@ -18,6 +18,7 @@ internal sealed partial class ItunesController
         public int Generation { get; } = generation;
         public LibrarySnapshotBuilder Builder { get; } = builder;
         public long StartedAt { get; } = Stopwatch.GetTimestamp();
+        public bool Continuing { get; set; }
     }
 
     /// <summary>
@@ -41,7 +42,51 @@ internal sealed partial class ItunesController
         LibraryRefresh started = new(++libraryRefreshGeneration,
             new LibrarySnapshotBuilder(this, appObject, CancellationToken.None));
         libraryRefresh = started;
-        EnqueueInternal(() => ContinueLibraryRefresh(started));
+        ContinueInBackground(started);
+    }
+
+    private void ContinueInBackground(LibraryRefresh refresh)
+    {
+        if (refresh.Continuing) return;
+        refresh.Continuing = true;
+        EnqueueInternal(() => ContinueLibraryRefresh(refresh));
+    }
+
+    /// <summary>
+    /// Reads the first index while the request waits. A large library can take longer than one
+    /// request may, so a request that runs out of time hands its progress to the background read
+    /// instead of discarding it; the next request finds the read further along, or finished.
+    /// </summary>
+    private LibrarySnapshot ReadFirstLibrarySnapshot(object appObject,
+        CancellationToken cancellationToken)
+    {
+        LibraryRefresh refresh = libraryRefresh ??= new LibraryRefresh(++libraryRefreshGeneration,
+            new LibrarySnapshotBuilder(this, appObject, cancellationToken));
+        LibrarySnapshot snapshot;
+        try
+        {
+            while (!refresh.Builder.Read(LibraryRefreshBatch, cancellationToken)) { }
+            snapshot = refresh.Builder.Complete();
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            ContinueInBackground(refresh);
+            throw;
+        }
+        catch
+        {
+            if (ReferenceEquals(libraryRefresh, refresh)) libraryRefresh = null;
+            refresh.Builder.Dispose();
+            throw;
+        }
+        // A queued background batch finds the refresh gone and only releases the builder.
+        if (ReferenceEquals(libraryRefresh, refresh)) libraryRefresh = null;
+        refresh.Builder.Dispose();
+        PersistLibrarySnapshot(snapshot);
+        staleLibrarySnapshot = null;
+        BridgeDiagnostics.RecordDuration("library.index",
+            (long)Stopwatch.GetElapsedTime(refresh.StartedAt).TotalMilliseconds);
+        return snapshot;
     }
 
     private void ContinueLibraryRefresh(LibraryRefresh refresh)

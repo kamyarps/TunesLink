@@ -131,8 +131,15 @@ internal class TunesLinkViewModel(
                 delay(wait)
             }
         }
-        mutableState.update { it.copy(pendingRevocationCount = repository.pendingRevocationCount()) }
-        if (repository.pendingRevocationCount() > 0) repository.retryPendingRevocations(null)
+        refreshPendingRevocationCount()
+        if (repository.pendingRevocationCount() > 0) {
+            // A quiet retry; its outcome only updates the pending notice.
+            repository.retryPendingRevocations(object : BridgeClient.Result<Int> {
+                override fun success(value: Int) = refreshPendingRevocationCount()
+                override fun failure(message: String, unauthorized: Boolean) =
+                    refreshPendingRevocationCount()
+            })
+        }
         if (!mutableState.value.navigation.switchingComputer && repository.current() != null) {
             if (stateUpdatesActive) repository.requestStateRefresh()
             else connect(initial = false)
@@ -234,7 +241,24 @@ internal class TunesLinkViewModel(
         }
     }
 
+    /**
+     * Unreadable secure storage cannot hold a new pairing, so pairing would use up the computer's
+     * code and then fail. Keep the recovery instructions up instead.
+     */
+    private fun blockedBySecureStorage(): Boolean {
+        if (!repository.secureStorageRequiresRecovery()) return false
+        mutableState.update {
+            it.copy(
+                discoveryError = getApplication<Application>()
+                    .getString(R.string.secure_storage_recovery_required),
+            )
+        }
+        announce(R.string.secure_storage_recovery_required, haptic = HapticIntent.Reject)
+        return true
+    }
+
     fun discover() {
+        if (blockedBySecureStorage()) return
         repository.cancelDiscovery()
         discoveryRequest.cancel()
         val generation = ++discoveryGeneration
@@ -277,6 +301,7 @@ internal class TunesLinkViewModel(
     fun chooseBridge(bridge: BridgeClient.BridgeInfo) = openPairing(bridge)
 
     fun openManualAddress() {
+        if (blockedBySecureStorage()) return
         Log.d(NAVIGATION_TAG, "present manual-address")
         setModalPresentation(ModalPresentation(TunesLinkModal.ManualAddress))
         mutableState.update { it.copy(manualAddressError = null) }
@@ -558,8 +583,16 @@ internal class TunesLinkViewModel(
         })
     }
 
+    private fun refreshPendingRevocationCount() {
+        mutableState.update { it.copy(pendingRevocationCount = repository.pendingRevocationCount()) }
+    }
+
     fun retryPendingRevocations() {
-        if (mutableState.value.revocationRetryBusy || repository.pendingRevocationCount() == 0) return
+        if (mutableState.value.revocationRetryBusy) return
+        if (repository.pendingRevocationCount() == 0) {
+            refreshPendingRevocationCount()
+            return
+        }
         mutableState.update { it.copy(revocationRetryBusy = true, forgetError = null) }
         repository.retryPendingRevocations(object : BridgeClient.Result<Int> {
             override fun success(value: Int) {
@@ -1087,6 +1120,8 @@ internal class TunesLinkViewModel(
         private const val KEY_MODAL_RETURN = "modal_return"
         private const val PAIRING_CODE_LENGTH = 6
         private const val MAX_ADDRESS_LENGTH = 64
+        /** The bridge rejects longer searches (`BridgeServer.Routing.cs`). */
+        internal const val MAX_SEARCH_LENGTH = 120
         private const val BACKGROUND_STREAM_GRACE_MILLIS = 15_000L
         internal const val PAGE_SIZE = 60
         internal const val MAX_LIBRARY_WINDOW_ITEMS = PAGE_SIZE * 8

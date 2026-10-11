@@ -31,6 +31,11 @@
                     <Color x:Key="ScreenStartColor">#FFF0836A</Color>
                     <Color x:Key="ScreenMidColor">#FF9C57EE</Color>
                     <Color x:Key="ScreenEndColor">#FF3E6FF0</Color>
+                    <Color x:Key="ScreenGlyphColor">#FFFFFFFF</Color>
+                    <!-- Disabled controls recede below the enabled raised surface. -->
+                    <Color x:Key="DisabledFillColor">#FF1B1B24</Color>
+                    <Color x:Key="DisabledBorderColor">#802E2E3A</Color>
+                    <Color x:Key="DisabledTextColor">#8C9C9CA8</Color>
                     <LinearGradientBrush x:Key="PrimaryFillBrush" StartPoint="0,0.5" EndPoint="1,0.5">
                         <GradientStop Color="#FFD91E5B" Offset="0" />
                         <GradientStop Color="#FF7A4BE8" Offset="0.55" />
@@ -68,6 +73,11 @@
                     <Color x:Key="ScreenStartColor">#FFFFD2BF</Color>
                     <Color x:Key="ScreenMidColor">#FFE0CDFF</Color>
                     <Color x:Key="ScreenEndColor">#FFBCDFFF</Color>
+                    <!-- Brand violet: at least 3.5:1 on every pastel screen stop; white was 1.4:1. -->
+                    <Color x:Key="ScreenGlyphColor">#FF7A4BE8</Color>
+                    <Color x:Key="DisabledFillColor">#FFF4F4F8</Color>
+                    <Color x:Key="DisabledBorderColor">#80E4E4EB</Color>
+                    <Color x:Key="DisabledTextColor">#8C55555E</Color>
                     <LinearGradientBrush x:Key="PrimaryFillBrush" StartPoint="0,0.5" EndPoint="1,0.5">
                         <GradientStop Color="#FFD91E5B" Offset="0" />
                         <GradientStop Color="#FF7A4BE8" Offset="0.55" />
@@ -105,6 +115,10 @@
                     <StaticResource x:Key="ScreenStartColor" ResourceKey="SystemColorWindowColor" />
                     <StaticResource x:Key="ScreenMidColor" ResourceKey="SystemColorWindowColor" />
                     <StaticResource x:Key="ScreenEndColor" ResourceKey="SystemColorWindowColor" />
+                    <StaticResource x:Key="ScreenGlyphColor" ResourceKey="SystemColorWindowTextColor" />
+                    <StaticResource x:Key="DisabledFillColor" ResourceKey="SystemColorWindowColor" />
+                    <StaticResource x:Key="DisabledBorderColor" ResourceKey="SystemColorGrayTextColor" />
+                    <StaticResource x:Key="DisabledTextColor" ResourceKey="SystemColorGrayTextColor" />
                     <!-- High contrast: the primary action uses the system highlight pair (never
                          the brand gradient), states show as borders rather than translucent tints,
                          and every button keeps a visible edge. -->
@@ -127,6 +141,10 @@
             <SolidColorBrush x:Key="SuccessBrush" Color="{ThemeResource SuccessColor}" />
             <SolidColorBrush x:Key="DangerBrush" Color="{ThemeResource DangerColor}" />
             <SolidColorBrush x:Key="OnBrandTextBrush" Color="{ThemeResource OnBrandTextColor}" />
+            <SolidColorBrush x:Key="ScreenGlyphBrush" Color="{ThemeResource ScreenGlyphColor}" />
+            <SolidColorBrush x:Key="DisabledFillBrush" Color="{ThemeResource DisabledFillColor}" />
+            <SolidColorBrush x:Key="DisabledBorderBrush" Color="{ThemeResource DisabledBorderColor}" />
+            <SolidColorBrush x:Key="DisabledTextBrush" Color="{ThemeResource DisabledTextColor}" />
             <SolidColorBrush x:Key="SuccessTintBrush" Color="{ThemeResource SuccessTintColor}" />
             <SolidColorBrush x:Key="DangerTintBrush" Color="{ThemeResource DangerTintColor}" />
             <SolidColorBrush x:Key="AccentTintBrush" Color="{ThemeResource AccentTintColor}" />
@@ -145,6 +163,18 @@
                 <GradientStop Color="#FFD91E5B" Offset="0" />
                 <GradientStop Color="#FF7A4BE8" Offset="0.55" />
                 <GradientStop Color="#FF2E63D9" Offset="1" />
+            </LinearGradientBrush>
+            <!-- Hover and press darken the brand stops (8% and 16%), so white text only gains
+                 contrast while the button acknowledges the pointer. -->
+            <LinearGradientBrush x:Key="BrandHoverBrush" StartPoint="0,0.5" EndPoint="1,0.5">
+                <GradientStop Color="#FFC81B54" Offset="0" />
+                <GradientStop Color="#FF7045D5" Offset="0.55" />
+                <GradientStop Color="#FF2A5BC8" Offset="1" />
+            </LinearGradientBrush>
+            <LinearGradientBrush x:Key="BrandPressedBrush" StartPoint="0,0.5" EndPoint="1,0.5">
+                <GradientStop Color="#FFB61A4C" Offset="0" />
+                <GradientStop Color="#FF663FC3" Offset="0.55" />
+                <GradientStop Color="#FF2753B6" Offset="1" />
             </LinearGradientBrush>
             <LinearGradientBrush x:Key="HeroAccentBrush" StartPoint="0,0.5" EndPoint="1,0.5">
                 <GradientStop Color="{ThemeResource HeroAccentStartColor}" Offset="0" />
@@ -246,9 +276,9 @@
                             </VisualState>
                             <VisualState x:Name="Disabled">
                                 <VisualState.Setters>
-                                    <Setter Target="RootGrid.Background" Value="{ThemeResource ButtonBackgroundDisabled}" />
-                                    <Setter Target="RootGrid.BorderBrush" Value="{ThemeResource ButtonBorderBrushDisabled}" />
-                                    <Setter Target="ContentPresenter.Foreground" Value="{ThemeResource ButtonForegroundDisabled}" />
+                                    <Setter Target="RootGrid.Background" Value="{ThemeResource DisabledFillBrush}" />
+                                    <Setter Target="RootGrid.BorderBrush" Value="{ThemeResource DisabledBorderBrush}" />
+                                    <Setter Target="ContentPresenter.Foreground" Value="{ThemeResource DisabledTextBrush}" />
                                 </VisualState.Setters>
                             </VisualState>
                         </VisualStateGroup>

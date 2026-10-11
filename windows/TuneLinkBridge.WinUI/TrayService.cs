@@ -21,7 +21,10 @@ internal sealed class TrayService : IDisposable
         menu.Items.Add(UiStrings.Get("TrayExit", "Exit"), null, (_, _) => exit());
         icon = new Forms.NotifyIcon
         {
-            Icon = new Drawing.Icon(Path.Combine(AppContext.BaseDirectory, "Assets", "tunelink.ico")),
+            // The notification area draws small icons; this picks the .ico's hand-tuned small frame
+            // for the current DPI instead of scaling down the 32-pixel one.
+            Icon = new Drawing.Icon(Path.Combine(AppContext.BaseDirectory, "Assets", "tunelink.ico"),
+                Forms.SystemInformation.SmallIconSize),
             Text = UiStrings.Get("AppDisplayName", "TunesLink Bridge"),
             Visible = true,
             ContextMenuStrip = menu

@@ -15,10 +15,10 @@ Include the affected version, component, reproduction steps, and impact. Do not 
 TunesLink is designed for a trusted private home network:
 
 - The bridge accepts loopback, IPv4 link-local, RFC 1918, and carrier-grade NAT source addresses; it rejects public source addresses.
-- UDP discovery exposes only the bridge ID, computer name, port, protocol version, and public TLS certificate fingerprint.
+- UDP discovery exposes only the bridge ID, computer name, port, protocol and app versions, and public TLS certificate fingerprint.
 - Android verifies that the selected bridge presents its advertised certificate, then pins the full certificate fingerprint. The user authorizes pairing with the temporary six-digit code.
 - The six-digit pairing code expires after 10 minutes and rotates after expiry, successful
-  pairing, **New code**, or **Forget all**.
+  pairing, ten incorrect attempts against the same code, **New code**, or **Forget all**.
 - Five failed pairing attempts from one address trigger a one-minute cooldown. Twenty failed
   attempts across all addresses in one minute trigger a five-minute global cooldown.
 - Paired phones receive a random 256-bit token. Windows stores only its SHA-256 hash; Android protects the token using Android Keystore.

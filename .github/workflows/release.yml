@@ -314,7 +314,8 @@ jobs:
             "$hash  $([IO.Path]::GetFileName($asset))"
           }
           $checksumPath = (Join-Path (Resolve-Path artifacts).Path "SHA256SUMS.txt")
-          [IO.File]::WriteAllLines($checksumPath, $checksums)
+          # LF endings, so `sha256sum -c` and `shasum -c` verify it on Linux and macOS.
+          [IO.File]::WriteAllText($checksumPath, (($checksums -join "`n") + "`n"))
           $assets += $checksumPath
           $notesPath = Join-Path (Resolve-Path artifacts).Path "release-notes.md"
           @'
@@ -325,7 +326,13 @@ jobs:
           display an **Unknown publisher** warning. Verify it with `SHA256SUMS.txt` before
           running it. SPDX SBOMs are included for both applications.
           '@ | Set-Content -LiteralPath $notesPath
-          if (gh release view $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --json id 2>$null) {
+          $existing = gh release view $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --json isDraft 2>$null
+          if ($existing) {
+            # Replacing assets people may already have downloaded and verified is only safe
+            # before the release is published.
+            if (($existing | ConvertFrom-Json).isDraft -ne $true) {
+              throw "Release $env:RELEASE_TAG is already published; its assets are not replaced."
+            }
             gh release upload $env:RELEASE_TAG $assets --clobber --repo $env:GITHUB_REPOSITORY
           } else {
             $arguments = @(

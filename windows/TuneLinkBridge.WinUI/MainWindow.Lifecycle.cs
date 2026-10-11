@@ -253,6 +253,10 @@ public sealed partial class MainWindow
 
     private void Window_Closed(object sender, WindowEventArgs args)
     {
+        // Shutting the bridge down waits for iTunes and connected phones for a few seconds; the
+        // window must not sit frozen on screen meanwhile.
+        try { AppWindow.Hide(); }
+        catch (Exception exception) { BridgeDiagnostics.Record("ui.close.hide", exception); }
         if (runtime is not null)
         {
             runtime.Security.PairingOpen = false;

@@ -636,7 +636,10 @@ internal data class PlaybackPositionSample(
     val position: Double,
     val duration: Double,
     val playing: Boolean,
-    /** A seek is waiting for confirmation: show its target and do not advance. */
+    /**
+     * A seek or a song selection is waiting for confirmation: show its target and do not
+     * advance. Starting a large collection can take seconds before the song actually plays.
+     */
     val held: Boolean,
     /** The bridge is streaming state; without it, extrapolating would drift unchecked. */
     val live: Boolean,
@@ -686,7 +689,8 @@ internal fun TunesLinkUiState.playbackSample(): PlaybackPositionSample = Playbac
     position = player.position,
     duration = player.duration,
     playing = player.playing,
-    held = player.pending(PlaybackAction.Position) != null,
+    held = player.pending(PlaybackAction.Position) != null ||
+        player.pending(PlaybackAction.PlayTrack) != null,
     live = connection is ConnectionState.Connected && player.iTunesAvailable,
 )
 

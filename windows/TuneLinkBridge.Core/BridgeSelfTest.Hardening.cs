@@ -151,6 +151,17 @@ internal static partial class BridgeSelfTest
                && File.ReadAllBytes(path).AsSpan().StartsWith("TunesLink-DPAPI-V1\n"u8)
                && !File.Exists(path + ".invalid"),
             "a plaintext identity is protected in place and keeps its fingerprint");
+
+        bool failed = false;
+        using (new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            try { using BridgeTlsIdentity held = new(directory); }
+            catch (IOException) { failed = true; }
+        }
+        using BridgeTlsIdentity reopened = new(directory);
+        Ensure(failed && reopened.Fingerprint == migrated.Fingerprint
+               && !File.Exists(path + ".invalid"),
+            "an identity held by another program stops the bridge instead of being replaced");
     }
 
     private static void TestComDiagnostics(string directory)

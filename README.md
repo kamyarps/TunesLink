@@ -237,7 +237,7 @@ Use the preflight when setting up a development machine:
 .\scripts\one-click-build.ps1 -PreflightOnly
 ```
 
-It verifies the exact .NET SDK feature band, JDK major, Android platform, `android.jar`, `aapt2`,
+It verifies the exact .NET SDK version, JDK major, Android platform, `android.jar`, `aapt2`,
 `d8`, `apksigner`, and Gradle configuration without creating packages.
 
 `-SkipChecks` exists for faster local packaging after checks have already passed. It should not be
@@ -246,8 +246,9 @@ used to prepare a release.
 ### What verification covers
 
 The full workflow runs Android lint and unit tests, debug and release package builds, the Windows
-release build, formatting verification, bridge self-tests, responsive WinUI layout checks, build
-requirements self-tests, and repository hygiene checks.
+release build, formatting verification, bridge self-tests, a WinUI layout check of the packaged
+bridge, build requirements self-tests, and repository hygiene checks. Add `-IncludeVisualChecks` to
+`scripts\one-click-build.ps1` to also run the responsive WinUI layout cases.
 
 [CI](https://github.com/kamyarps/TunesLink/actions) adds Android emulator coverage on API 23, 26,
 31, and 36, integration tests, SQLite cache regression tests, artifact-size budgets, and a

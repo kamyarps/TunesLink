@@ -202,6 +202,8 @@ internal data class LibraryUiState(
     val awaitingConnection: Boolean = false,
     /** Which page load produced [error]; null when the whole search failed. */
     val errorDirection: PageDirection? = null,
+    /** The query [items] belong to; an earlier query's rows stay up only while the next loads. */
+    val resultsQuery: String? = null,
 )
 
 internal sealed interface TunesLinkModal {

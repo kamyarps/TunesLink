@@ -65,6 +65,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -189,10 +190,12 @@ internal fun TabletTunesWorkspace(
                 )
                 VerticalDivider(color = TunesLinkTheme.colors.separator)
                 Box(Modifier.weight(1f).fillMaxHeight()) {
-                    when (destination) {
-                        TunesLinkDestination.Library -> TabletLibraryPane(state, libraryActions)
-                        TunesLinkDestination.Search -> TabletSearchPane(state, searchActions)
-                        TunesLinkDestination.NowPlaying -> TabletLibraryPane(state, libraryActions)
+                    // Each pane keeps its scroll position while another one is shown.
+                    val panes = rememberSaveableStateHolder()
+                    val searching = destination == TunesLinkDestination.Search
+                    panes.SaveableStateProvider(if (searching) "search" else "library") {
+                        if (searching) TabletSearchPane(state, searchActions)
+                        else TabletLibraryPane(state, libraryActions)
                     }
                 }
             }
@@ -1012,6 +1015,7 @@ private fun TabletExpandedAlbum(
                             onPlayTrack = onPlayTrack,
                             collection = selected,
                             showHeading = false,
+                            numberByTrack = true,
                             emptyCopy = LibraryEmptyCopy(R.string.no_songs, R.string.no_songs_detail),
                         )
                     }
@@ -1271,6 +1275,8 @@ private fun TabletSongsPane(
     showHeading: Boolean = true,
     loadingCopy: LibraryEmptyCopy = LibraryEmptyCopy(R.string.loading_library, R.string.loading_library_detail),
     countPlural: Int = R.plurals.song_count,
+    /** Only an album's songs are numbered by track; any other list counts its rows. */
+    numberByTrack: Boolean = false,
 ) {
     val listState = key(listIdentity) { rememberLazyListState() }
     LibraryPagination(listState, cursor, onLoadPrevious, onLoadMore)
@@ -1326,7 +1332,8 @@ private fun TabletSongsPane(
                     ) { index, track ->
                         TabletTrackRow(
                             track = track,
-                            position = track.trackNumber.takeIf { it > 0 } ?: cursor.windowStart + index + 1,
+                            position = track.trackNumber.takeIf { numberByTrack && it > 0 }
+                                ?: (cursor.windowStart + index + 1),
                             current = currentTrackId == track.id,
                             playing = playing,
                             enabled = enabled,
@@ -1353,7 +1360,7 @@ private fun TabletSongTableHeader(showFullColumns: Boolean) {
             .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text("#", style = MaterialTheme.typography.labelMedium, color = TunesLinkTheme.colors.secondaryText,
+        Text(stringResource(R.string.track_number_column), style = MaterialTheme.typography.labelMedium, color = TunesLinkTheme.colors.secondaryText,
             modifier = Modifier.width(42.dp))
         Text(stringResource(R.string.song), style = MaterialTheme.typography.labelMedium,
             color = TunesLinkTheme.colors.secondaryText, modifier = Modifier.weight(2f))

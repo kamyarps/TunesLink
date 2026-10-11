@@ -13,10 +13,19 @@ internal fun TunesLinkViewModel.cancelSearch() {
     updateSearchQuery("")
 }
 
-internal fun TunesLinkViewModel.updateSearchQuery(value: String) {
+internal fun TunesLinkViewModel.updateSearchQuery(typed: String) {
+    val value = boundedSearchQuery(typed)
     savedStateHandle[TunesLinkViewModel.KEY_EDITING_QUERY] = value
     editingQuery.value = value
     mutableState.update { it.copy(library = it.library.copy(editingQuery = value)) }
+}
+
+/** A search the bridge accepts, never split inside a character. */
+internal fun boundedSearchQuery(value: String): String {
+    if (value.length <= TunesLinkViewModel.MAX_SEARCH_LENGTH) return value
+    var end = TunesLinkViewModel.MAX_SEARCH_LENGTH
+    if (Character.isHighSurrogate(value[end - 1])) end--
+    return value.substring(0, end)
 }
 
 /** The search retry action; kept for existing callers. */
@@ -376,6 +385,7 @@ internal fun LibraryUiState.clearedSearch(loadedQuery: String?) = copy(
     error = null,
     errorDirection = null,
     awaitingConnection = false,
+    resultsQuery = null,
 )
 
 /** Whether showing Search must (re)run the typed query rather than keep what is displayed. */
@@ -422,6 +432,7 @@ internal fun TunesLinkViewModel.libraryResult(
                     return@update state.copy(
                         library = library.copy(
                             items = window.items,
+                            resultsQuery = query,
                             windowStart = window.startOffset,
                             revision = if (library.items.isEmpty()) value.revision else library.revision,
                             total = value.total,
@@ -444,6 +455,7 @@ internal fun TunesLinkViewModel.libraryResult(
                 state.copy(
                     library = library.copy(
                         items = window.items,
+                        resultsQuery = query,
                         windowStart = window.startOffset,
                         revision = if (value.revision.isNotBlank() || replace || revisionReplaced) {
                             value.revision
@@ -475,19 +487,22 @@ internal fun TunesLinkViewModel.libraryResult(
         override fun failure(message: String, unauthorized: Boolean, code: BridgeClient.ErrorCode) {
             if (generation != libraryGeneration) return
             val error = localizedFailure(message, R.string.error_library_unavailable, code)
-            mutableState.update {
-                it.copy(
-                    library = it.library.copy(
-                        isRefreshing = false,
-                        isLoadingMore = false,
-                        isLoadingPrevious = false,
-                        error = error,
-                        errorDirection = direction,
-                    ),
-                )
-            }
+            mutableState.update { it.copy(library = it.library.failedSearch(query, error, direction)) }
         }
     }
+
+/**
+ * A search request for [query] failed. The rows still shown may be the previous query's, and
+ * they are never left up as this query's results.
+ */
+internal fun LibraryUiState.failedSearch(query: String, error: String, direction: PageDirection?) =
+    (if (resultsQuery == query) this else clearedSearch(loadedQuery = query)).copy(
+        isRefreshing = false,
+        isLoadingMore = false,
+        isLoadingPrevious = false,
+        error = error,
+        errorDirection = direction,
+    )
 
 internal fun TunesLinkViewModel.browseCollectionsResult(generation: Int, replace: Boolean, requestedOffset: Int = 0) =
     object : BridgeRepository.PageResult<BridgeClient.LibraryCollectionPage> {

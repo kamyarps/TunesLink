@@ -4,7 +4,6 @@ on:
   push:
     branches: [main]
     paths-ignore:
-      - ".github/workflows/codeql.yml"
       - ".github/workflows/release.yml"
   pull_request:
 
