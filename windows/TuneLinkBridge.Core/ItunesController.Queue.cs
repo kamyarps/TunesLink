@@ -9,7 +9,11 @@ internal sealed partial class ItunesController
     // playlist (by its TrackID there) to its position in Tracks. While a queue is still being
     // built, or after songs deleted from the library were skipped, it covers part of Order.
     private sealed record ManagedQueue(int PlaylistId, string Name, string Kind, string Filter,
-        QueueTrack[] Tracks, int[] Order, Dictionary<int, int> TrackIndices);
+        QueueTrack[] Tracks, int[] Order, Dictionary<int, int> TrackIndices)
+    {
+        // -1 permits recovery of records written before the cursor was persisted.
+        public int Next { get; set; } = -1;
+    }
 
     // The rest of a queue after the songs added before playback started.
     private sealed class QueueBuild(int generation, object playlist, ManagedQueue queue, int next,
@@ -22,6 +26,20 @@ internal sealed partial class ItunesController
         public long StartedAt { get; } = startedAt;
         public long SavedAt { get; set; } = startedAt;
         public int BusyRetries { get; set; }
+    }
+
+    private sealed class QueueRecovery(int generation, object playlist, object entries,
+        ManagedQueue queue, int count)
+    {
+        public int Generation { get; } = generation;
+        public object Playlist { get; } = playlist;
+        public object Entries { get; } = entries;
+        public ManagedQueue Queue { get; } = queue;
+        public int Count { get; } = count;
+        public int Next { get; set; }
+        public int Frontier { get; set; }
+        public int BusyRetries { get; set; }
+        public Dictionary<int, int> Indices { get; } = [];
     }
 
     // Adding a song to a playlist costs several milliseconds of COM work, so a large collection
@@ -37,6 +55,8 @@ internal sealed partial class ItunesController
     // Changes whenever the queue is replaced or dropped, which abandons a build still underway.
     private int queueGeneration;
     private QueueBuild? queueBuild;
+    private QueueRecovery? queueRecovery;
+    private bool queueRecoveryChecked;
 
     // A selected song must be the first entry passed to PlayFirstTrack: Track.Play leaves
     // Up Next at its previous cursor, and walking NextTrack is too slow for large collections.
@@ -153,7 +173,8 @@ internal sealed partial class ItunesController
             int playlistId = ReadInt((object)playlist, "PlaylistID");
             // A failed or cancelled replacement must leave the playing queue's build intact.
             int generation = AbandonQueueBuild();
-            managedQueue = new(playlistId, name, kind, filter, tracks, order, indices);
+            managedQueue = new(playlistId, name, kind, filter, tracks, order, indices) { Next = next };
+            queueRecoveryChecked = true;
             SaveManagedQueue();
             CleanupManagedQueues(appObject, playlistId);
             if (next < order.Length)
@@ -241,6 +262,7 @@ internal sealed partial class ItunesController
         {
             // The songs already queued keep playing; the queue only ends sooner.
             BridgeDiagnostics.Record("play.queue.append", exception);
+            build.Next = next;
             SaveManagedQueue();
             AbandonQueueBuild();
             return;
@@ -266,6 +288,12 @@ internal sealed partial class ItunesController
     /// <summary>Stops any queue build still underway and returns the new queue generation.</summary>
     private int AbandonQueueBuild()
     {
+        if (queueRecovery is { } recovery)
+        {
+            queueRecovery = null;
+            ReleaseCom(recovery.Entries);
+            ReleaseCom(recovery.Playlist);
+        }
         if (queueBuild is { } build)
         {
             queueBuild = null;
@@ -274,8 +302,124 @@ internal sealed partial class ItunesController
         return ++queueGeneration;
     }
 
+    // Only interactive requests call this: the separate library worker shares the persisted
+    // record but must not race the playback worker to append the same songs.
+    private void RecoverManagedQueue(object appObject)
+    {
+        if (queueRecoveryChecked || queueBuild is not null) return;
+        managedQueue ??= LoadManagedQueue();
+        if (managedQueue is not { } queue) return;
+        if (queue.Next == queue.Order.Length) { queueRecoveryChecked = true; return; }
+        dynamic app = appObject;
+        dynamic? playlist = null;
+        dynamic? entries = null;
+        try
+        {
+            playlist = app.CurrentPlaylist;
+            if (playlist is null || ReadInt((object)playlist, "PlaylistID") != queue.PlaylistId
+                || ReadString((object)playlist, "Name") != queue.Name) return;
+            entries = playlist.Tracks;
+            int count = Convert.ToInt32(entries.Count);
+            if (count <= 0 || count > queue.Order.Length) return;
+            QueueRecovery recovery = new(queueGeneration, (object)playlist, (object)entries, queue, count);
+            queueRecovery = recovery;
+            queueRecoveryChecked = true;
+            playlist = null;
+            entries = null;
+            EnqueueInternal(() => ContinueQueueRecovery(recovery));
+        }
+        catch (Exception exception)
+        {
+            // Recovery is optional; busy iTunes can be retried on the next interactive request.
+            BridgeDiagnostics.Record("play.queue.recover", exception);
+        }
+        finally { ReleaseCom(entries); ReleaseCom(playlist); }
+    }
+
+    // Native playlists can be large too. Reconcile them in bounded work items so a restart
+    // does not turn the first state/volume request into a whole-playlist COM scan.
+    private void ContinueQueueRecovery(QueueRecovery recovery)
+    {
+        if (!ReferenceEquals(queueRecovery, recovery) || recovery.Generation != queueGeneration) return;
+        if (disposed) { AbandonQueueBuild(); return; }
+        ManagedQueue queue = recovery.Queue;
+        try
+        {
+            dynamic entries = recovery.Entries;
+            int end = Math.Min(recovery.Count, recovery.Next + QueueChunk);
+            while (recovery.Next < end)
+            {
+                object entry = entries.Item(recovery.Next + 1);
+                try
+                {
+                    dynamic nativeEntry = entry;
+                    // Required IDs must propagate busy COM failures to the retry path rather
+                    // than turning a temporarily unreadable entry into an invalid playlist.
+                    int id = Convert.ToInt32(nativeEntry.TrackID);
+                    int databaseId = Convert.ToInt32(nativeEntry.TrackDatabaseID);
+                    // Reconcile native entries written since the last save. Their persistent
+                    // database IDs survive the playlist-specific TrackID assigned by AddTrack.
+                    int match = recovery.Frontier;
+                    while (match < queue.Order.Length)
+                    {
+                        int index = queue.Order[match];
+                        ItunesTrackId.TryDecode(queue.Tracks[index].Id, out ItunesTrackLocator locator);
+                        if (queue.TrackIndices.TryGetValue(id, out int savedIndex)
+                            ? savedIndex == index && locator.DatabaseId == databaseId
+                            : databaseId > 0 && locator.DatabaseId == databaseId) break;
+                        match++;
+                    }
+                    // An edited or foreign playlist is not safe to extend from this record.
+                    if (match == queue.Order.Length || id <= 0 || !recovery.Indices.TryAdd(id, queue.Order[match]))
+                    {
+                        AbandonQueueBuild();
+                        return;
+                    }
+                    recovery.Frontier = match + 1;
+                    recovery.Next++;
+                }
+                finally { ReleaseCom(entry); }
+            }
+            if (recovery.Next < recovery.Count)
+            {
+                EnqueueInternal(() => ContinueQueueRecovery(recovery));
+                return;
+            }
+            int next = Math.Max(recovery.Frontier, queue.Next);
+            managedQueue = queue with { TrackIndices = recovery.Indices, Next = next };
+            SaveManagedQueue();
+            queueRecovery = null;
+            ReleaseCom(recovery.Entries);
+            if (next < queue.Order.Length)
+            {
+                QueueBuild build = new(queueGeneration, recovery.Playlist, managedQueue, next,
+                    Stopwatch.GetTimestamp());
+                queueBuild = build;
+                EnqueueInternal(() => ContinueQueueBuild(build));
+            }
+            else ReleaseCom(recovery.Playlist);
+        }
+        catch (System.Runtime.InteropServices.COMException exception)
+            when (recovery.BusyRetries < MaxQueueBusyRetries
+                  && ItunesWorkerProtocol.ClassifyComFailure(exception.HResult)
+                      == ItunesWorkerFailureCategory.ItunesBusy)
+        {
+            recovery.BusyRetries++;
+            EnqueueInternal(() => ContinueQueueRecovery(recovery));
+        }
+        catch (Exception exception)
+        {
+            BridgeDiagnostics.Record("play.queue.recover", exception);
+            AbandonQueueBuild();
+        }
+    }
+
     private bool TryActiveQueue(object appObject, out ManagedQueue active, out int index)
     {
+        // Previous and mode changes need a complete native-ID map before they can retarget
+        // the playlist. These commands already have the longer playback deadline; state and
+        // volume requests continue to yield between recovery batches.
+        while (queueRecovery is { } recovery) ContinueQueueRecovery(recovery);
         managedQueue ??= LoadManagedQueue();
         active = managedQueue!;
         index = -1;
@@ -431,6 +575,7 @@ internal sealed partial class ItunesController
             // The next song must be queued before this call returns in case this one ends soon.
             AppendQueueTracks(appObject, (object)playlist, active.Tracks, order, ref next,
                 FirstQueueChunk, indices, cancellationToken);
+            managedQueue.Next = next;
             SaveManagedQueue();
             if (next < order.Length)
             {
@@ -502,6 +647,7 @@ internal sealed partial class ItunesController
                 || value.Order is null || value.Order.Length is 0 || value.Order.Length > value.Tracks.Length
                 || value.TrackIndices is null || value.TrackIndices.Count is 0
                 || value.TrackIndices.Count > value.Order.Length
+                || value.Next < -1 || value.Next > value.Order.Length
                 || value.Tracks.Any(track => track is null || track.Id is null
                     || !ItunesTrackId.TryDecode(track.Id, out _))
                 || value.Order.Any(index => index < 0 || index >= value.Tracks.Length)
@@ -520,6 +666,8 @@ internal sealed partial class ItunesController
         try
         {
             if (managedQueue is null || managedQueue.Tracks.Length > 100_000) return;
+            if (queueBuild is { } build && ReferenceEquals(build.Queue, managedQueue))
+                managedQueue.Next = build.Next;
             string json = JsonSerializer.Serialize(managedQueue);
             if (System.Text.Encoding.UTF8.GetByteCount(json) <= 16 * 1024 * 1024)
                 queuePersistence.WriteText(queueStatePath, json);

@@ -22,7 +22,9 @@ import java.util.function.Supplier;
 /** Bounded, bridge-scoped disk cache for library pages displayed while fresh data is fetched. */
 final class LibraryCacheStore implements AutoCloseable {
     private static final String DATABASE_NAME = "TunesLink-library-cache.db";
-    private static final int DATABASE_VERSION = 1;
+    private static final int DATABASE_VERSION = 2;
+    static final String STALE_REVISION_SELECTION =
+            "scope = ? AND revision_domain = ? AND revision <> ? AND revision <> ''";
     private static final int KIND_TRACKS = 1;
     private static final int KIND_COLLECTIONS = 2;
     private static final int MAX_PAGES = 256;
@@ -147,13 +149,14 @@ final class LibraryCacheStore implements AutoCloseable {
             db.beginTransaction();
             try {
                 if (revision != null && !revision.isBlank()) {
-                    db.delete("pages", "scope = ? AND revision <> ? AND revision <> ''",
-                            new String[] { scope, revision });
+                    db.delete("pages", STALE_REVISION_SELECTION,
+                            new String[] { scope, revisionDomain(requestKey), revision });
                 }
                 ContentValues values = new ContentValues();
                 values.put("scope", scope);
                 values.put("request_key", requestKey);
                 values.put("kind", kind);
+                values.put("revision_domain", revisionDomain(requestKey));
                 values.put("revision", revision == null ? "" : revision);
                 values.put("payload", payload.toString());
                 values.put("stored_at", now);
@@ -183,6 +186,20 @@ final class LibraryCacheStore implements AutoCloseable {
         } catch (RejectedExecutionException ignored) {
             return false;
         }
+    }
+
+    /** Mirrors BridgeRepository's request key and the bridge's independent revision producers. */
+    static String revisionDomain(String requestKey) {
+        String[] parts = requestKey.split("\u001f", -1);
+        if (parts.length != 5) return "request:" + requestKey;
+        if (parts[0].equals("playlists")) {
+            // Playlist-list revisions cover the filtered list; track revisions cover one playlist.
+            return parts[1].isEmpty() ? "playlist-list:" + parts[2] : "playlist:" + parts[1];
+        }
+        return switch (parts[0]) {
+            case "songs", "albums", "artists", "genres" -> "library";
+            default -> "request:" + requestKey;
+        };
     }
 
     private static JSONObject tracksJson(BridgeClient.LibraryPage page) throws JSONException {
@@ -250,7 +267,7 @@ final class LibraryCacheStore implements AutoCloseable {
         @Override
         public void onCreate(SQLiteDatabase db) {
             db.execSQL("CREATE TABLE pages (scope TEXT NOT NULL, request_key TEXT NOT NULL, "
-                    + "kind INTEGER NOT NULL, revision TEXT NOT NULL, payload TEXT NOT NULL, "
+                    + "kind INTEGER NOT NULL, revision_domain TEXT NOT NULL, revision TEXT NOT NULL, payload TEXT NOT NULL, "
                     + "stored_at INTEGER NOT NULL, accessed_at INTEGER NOT NULL, "
                     + "PRIMARY KEY(scope, request_key, kind))");
             db.execSQL("CREATE INDEX pages_accessed_at ON pages(accessed_at)");
@@ -258,6 +275,8 @@ final class LibraryCacheStore implements AutoCloseable {
 
         @Override
         public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
+            // This database holds optional metadata only. Rebuild old cache pages so every
+            // retained page has a revision domain; pairing and settings live elsewhere.
             db.execSQL("DROP TABLE IF EXISTS pages");
             onCreate(db);
         }

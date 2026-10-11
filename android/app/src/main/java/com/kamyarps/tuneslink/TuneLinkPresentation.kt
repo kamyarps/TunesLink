@@ -53,7 +53,9 @@ internal data class PendingMutation(
     val timeoutMillis: Long = 2_000,
     val deadlineMillis: Long = 4_000,
 ) {
-    fun matches(state: BridgeClient.PlayerState): Boolean = state.iTunesAvailable && when (action) {
+    // A matching SSE sample may predate a queued request. Acceptance must come first or
+    // a later HTTP failure can be hidden by premature state reconciliation.
+    fun matches(state: BridgeClient.PlayerState): Boolean = requestSucceeded && state.iTunesAvailable && when (action) {
         PlaybackAction.PlayPause -> state.playing == expectedBoolean
         // Seeking to the very end makes iTunes advance; the next song settles the seek.
         PlaybackAction.Position -> (previousTrackId != null && state.trackId != previousTrackId) ||
@@ -68,7 +70,7 @@ internal data class PendingMutation(
             state.trackId != previousTrackId || state.position <= 3.0
         // The old SSE frame can already contain this ID when the listener selects the
         // currently playing song. Wait for the play endpoint to accept the command first.
-        PlaybackAction.PlayTrack -> requestSucceeded && state.trackId == expectedTrackId
+        PlaybackAction.PlayTrack -> state.trackId == expectedTrackId
     }
 }
 
@@ -249,8 +251,8 @@ internal fun libraryBrowseAlbums(tracks: List<TrackUiState>): List<LibraryBrowse
         val album = tracks[start].album
         val albumArtist = tracks[start].albumArtist
         var end = start
-        while (end < tracks.size && tracks[end].album == album &&
-            tracks[end].albumArtist == albumArtist
+        while (end < tracks.size && tracks[end].album.equals(album, ignoreCase = true) &&
+            tracks[end].albumArtist.equals(albumArtist, ignoreCase = true)
         ) {
             end++
         }

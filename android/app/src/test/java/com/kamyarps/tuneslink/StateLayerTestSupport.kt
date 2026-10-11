@@ -112,7 +112,7 @@ internal fun playerState(trackId: String = "track", position: Double = 10.0, art
 
 /**
  * Builds the real ViewModel without Android construction so its reducers and flows run against
- * an in-memory repository. Only flows that do not read string resources can run this way.
+ * an in-memory repository. Resource formatting used by playback failures is supplied explicitly.
  */
 internal fun testViewModel(
     repository: BridgeRepository,
@@ -145,6 +145,7 @@ internal fun testViewModel(
     set("mutableState", MutableStateFlow(state))
     set("savedStateHandle", SavedStateHandle())
     set("repository", repository)
+    set("formatString", { res: Int, arguments: List<Any> -> "resource:$res:$arguments" })
     set("editingQuery", MutableStateFlow(state.library.editingQuery))
     set("restoreDestination", TunesLinkDestination.Library)
     set("artworkSession", MutableStateFlow(0L))

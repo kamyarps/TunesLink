@@ -14,6 +14,7 @@ internal static partial class BridgeSelfTest
         TestQueueActivationDoesNotMute(Path.Combine(root, "queue-mute"));
         await TestPlaybackSupersessionAsync(Path.Combine(root, "playback-order"));
         await TestProgressiveQueueAsync(Path.Combine(root, "queue-progressive"));
+        await TestInterruptedQueueRecoveryAsync(Path.Combine(root, "queue-recovery"));
         await TestQueueAbandonedByNewerSelectionAsync(Path.Combine(root, "queue-abandon"));
         await TestQueueSurvivesFailedReplacementAsync(Path.Combine(root, "queue-failed-replacement"));
         await TestPreviousAndModeChangesAsync(Path.Combine(root, "queue-previous"));
@@ -198,6 +199,121 @@ internal static partial class BridgeSelfTest
             BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(restarted, null);
         Ensure(recovered is not null,
             "a queue that skipped a deleted song still survives a worker restart");
+    }
+
+    private static async Task TestInterruptedQueueRecoveryAsync(string directory)
+    {
+        foreach (bool stateRead in new[] { false, true })
+        {
+            string folder = Path.Combine(directory, stateRead ? "state" : "command");
+            QueueAppProbe app = new(130);
+            app.Missing.Add(10);
+            using ManualResetEventSlim create = new(false);
+            using ManualResetEventSlim blocked = new(false);
+            using ManualResetEventSlim entered = new(false);
+            app.CreateGate = create;
+            ItunesController first = FakeComController(folder, app);
+            Task play = first.PlayTrackAsync(QueueSelection(1));
+            typeof(ItunesController).GetMethod("EnqueueInternal", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .Invoke(first, [new Action(() => { entered.Set(); blocked.Wait(TimeSpan.FromSeconds(10)); })]);
+            create.Set();
+            await play;
+            Ensure(entered.Wait(TimeSpan.FromSeconds(5)), "restart test pauses after initial activation");
+            QueuePlaylistProbe queue = app.Created.Single();
+            Ensure(queue.AddedCount == 20, "restart test interrupts a partial queue");
+            Task dispose = Task.Run(first.Dispose);
+            await WaitUntilAsync(() => (bool)typeof(ItunesController)
+                .GetField("disposed", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(first)!,
+                "interrupted worker begins shutdown");
+            blocked.Set();
+            await dispose;
+            // Native COM additions can be ahead of the atomic save when a worker dies.
+            for (int id = 22; id <= 60; id++)
+                ((QueueEntryProbe)queue.AddTrack(app.LibraryPlaylist.Tracks.Single(track => track.TrackID == id)))
+                    .NativeTrackId = 1000 + id;
+            if (stateRead)
+            {
+                string path = Path.Combine(folder, "Cache", "managed-queue-v1.json");
+                var legacy = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(path))!.AsObject();
+                legacy.Remove("Next");
+                File.WriteAllText(path, legacy.ToJsonString());
+            }
+            queue.Shuffle = true;
+            queue.SongRepeat = 1;
+            app.PlayerPosition = 37;
+            app.PlayerState = 0;
+            object? current = app.CurrentTrack;
+            app.CurrentPlaylist = new QueuePlaylistProbe(app, "Unrelated playlist", 9999);
+            using (ItunesController unrelated = FakeComController(folder, app))
+            {
+                await unrelated.ExecuteAsync(new PlayerCommand("volume", 40));
+                Ensure(queue.AddedCount == 59, "recovery cannot extend a playlist that is no longer active");
+            }
+            app.CurrentPlaylist = queue;
+            using (ItunesController restarted = FakeComController(folder, app))
+            {
+                // Library workers must never resume a queue owned by the interactive worker.
+                await restarted.GetCollectionsAsync("albums", "", 0, 60);
+                Ensure(queue.AddedCount == 59, "library reads leave queue recovery to interactive requests");
+                using ManualResetEventSlim reading = new(false);
+                using ManualResetEventSlim resume = new(false);
+                using ManualResetEventSlim modeReady = new(false);
+                using ManualResetEventSlim modeResume = new(false);
+                bool busyInjected = false;
+                queue.RecoveryRead = index =>
+                {
+                    if (index == 1) { reading.Set(); resume.Wait(TimeSpan.FromSeconds(10)); }
+                    if (stateRead && index == ItunesController.QueueChunk + 1)
+                    {
+                        modeReady.Set();
+                        modeResume.Wait(TimeSpan.FromSeconds(10));
+                    }
+                    if (!stateRead && index == 31 && !busyInjected)
+                    {
+                        busyInjected = true;
+                        throw ComFailure(unchecked((int)0x80010001));
+                    }
+                };
+                int readsAtCommand = -1;
+                int addedAtCommand = -1;
+                app.VolumeChanged = value =>
+                {
+                    if (value == 58) { readsAtCommand = queue.RecoveryReads; addedAtCommand = queue.AddedCount; }
+                };
+                if (stateRead) await restarted.GetStateAsync();
+                else await restarted.ExecuteAsync(new PlayerCommand("volume", 40));
+                Ensure(reading.Wait(TimeSpan.FromSeconds(5)), "queue recovery starts behind the initial response");
+                Task betweenBatches = restarted.ExecuteAsync(new PlayerCommand("volume", 58));
+                resume.Set();
+                await betweenBatches;
+                Ensure(readsAtCommand == ItunesController.QueueChunk && addedAtCommand == 59,
+                    "commands run between native playlist recovery batches before appending starts");
+                if (stateRead)
+                {
+                    Ensure(modeReady.Wait(TimeSpan.FromSeconds(5)), "mode change interrupts ongoing recovery");
+                    Task mode = restarted.ExecuteAsync(new PlayerCommand("shuffle", 0));
+                    modeResume.Set();
+                    await mode;
+                    Ensure(!queue.Shuffle && queue.PlayCount == 1,
+                        "a mode change reconciles unsaved IDs before retargeting the native queue");
+                }
+                app.VolumeChanged = null;
+                await WaitUntilAsync(() => queue.AddedCount == 129, "restart finishes the interrupted queue");
+                await restarted.ExecuteAsync(new PlayerCommand("volume", 40));
+                queue.RecoveryRead = null;
+                Ensure(stateRead || busyInjected, "busy recovery reads are retried without losing the cursor");
+                Ensure(queue.Entries().Select(entry => entry.TrackDatabaseID)
+                    .SequenceEqual(Enumerable.Range(1, 130).Where(id => id != 10)),
+                    "recovery reconciles unsaved entries without duplicates or skipped live songs");
+                Ensure(app.Created.Count == 1 && queue.PlayCount == 1 && ReferenceEquals(current, app.CurrentTrack)
+                    && app.PlayerPosition == 37 && app.PlayerState == 0 && queue.Shuffle == !stateRead && queue.SongRepeat == 1,
+                    "recovery preserves playlist, current song, pause, position, shuffle and repeat");
+            }
+            using ItunesController complete = FakeComController(folder, app);
+            await complete.ExecuteAsync(new PlayerCommand("volume", 40));
+            Ensure(queue.AddedCount == 129 && queue.PlayCount == 1,
+                "a completed queue is not appended again on another restart");
+        }
     }
 
     private static async Task TestQueueAbandonedByNewerSelectionAsync(string directory)
@@ -417,7 +533,9 @@ internal static partial class BridgeSelfTest
         public object? CurrentTrack { get; set; }
         public double PlayerPosition { get; set; }
         public int PlayerState { get; set; }
-        public int SoundVolume { get; set; }
+        private int soundVolume;
+        public Action<int>? VolumeChanged { get; set; }
+        public int SoundVolume { get => soundVolume; set { soundVolume = value; VolumeChanged?.Invoke(value); } }
         public int PreviousTrackCalls { get; private set; }
 
         public object CreatePlaylist(string name)
@@ -447,6 +565,15 @@ internal static partial class BridgeSelfTest
     {
         private readonly List<QueueEntryProbe> entries = [];
         private int added;
+        private int recoveryReads;
+        public Action<int>? RecoveryRead { get; set; }
+        public int RecoveryReads => Volatile.Read(ref recoveryReads);
+        public QueueEntryProbe ReadEntry(int index)
+        {
+            RecoveryRead?.Invoke(index);
+            Interlocked.Increment(ref recoveryReads);
+            return Entries()[index - 1];
+        }
         public string Name { get; } = name;
         public int PlaylistID { get; } = playlistId;
         public int Kind { get; } = 2;
@@ -497,7 +624,7 @@ internal static partial class BridgeSelfTest
     public sealed class QueueEntriesProbe(QueuePlaylistProbe playlist) : IEnumerable<QueueEntryProbe>
     {
         public int Count => playlist.Entries().Length;
-        public QueueEntryProbe Item(int index) => playlist.Entries()[index - 1];
+        public QueueEntryProbe Item(int index) => playlist.ReadEntry(index);
         public IEnumerator<QueueEntryProbe> GetEnumerator() =>
             ((IEnumerable<QueueEntryProbe>)playlist.Entries()).GetEnumerator();
         System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
@@ -507,7 +634,9 @@ internal static partial class BridgeSelfTest
     public sealed class QueueEntryProbe(QueuePlaylistProbe playlist, AlbumSearchTrack track)
     {
         public AlbumSearchTrack Track { get; } = track;
-        public int TrackID => Track.TrackID;
+        public int NativeTrackId { get; set; }
+        public int TrackID => NativeTrackId > 0 ? NativeTrackId : Track.TrackID;
+        public int TrackDatabaseID => Track.TrackDatabaseID;
         public void Delete() => playlist.Remove(this);
     }
 

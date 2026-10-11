@@ -151,6 +151,7 @@ internal sealed partial class ItunesController : IMediaController
         try
         {
             dynamic app = GetITunes();
+            RecoverManagedQueue((object)app);
             bool playing = Convert.ToInt32(app.PlayerState) == 1;
             int soundVolume = Math.Clamp(Convert.ToInt32(app.SoundVolume), 0, 100);
             (bool shuffleEnabled, string repeatMode) = ReadPlaybackModes((object)app);
@@ -496,6 +497,7 @@ internal sealed partial class ItunesController : IMediaController
     public Task ExecuteAsync(PlayerCommand command, CancellationToken cancellationToken = default) => Invoke<object?>(() =>
     {
         dynamic app = GetITunes();
+        RecoverManagedQueue((object)app);
         switch (command.Command)
         {
             case "playPause": app.PlayPause(); break;
@@ -746,6 +748,7 @@ internal sealed partial class ItunesController : IMediaController
         artworkCacheBytes = 0;
         missingArtwork.Clear();
         managedQueue = null;
+        queueRecoveryChecked = false;
         librarySnapshot = librarySnapshot is { } snapshot
             ? snapshot with { ValidatedAt = null }
             : null;

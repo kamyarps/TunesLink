@@ -24,6 +24,9 @@ internal class TunesLinkViewModel(
     application: Application,
     internal val savedStateHandle: SavedStateHandle,
 ) : AndroidViewModel(application) {
+    internal val formatString: (Int, List<Any>) -> String = { res, arguments ->
+        application.getString(res, *arguments.toTypedArray())
+    }
     internal val repository = (application as TunesLinkApplication).session().repository
     private val uiRecovery = application.getSharedPreferences(UI_RECOVERY_PREFERENCES, 0)
     internal val mutableState = MutableStateFlow(

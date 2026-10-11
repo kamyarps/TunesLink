@@ -276,7 +276,7 @@ class StateLayerViewModelTest {
 
     @Test fun aSeekToTheEndIsSettledByTheNextSong() {
         val seek = PendingMutation(1, PlaybackAction.Position, PlaybackAction.Position.playerFields(),
-            expectedNumber = 199.0, previousTrackId = "a", startedAtMillis = 0)
+            expectedNumber = 199.0, previousTrackId = "a", requestSucceeded = true, startedAtMillis = 0)
         assertTrue(seek.matches(playerState(trackId = "b", position = 0.0)))
         assertFalse(seek.matches(playerState(trackId = "a", position = 20.0)))
     }

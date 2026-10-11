@@ -223,6 +223,7 @@ class TunesLinkPresentationTest {
             action = PlaybackAction.Volume,
             affectedFields = setOf(PlayerField.Volume),
             expectedNumber = 80.0,
+            requestSucceeded = true,
             startedAtMillis = 0,
         )
         val optimistic = PlayerUiState(
@@ -254,6 +255,7 @@ class TunesLinkPresentationTest {
             action = PlaybackAction.Volume,
             affectedFields = PlaybackAction.Volume.playerFields(),
             expectedNumber = 80.0,
+            requestSucceeded = true,
             startedAtMillis = 0,
         )
         val playback = PendingMutation(
@@ -261,6 +263,7 @@ class TunesLinkPresentationTest {
             action = PlaybackAction.PlayPause,
             affectedFields = PlaybackAction.PlayPause.playerFields(),
             expectedBoolean = true,
+            requestSucceeded = true,
             startedAtMillis = 0,
         )
         val optimistic = PlayerUiState(
@@ -357,6 +360,7 @@ class TunesLinkPresentationTest {
             action = PlaybackAction.Next,
             affectedFields = PlaybackAction.Next.playerFields(),
             previousTrackId = "track-1",
+            requestSucceeded = true,
             startedAtMillis = 0,
         )
         assertTrue(next.matches(state("track-2", 4.0)))
@@ -368,6 +372,7 @@ class TunesLinkPresentationTest {
             action = PlaybackAction.Previous,
             affectedFields = PlaybackAction.Previous.playerFields(),
             previousTrackId = "track-1",
+            requestSucceeded = true,
             startedAtMillis = 0,
         )
         assertTrue(previous.matches(state("track-0", 50.0)))
@@ -382,6 +387,7 @@ class TunesLinkPresentationTest {
             action = PlaybackAction.Position,
             affectedFields = PlaybackAction.Position.playerFields(),
             expectedNumber = 100.0,
+            requestSucceeded = true,
             startedAtMillis = 0,
         )
         val nearby = BridgeClient.PlayerState(

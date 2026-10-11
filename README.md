@@ -250,7 +250,8 @@ release build, formatting verification, bridge self-tests, responsive WinUI layo
 requirements self-tests, and repository hygiene checks.
 
 [CI](https://github.com/kamyarps/TunesLink/actions) adds Android emulator coverage on API 23, 26,
-31, and 36, integration tests, artifact-size budgets, and a full-history secret scan. Release
+31, and 36, integration tests, SQLite cache regression tests, artifact-size budgets, and a
+full-history secret scan. Release
 publishing requires device validation and smoke tests of the signed, optimized APK. See the
 [manual release checklist](test-support/README.md#manual-release-checklist) for additional checks.
 

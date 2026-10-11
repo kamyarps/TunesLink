@@ -79,9 +79,7 @@ internal fun TunesLinkViewModel.commandResult(
             commandRequests.remove(mutation.operationId)
             val player = mutableState.value.player
             if (player.pending(mutation.action)?.operationId != mutation.operationId) return
-            val accepted = if (mutation.action == PlaybackAction.PlayTrack) {
-                mutation.copy(requestSucceeded = true)
-            } else mutation
+            val accepted = mutation.copy(requestSucceeded = true)
             mutableState.update { state ->
                 val current = state.player.pending(mutation.action)
                 if (current?.operationId != mutation.operationId) state else state.copy(
@@ -128,9 +126,9 @@ internal fun TunesLinkViewModel.commandResult(
             // A typed bridge reason ("iTunes is showing a message…") says more than the generic
             // copy; legacy bridges keep the action-specific message.
             val reasonRes = playbackFailureRes(code)
-            val failureCopy = getApplication<Application>().getString(
+            val failureCopy = formatString(
                 reasonRes ?: failureRes,
-                *(if (reasonRes == null) failureArguments else emptyList()).toTypedArray(),
+                if (reasonRes == null) failureArguments else emptyList(),
             )
             mutableState.update {
                 it.copy(player = restored.copy(

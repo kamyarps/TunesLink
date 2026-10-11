@@ -73,7 +73,7 @@ class ReleaseRegressionTest {
     @Test
     fun unavailableBackendCannotConfirmAnOptimisticPause() {
         val mutation = PendingMutation(1, PlaybackAction.PlayPause, setOf(PlayerField.Playing),
-            expectedBoolean = false, startedAtMillis = 0)
+            expectedBoolean = false, requestSucceeded = true, startedAtMillis = 0)
         val unavailable = BridgeClient.PlayerState(false, false, "Song", "Artist", "Album",
             200.0, 4.0, 55, "art", "track", false, "off")
         assertFalse(mutation.matches(unavailable))

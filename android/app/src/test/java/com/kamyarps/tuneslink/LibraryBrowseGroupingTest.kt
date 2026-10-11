@@ -6,6 +6,25 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class LibraryBrowseGroupingTest {
+    @Test
+    fun capitalizationVariantsShareOneHeadingWithoutChangingSongOrder() {
+        val sent = listOf(
+            track("1", "Record", albumArtist = "Artist"),
+            track("2", "record", albumArtist = "Artist"),
+            track("3", "RECORD", albumArtist = "artist"),
+            track("4", "Record", albumArtist = "Other Artist"),
+            track("5", "Other Record", albumArtist = "artist"),
+        )
+        val albums = libraryBrowseAlbums(sent)
+        assertEquals(listOf(3, 1, 1), albums.map { it.heading.trackCount })
+        assertEquals("Record", albums.first().heading.album)
+        assertEquals(listOf("1", "2", "3"), albums.first().songs.map { it.track.id })
+        val rows = libraryBrowseRows(sent)
+        assertEquals(3, rows.filterIsInstance<LibraryBrowseRow.AlbumHeading>().size)
+        assertEquals(sent.map { it.id }, rows.filterIsInstance<LibraryBrowseRow.Song>().map { it.track.id })
+        assertEquals(rows.size, rows.map { it.key }.distinct().size)
+    }
+
     private fun track(
         id: String,
         album: String,
