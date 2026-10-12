@@ -44,8 +44,8 @@ android {
         applicationId = "com.kamyarps.tuneslink"
         minSdk = 23
         targetSdk = requiredTargetSdk
-        versionCode = 11
-        versionName = "1.2.3"
+        versionCode = 12
+        versionName = "1.2.4"
     }
 
     signingConfigs {
@@ -107,6 +107,8 @@ dependencies {
     coreLibraryDesugaring "com.android.tools:desugar_jdk_libs:2.1.5"
     def composeBom = platform("androidx.compose:compose-bom:2026.09.00")
     implementation composeBom
+    def coroutinesVersion = "1.11.0"
+    implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:$coroutinesVersion"
 
     implementation "androidx.activity:activity-compose:1.13.0"
     implementation "androidx.lifecycle:lifecycle-runtime-compose:2.11.0"
@@ -119,5 +121,5 @@ dependencies {
     debugImplementation "androidx.compose.ui:ui-tooling"
 
     testImplementation "junit:junit:4.13.2"
-    testImplementation "org.jetbrains.kotlinx:kotlinx-coroutines-test:1.11.0"
+    testImplementation "org.jetbrains.kotlinx:kotlinx-coroutines-test:$coroutinesVersion"
 }
