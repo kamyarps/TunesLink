@@ -182,9 +182,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
-        if (viewModel.ensureLocalNetworkPermission(hasLocalNetworkAccess())) {
-            viewModel.onForeground()
-        }
+        viewModel.onForeground(::hasLocalNetworkAccess)
     }
 
     override fun onResume() {

@@ -46,10 +46,11 @@ jobs:
             target: google_apis
             ram-mb: 4096
             run-integration: true
-        # API 37 permission scenarios are in the integration script. Qualification
-        # on the Windows audit host was blocked by SurfaceFlinger crashes in the
-        # 37.0/37.1 images with emulator 37.1.11 and 37.2.10 (hasReadColorBufferDma).
-        # Add this platform after qualifying a working runner/image combination.
+          - api-level: 37
+            image-platform: "37.0"
+            target: google_apis
+            ram-mb: 4096
+            run-integration: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -116,17 +117,22 @@ jobs:
       - name: Install and configure emulator
         timeout-minutes: 10
         env:
-          API_LEVEL: ${{ matrix.api-level }}
+          IMAGE_PLATFORM: ${{ matrix.image-platform || matrix.api-level }}
           IMAGE_TARGET: ${{ matrix.target }}
         run: |
           # Share one explicit AVD location across creation, configuration, and launch.
           export ANDROID_AVD_HOME="$RUNNER_TEMP/tuneslink-avd"
           echo "ANDROID_AVD_HOME=$ANDROID_AVD_HOME" >> "$GITHUB_ENV"
-          image="system-images;android-${API_LEVEL};${IMAGE_TARGET};x86_64"
-          sdkmanager "platform-tools" "emulator" "$image"
+          image="system-images;android-${IMAGE_PLATFORM};${IMAGE_TARGET};x86_64"
+          # Older avdmanager versions parse 37.0 as android-0, disabling the
+          # renderer features this image needs and crashing SurfaceFlinger.
+          sdkmanager "cmdline-tools;22.0"
+          tools="$ANDROID_HOME/cmdline-tools/22.0/bin"
+          "$tools/sdkmanager" "platform-tools" "emulator" "$image"
           mkdir -p "$ANDROID_AVD_HOME"
           avd_path="$ANDROID_AVD_HOME/tuneslink-ci.avd"
-          echo no | avdmanager create avd --force --name tuneslink-ci --package "$image" --device pixel_2 --path "$avd_path"
+          echo no | "$tools/avdmanager" create avd --force --name tuneslink-ci --package "$image" --device pixel_2 --path "$avd_path"
+          grep -Fx "target=android-${IMAGE_PLATFORM}" "$ANDROID_AVD_HOME/tuneslink-ci.ini"
           test -s "$avd_path/config.ini"
           printf '\nhw.cpu.ncore=2\nhw.heapSize=512M\n' >> "$avd_path/config.ini"
           "$ANDROID_HOME/emulator/emulator" -list-avds | grep -Fx tuneslink-ci

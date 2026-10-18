@@ -15,8 +15,14 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Callable;
+import java.util.concurrent.Executor;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BiConsumer;
+import java.util.function.Consumer;
 
 /**
  * Owns the paired bridge, authenticated network access, and bridge-scoped media cache.
@@ -101,6 +107,13 @@ final class BridgeRepository implements AutoCloseable {
 
     private final BridgeClient client;
     private final SecureStore store;
+    private final Executor storage;
+    private final Consumer<Runnable> dispatch;
+    private final List<Runnable> readyObservers = new ArrayList<>();
+    private boolean initialized;
+    private boolean closed;
+    private int pendingRevocations;
+    private boolean storageRequiresRecovery;
     private final LibraryCacheStore libraryCache;
     private final ArtworkDiskCache artworkDiskCache;
     private final BridgeSession session = new BridgeSession();
@@ -122,7 +135,10 @@ final class BridgeRepository implements AutoCloseable {
     private final PendingDiscovery pendingDiscovery = new PendingDiscovery();
     private BridgeClient.Cancellation discoveryRequest = BridgeClient.Cancellation.NONE;
     private BridgeClient.Cancellation manualRequest = BridgeClient.Cancellation.NONE;
-    private BridgeClient.Cancellation pairingRequest = BridgeClient.Cancellation.NONE;
+    private boolean pairingInFlight;
+    private boolean forgetting;
+    private long activePairingGeneration;
+    private Runnable pairingSettlementObserver = () -> { };
     private BridgeClient.Cancellation relocationRequest = BridgeClient.Cancellation.NONE;
     private long manualGeneration;
     private long relocationGeneration;
@@ -148,24 +164,69 @@ final class BridgeRepository implements AutoCloseable {
     BridgeRepository(Context context) {
         this(new BridgeClient(), new SecureStore(context), new LibraryCacheStore(context),
                 new ArtworkDiskCache(context),
-                (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE));
+                (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE),
+                Executors.newSingleThreadExecutor(), new Handler(Looper.getMainLooper())::post);
     }
 
     BridgeRepository(BridgeClient client, SecureStore store) {
-        this(client, store, null, null, null);
+        this(client, store, Runnable::run, Runnable::run);
+    }
+
+    BridgeRepository(BridgeClient client, SecureStore store, Executor storage,
+                     Consumer<Runnable> dispatch) {
+        this(client, store, null, null, null, storage, dispatch);
     }
 
     private BridgeRepository(BridgeClient client, SecureStore store,
                              LibraryCacheStore libraryCache,
                              ArtworkDiskCache artworkDiskCache,
-                             ConnectivityManager connectivity) {
+                             ConnectivityManager connectivity, Executor storage,
+                             Consumer<Runnable> dispatch) {
         this.client = client;
         this.store = store;
+        this.storage = storage;
+        this.dispatch = dispatch;
         this.libraryCache = libraryCache;
         this.artworkDiskCache = artworkDiskCache;
         this.connectivity = connectivity;
-        current = store.load();
-        if (current != null) session.activate(current);
+        storageWork(store::load, (saved, failure) -> {
+            current = saved;
+            if (current != null) session.activate(current);
+            initialized = true;
+            List<Runnable> observers = new ArrayList<>(readyObservers);
+            readyObservers.clear();
+            observers.forEach(Runnable::run);
+        });
+    }
+
+    boolean isInitialized() { return initialized; }
+
+    RequestHandle whenReady(Runnable observer) {
+        if (closed) return RequestHandle.NONE;
+        if (initialized) observer.run();
+        else readyObservers.add(observer);
+        return () -> readyObservers.remove(observer);
+    }
+
+    /** Only this serial lane touches durable credentials; results return to the UI owner. */
+    private <T> void storageWork(Callable<T> operation, BiConsumer<T, Exception> completed) {
+        if (closed && !pairingInFlight) return;
+        storage.execute(() -> {
+            T value = null;
+            Exception failure = null;
+            try { value = operation.call(); }
+            catch (Exception error) { failure = error; }
+            int count = store.pendingRevocationCount();
+            boolean recovery = store.requiresRecovery();
+            T result = value;
+            Exception error = failure;
+            dispatch.accept(() -> {
+                if (closed && !pairingInFlight) return;
+                pendingRevocations = count;
+                storageRequiresRecovery = recovery;
+                completed.accept(result, error);
+            });
+        });
     }
 
     SecureStore.SavedBridge current() {
@@ -173,9 +234,19 @@ final class BridgeRepository implements AutoCloseable {
     }
 
     boolean secureStorageRequiresRecovery() {
-        // Read again: a Keystore failure at startup may have been transient.
-        if (store.requiresRecovery()) store.pendingRevocations();
-        return store.requiresRecovery();
+        return storageRequiresRecovery;
+    }
+
+    RequestHandle retrySecureStorage(Runnable observer) {
+        AtomicBoolean cancelled = new AtomicBoolean();
+        storageWork(store::load, (saved, failure) -> {
+            if (current == null && saved != null) {
+                current = saved;
+                session.activate(saved);
+            }
+            if (!cancelled.get()) observer.run();
+        });
+        return () -> cancelled.set(true);
     }
 
     RequestHandle discover(BridgeClient.Result<List<BridgeClient.BridgeInfo>> result) {
@@ -234,29 +305,60 @@ final class BridgeRepository implements AutoCloseable {
 
     void pair(BridgeClient.BridgeInfo bridge, String code,
               BridgeClient.Result<SecureStore.SavedBridge> result) {
+        if (forgetting) {
+            result.failure("The saved computer is still being removed. Try again.", false);
+            return;
+        }
+        if (pairingInFlight && !pendingPairing.isCurrent(activePairingGeneration)) {
+            result.failure("The previous pairing is still being settled. Try again.", false);
+            return;
+        }
         PendingPairing.Begin begin = pendingPairing.beginOperation(bridge, result);
         if (begin.result == PendingPairing.BeginResult.ATTACHED) return;
         if (begin.result == PendingPairing.BeginResult.BUSY) {
             result.failure("Another computer is already being paired", false);
             return;
         }
-        final String clientId;
-        try {
-            clientId = store.clientId();
-        } catch (RuntimeException storageFailure) {
-            finishPairingFailure(begin.generation,
-                    "This phone could not save its pairing identity. Try again.", false);
-            return;
-        }
-        pairingRequest = client.pair(bridge, code, clientId, new BridgeClient.Result<>() {
+        pairingInFlight = true;
+        activePairingGeneration = begin.generation;
+        storageWork(() -> {
+            int count = store.pendingRevocations().size();
+            if (store.requiresRecovery()) throw new IllegalStateException("Secure storage is unavailable");
+            if (count >= SecureStore.MAX_PENDING_REVOCATIONS)
+                throw new IllegalStateException("Retry pending removals before pairing");
+            return store.clientId();
+        }, (clientId, storageFailure) -> {
+            if (storageFailure != null || !pendingPairing.isCurrent(begin.generation)) {
+                finishPairingFailure(begin.generation,
+                        "This phone could not save its pairing identity. Retry pending removals first.", false);
+                return;
+            }
+            startPairing(bridge, code, clientId, begin.generation);
+        });
+    }
+
+    private void startPairing(BridgeClient.BridgeInfo bridge, String code, String clientId,
+                              long generation) {
+        SecureStore.SavedBridge previous = current;
+        client.pair(bridge, code, clientId, new BridgeClient.Result<>() {
             @Override
             public void success(String token) {
-                if (!pendingPairing.isCurrent(begin.generation)) return;
-                try {
-                    SecureStore.SavedBridge previous = current;
+                SecureStore.SavedBridge issued = new SecureStore.SavedBridge(
+                        bridge.id, bridge.name, bridge.host, bridge.port, bridge.tlsFingerprint, token);
+                if (!pendingPairing.isCurrent(generation)) {
+                    discardPairing(generation, issued, previous);
+                    return;
+                }
+                storageWork(() -> {
                     store.save(bridge, token);
                     SecureStore.SavedBridge saved = store.load();
                     if (saved == null) throw new IllegalStateException("Secure storage failed");
+                    return saved;
+                }, (saved, storageFailure) -> {
+                    if (storageFailure != null || !pendingPairing.isCurrent(generation)) {
+                        discardPairing(generation, issued, previous);
+                        return;
+                    }
                     current = saved;
                     stopStateUpdates();
                     session.activate(saved);
@@ -267,20 +369,9 @@ final class BridgeRepository implements AutoCloseable {
                     artworkCache.evictAll();
                     missingArtwork.evictAll();
                     cancelPendingArtwork();
-                    finishPairingSuccess(begin.generation, saved);
+                    finishPairingSuccess(generation, saved);
                     retryPendingRevocations(null);
-                } catch (Exception storageFailure) {
-                    SecureStore.SavedBridge orphan = new SecureStore.SavedBridge(
-                            bridge.id, bridge.name, bridge.host, bridge.port,
-                            bridge.tlsFingerprint, token);
-                    client.revokePairing(orphan, new BridgeClient.Result<>() {
-                        @Override public void success(Boolean ignored) { }
-                        @Override public void failure(String ignored, boolean unauthorized) { }
-                    });
-                    finishPairingFailure(begin.generation,
-                            "Pairing succeeded, but this phone could not save its credentials. Try again.",
-                            false);
-                }
+                });
             }
 
             @Override
@@ -292,12 +383,14 @@ final class BridgeRepository implements AutoCloseable {
             public void failure(String message, boolean unauthorized,
                                 BridgeClient.ErrorCode code) {
                 BridgeClient.Result<SecureStore.SavedBridge> observer =
-                        pendingPairing.finish(begin.generation);
+                        pendingPairing.finish(generation);
+                pairingSettled();
                 if (observer != null) observer.failure(message, unauthorized, code);
             }
 
             @Override public void rateLimited(int retryAfterSeconds) {
-                BridgeClient.Result<SecureStore.SavedBridge> observer = pendingPairing.finish(begin.generation);
+                BridgeClient.Result<SecureStore.SavedBridge> observer = pendingPairing.finish(generation);
+                pairingSettled();
                 if (observer != null) observer.rateLimited(retryAfterSeconds);
             }
         });
@@ -305,17 +398,52 @@ final class BridgeRepository implements AutoCloseable {
 
     void cancelPairing() {
         pendingPairing.cancel();
-        pairingRequest.cancel();
-        pairingRequest = BridgeClient.Cancellation.NONE;
+        // The server may already have committed a token. Keep the bounded request alive so
+        // its result can be durably queued for revocation even after the UI observer leaves.
+    }
+
+    RequestHandle observePairingSettlement(Runnable observer) {
+        pairingSettlementObserver = observer;
+        return () -> {
+            if (pairingSettlementObserver == observer) pairingSettlementObserver = () -> { };
+        };
+    }
+
+    private void discardPairing(long generation, SecureStore.SavedBridge issued,
+                                SecureStore.SavedBridge previous) {
+        storageWork(() -> store.discardIssuedPairing(issued, previous), (pending, failure) -> {
+            if (current == previous && previous != null && previous.id.equals(issued.id))
+                clearActiveRuntime();
+            client.revokePairing(issued, new BridgeClient.Result<>() {
+                @Override public void success(Boolean ignored) {
+                    if (pending == null) finish();
+                    else storageWork(() -> store.removePendingRevocation(pending.revocationId),
+                            (removed, error) -> finish());
+                }
+                @Override public void failure(String message, boolean unauthorized) { finish(); }
+                private void finish() {
+                    finishPairingFailure(generation,
+                            "Pairing could not be completed. Try again.", false);
+                }
+            });
+        });
+    }
+
+    private void pairingSettled() {
+        pairingInFlight = false;
+        if (closed) finishClose();
+        else pairingSettlementObserver.run();
     }
 
     private void finishPairingSuccess(long generation, SecureStore.SavedBridge saved) {
         BridgeClient.Result<SecureStore.SavedBridge> observer = pendingPairing.finish(generation);
+        pairingSettled();
         if (observer != null) observer.success(saved);
     }
 
     private void finishPairingFailure(long generation, String message, boolean unauthorized) {
         BridgeClient.Result<SecureStore.SavedBridge> observer = pendingPairing.finish(generation);
+        pairingSettled();
         if (observer != null) observer.failure(message, unauthorized);
     }
 
@@ -416,16 +544,20 @@ final class BridgeRepository implements AutoCloseable {
                 trusted.tlsFingerprint, new BridgeClient.Result<>() {
             @Override public void success(BridgeClient.BridgeInfo verified) {
                 if (generation != relocationGeneration || current != trusted) return;
-                try {
-                    SecureStore.SavedBridge relocated = store.updateEndpoint(trusted, verified);
+                storageWork(() -> store.updateEndpoint(trusted, verified), (relocated, failure) -> {
+                    if (generation != relocationGeneration || current != trusted || closed) return;
+                    if (failure != null) {
+                        if (generation == relocationGeneration)
+                            result.failure("Found the computer, but could not save its new address", false);
+                        return;
+                    }
                     haltStateStream();
                     cancelPendingArtwork();
                     current = relocated;
                     session.activate(relocated);
-                    result.success(Relocation.relocated(trusted, relocated));
-                } catch (Exception persistenceFailure) {
-                    result.failure("Found the computer, but could not save its new address", false);
-                }
+                    if (generation == relocationGeneration)
+                        result.success(Relocation.relocated(trusted, relocated));
+                });
             }
 
             @Override public void failure(String message, boolean unauthorized) {
@@ -579,9 +711,24 @@ final class BridgeRepository implements AutoCloseable {
     RequestHandle command(String command, Double value, BridgeClient.Result<Boolean> result) {
         BridgeSession.Request request = capture();
         if (request == null) return RequestHandle.NONE;
-        BridgeClient.Cancellation cancellation = client.command(request.bridge, command, value,
-                refreshAfterSuccess(request, result));
-        return cancellation::cancel;
+        DeferredRequest deferred = new DeferredRequest();
+        // Share the storage barrier with selections so a following command cannot overtake
+        // a selection whose sequence is still being committed.
+        storageWork(() -> null, (ignored, failure) -> {
+            if (deferred.cancelled || closed || !session.isCurrent(request)) return;
+            deferred.network = client.command(request.bridge, command, value,
+                    refreshAfterSuccess(request, result));
+        });
+        return deferred;
+    }
+
+    private static final class DeferredRequest implements RequestHandle {
+        volatile boolean cancelled;
+        BridgeClient.Cancellation network = BridgeClient.Cancellation.NONE;
+        @Override public void cancel() {
+            cancelled = true;
+            network.cancel();
+        }
     }
 
     public RequestHandle getLibrary(String query, int offset, int limit,
@@ -729,16 +876,17 @@ final class BridgeRepository implements AutoCloseable {
             result.failure("Computer is not connected", false);
             return RequestHandle.NONE;
         }
-        final long sequence;
-        try {
-            sequence = store.nextPlaybackSequence();
-        } catch (RuntimeException failure) {
-            result.failure("Could not safely save the playback request. Try again.", false);
-            return RequestHandle.NONE;
-        }
-        BridgeClient.Cancellation cancellation = client.playTrack(request.bridge, trackId,
-                collectionKind, collectionId, sequence, refreshAfterSuccess(request, result));
-        return cancellation::cancel;
+        DeferredRequest deferred = new DeferredRequest();
+        storageWork(() -> deferred.cancelled ? 0L : store.nextPlaybackSequence(), (sequence, failure) -> {
+            if (deferred.cancelled || closed || !session.isCurrent(request)) return;
+            if (failure != null) {
+                result.failure("Could not safely save the playback request. Try again.", false);
+                return;
+            }
+            deferred.network = client.playTrack(request.bridge, trackId,
+                    collectionKind, collectionId, sequence, refreshAfterSuccess(request, result));
+        });
+        return deferred;
     }
 
     Bitmap cachedArtwork(String artworkId, int size) {
@@ -880,51 +1028,52 @@ final class BridgeRepository implements AutoCloseable {
     }
 
     void forgetFromBridge(BridgeClient.Result<Boolean> result) {
-        final SecureStore.PendingRevocation pending;
-        try {
-            pending = store.prepareForget();
-        } catch (Exception persistenceFailure) {
-            result.failure(persistenceFailure.getMessage() == null
-                    ? "Could not safely remove this computer"
-                    : persistenceFailure.getMessage(), false);
+        if (pairingInFlight || forgetting) {
+            result.failure("A pairing change is still being saved. Try again.", false);
             return;
         }
-        clearActiveRuntime();
-        if (pending == null) {
-            result.success(true);
-            return;
-        }
-        client.revokePairing(pending.bridge, new BridgeClient.Result<>() {
-            @Override public void success(Boolean value) {
-                try {
-                    store.removePendingRevocation(pending.revocationId);
-                    result.success(true);
-                } catch (Exception persistenceFailure) {
-                    result.failure("Removed on the computer, but cleanup will be retried", false);
+        forgetting = true;
+        storageWork(store::prepareForget, (pending, failure) -> {
+            forgetting = false;
+            if (failure != null) {
+                result.failure("Could not safely remove this computer", false);
+                return;
+            }
+            clearActiveRuntime();
+            if (pending == null) {
+                result.success(true);
+                return;
+            }
+            client.revokePairing(pending.bridge, new BridgeClient.Result<>() {
+                @Override public void success(Boolean value) {
+                    storageWork(() -> store.removePendingRevocation(pending.revocationId), (removed, error) -> {
+                        if (error == null) result.success(true);
+                        else result.failure("Removed on the computer, but cleanup will be retried", false);
+                    });
                 }
-            }
 
-            @Override public void failure(String message, boolean unauthorized) {
-                result.failure("Removed from this phone, but still authorized on the computer. "
-                        + message, unauthorized);
-            }
+                @Override public void failure(String message, boolean unauthorized) {
+                    result.failure("Removed from this phone, but still authorized on the computer. "
+                            + message, unauthorized);
+                }
+            });
         });
     }
 
     int pendingRevocationCount() {
-        return store.pendingRevocationCount();
+        return pendingRevocations;
     }
 
     void retryPendingRevocations(BridgeClient.Result<Integer> result) {
         if (result != null) revocationRetryObservers.add(result);
         if (retryingRevocations) return;
-        List<SecureStore.PendingRevocation> pending = store.pendingRevocations();
-        if (pending.isEmpty()) {
-            finishRevocationRetry(0, null);
-            return;
-        }
         retryingRevocations = true;
-        retryPendingRevocation(pending, 0, 0, null);
+        storageWork(store::pendingRevocations, (pending, failure) -> {
+            if (failure != null) {
+                retryingRevocations = false;
+                finishRevocationRetry(0, "Could not read pending removals");
+            } else retryPendingRevocation(pending, 0, 0, null);
+        });
     }
 
     /**
@@ -934,11 +1083,11 @@ final class BridgeRepository implements AutoCloseable {
     private void retryPendingRevocationsAutomatically() {
         long now = SystemClock.elapsedRealtime();
         if (retryingRevocations || now < automaticRevocationRetryAt
-                || store.pendingRevocationCount() == 0) return;
+                || pendingRevocations == 0) return;
         automaticRevocationRetryAt = now + automaticRevocationBackoffMs;
         retryPendingRevocations(new BridgeClient.Result<>() {
             @Override public void success(Integer removed) {
-                if (store.pendingRevocationCount() == 0) {
+                if (pendingRevocations == 0) {
                     automaticRevocationBackoffMs = MIN_REVOCATION_RETRY_MS;
                     automaticRevocationRetryAt = 0;
                 } else {
@@ -969,24 +1118,12 @@ final class BridgeRepository implements AutoCloseable {
         if (active != null && active.id.equals(item.bridge.id)) {
             // Pairing with that computer again already replaced this authorization there; its
             // old certificate may be gone, so contacting it could never succeed.
-            try {
-                store.removePendingRevocation(item.revocationId);
-                retryPendingRevocation(pending, index + 1, removed + 1, firstFailure);
-            } catch (Exception persistenceFailure) {
-                retryPendingRevocation(pending, index + 1, removed,
-                        firstFailure == null ? "Could not save revocation cleanup" : firstFailure);
-            }
+            removeRevocationAndContinue(pending, index, removed, firstFailure);
             return;
         }
         client.revokePairing(item.bridge, new BridgeClient.Result<>() {
             @Override public void success(Boolean ignored) {
-                try {
-                    store.removePendingRevocation(item.revocationId);
-                    retryPendingRevocation(pending, index + 1, removed + 1, firstFailure);
-                } catch (Exception persistenceFailure) {
-                    retryPendingRevocation(pending, index + 1, removed,
-                            firstFailure == null ? "Could not save revocation cleanup" : firstFailure);
-                }
+                removeRevocationAndContinue(pending, index, removed, firstFailure);
             }
 
             @Override public void failure(String message, boolean unauthorized) {
@@ -994,6 +1131,15 @@ final class BridgeRepository implements AutoCloseable {
                         firstFailure == null ? message : firstFailure);
             }
         });
+    }
+
+    private void removeRevocationAndContinue(List<SecureStore.PendingRevocation> pending,
+                                             int index, int removed, String firstFailure) {
+        storageWork(() -> store.removePendingRevocation(pending.get(index).revocationId),
+                (ignored, failure) -> retryPendingRevocation(pending, index + 1,
+                        failure == null ? removed + 1 : removed,
+                        failure != null && firstFailure == null
+                                ? "Could not save revocation cleanup" : firstFailure));
     }
 
     private void finishRevocationRetry(int removed, String failure) {
@@ -1065,16 +1211,27 @@ final class BridgeRepository implements AutoCloseable {
 
     @Override
     public void close() {
+        if (closed) return;
+        closed = true;
+        readyObservers.clear();
         cancelDiscovery();
         cancelManualResolution();
         cancelPairing();
         cancelRelocation();
         stopStateUpdates();
-        client.close();
+        session.clear();
+        // Pairing owns a server-side transaction; let its bounded response and revocation
+        // finish before closing the transport and the durable-storage lane.
+        if (!pairingInFlight) finishClose();
         if (libraryCache != null) libraryCache.close();
         if (artworkDiskCache != null) artworkDiskCache.close();
         artworkCache.evictAll();
         missingArtwork.evictAll();
         cancelPendingArtwork();
+    }
+
+    private void finishClose() {
+        client.close();
+        if (storage instanceof ExecutorService executor) executor.shutdown();
     }
 }

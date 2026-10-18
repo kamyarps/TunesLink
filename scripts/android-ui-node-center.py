@@ -12,7 +12,7 @@ def main() -> int:
         return 2
 
     path, mode, value = sys.argv[1:]
-    attributes = {"text": "text", "desc": "content-desc", "class": "class"}
+    attributes = {"text": "text", "desc": "content-desc", "class": "class", "id": "resource-id"}
     if mode not in {*attributes, "focused-edit", "edit-text"}:
         print(f"unsupported match mode: {mode}", file=sys.stderr)
         return 2

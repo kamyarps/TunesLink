@@ -292,6 +292,9 @@ scrollable_swipe up
 
 
 def main() -> None:
+    permission = '<hierarchy><node text="Don\'t allow" resource-id="com.android.permissioncontroller:id/permission_deny_button" bounds="[10,20][110,60]" /></hierarchy>'
+    match(permission, "id", "com.android.permissioncontroller:id/permission_deny_button", "60 40")
+    match(permission, "id", "com.android.permissioncontroller:id/permission_allow_button", None)
     # API 31 tablet workspaces expose an empty EditText and a separate Search
     # placeholder; they do not expose the phone-only Cancel or Library nodes.
     match(TABLET_SEARCH, "edit-text", "", "110 40")

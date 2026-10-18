@@ -15,6 +15,18 @@ For the Android emulator, connect manually to `10.0.2.2:<port>`. The default tes
 
 Automated release regressions run with the existing Android unit tests and Windows `--self-test` command. They cover unavailable optional storage, revoked pairing recovery, lifecycle cancellation, bounded page windows, non-advancing pages, worker failure/recovery, large HTTP offsets, and absolute metadata/artwork cache expiry.
 
+Storage and cancellation regressions also cover pairing responses arriving after cancellation or
+shutdown, rollback while credentials are being saved, durable revocation retries, and re-pairing
+with the same computer. Credentials and playback sequence commits run on one storage worker;
+tests verify that later playback commands cannot overtake those commits or run after cancellation.
+Artwork tests exercise queue saturation, removal of cancelled reads, cancellation during decoding,
+and forgotten-computer cleanup while the cache is busy.
+
+Run `python3 scripts/android-ui-contract-self-test.py` to check the device capture validator.
+It covers API 23/31 song rows whose reported bounds are clipped to a scroll viewport, while
+still rejecting undersized controls within the list, clipping on the wrong axis, and controls
+outside the screen. CI runs these checks before the Android build.
+
 Issue #4 regressions additionally cover album pages within artists/genres, distinct album artists,
 authenticated scoped browsing, queue order with shuffle/repeat, and phone navigation history.
 
@@ -36,13 +48,15 @@ signed APK without removing the installation.
 - [ ] On a phone paired with the previous GitHub release, open the new `TunesLink.apk` from a
   browser or file manager. Confirm that Android offers an update and the pairing still works.
 - [ ] On an Android 17 (API 37) device or working emulator, grant local-network permission and
-  verify pairing. Revoke the permission, restart the app, and verify that it prompts again.
-  Grant access again and confirm that the saved connection recovers.
+  verify pairing. Deny access, retry, and verify the Settings action after permanent denial.
+  Revoke access after pairing, restart the app, and verify that granting it restores the connection.
 
-This remains a manual release check until a working API 37 runner/image combination is qualified
-for the [device matrix](../.github/workflows/android-device.yml). The
-[integration script](../scripts/android-emulator-integration.sh) contains the grant, revocation,
-and recovery scenarios; emulator qualification notes are kept in the workflow comments.
+API 37 is also required in the [device matrix](../.github/workflows/android-device.yml), including
+the [integration script](../scripts/android-emulator-integration.sh) permission scenarios. Release
+publishing depends on that matrix passing; a failed emulator boot does not count as validation.
+Use Command-line Tools 22.0 when creating the `android-37.0` AVD and check its `.ini` contains
+`target=android-37.0`. Older tools can write `target=android-0`, causing repeated SurfaceFlinger
+`hasReadColorBufferDma` crashes before app testing. The workflow checks this metadata explicitly.
 
 ## Live iTunes queue regression
 

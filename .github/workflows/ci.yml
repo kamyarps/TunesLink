@@ -60,6 +60,9 @@ jobs:
       - name: Test Android integration selectors
         working-directory: ${{ github.workspace }}
         run: python3 scripts/android-integration-selector-self-test.py
+      - name: Test Android UI contracts
+        working-directory: ${{ github.workspace }}
+        run: python3 scripts/android-ui-contract-self-test.py
       - name: Test library cache revision isolation with SQLite
         working-directory: ${{ github.workspace }}
         run: python3 scripts/library-cache-self-test.py

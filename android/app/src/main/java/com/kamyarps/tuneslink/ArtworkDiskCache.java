@@ -12,9 +12,13 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.Arrays;
 import java.util.Comparator;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.FutureTask;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.BooleanSupplier;
+import java.util.function.Consumer;
 
 /** Private, bounded second-level artwork cache. Android may evict it under storage pressure. */
 final class ArtworkDiskCache implements AutoCloseable {
@@ -32,20 +36,46 @@ final class ArtworkDiskCache implements AutoCloseable {
 
     interface Loaded { void accept(Bitmap bitmap, long fetchedAt); }
     interface Handle { void cancel(); }
+    interface Decoder { Bitmap decode(File file, BooleanSupplier cancelled); }
 
     private final File directory;
-    private final ExecutorService executor = Executors.newSingleThreadExecutor();
-    private final Handler main = new Handler(Looper.getMainLooper());
+    private final ThreadPoolExecutor executor;
+    private final Consumer<Runnable> dispatch;
+    private final Decoder decoder;
     private final AtomicBoolean closed = new AtomicBoolean();
 
     ArtworkDiskCache(Context context) {
-        directory = new File(context.getCacheDir(), "artwork-v1");
+        this(new File(context.getCacheDir(), "artwork-v1"), newExecutor(),
+                new Handler(Looper.getMainLooper())::post, ArtworkDiskCache::decode);
+    }
+
+    ArtworkDiskCache(File directory, ThreadPoolExecutor executor, Consumer<Runnable> dispatch,
+                     Decoder decoder) {
+        this.directory = directory;
+        this.executor = executor;
+        this.dispatch = dispatch;
+        this.decoder = decoder;
+    }
+
+    static ThreadPoolExecutor newExecutor() {
+        return new ThreadPoolExecutor(1, 1, 0, TimeUnit.MILLISECONDS,
+                new ArrayBlockingQueue<>(16));
+    }
+
+    private static Bitmap decode(File file, BooleanSupplier cancelled) {
+        BitmapFactory.Options bounds = new BitmapFactory.Options();
+        bounds.inJustDecodeBounds = true;
+        BitmapFactory.decodeFile(file.getAbsolutePath(), bounds);
+        if (cancelled.getAsBoolean()
+                || !BridgeClient.isSafeArtworkDimensions(bounds.outWidth, bounds.outHeight)) return null;
+        return BitmapFactory.decodeFile(file.getAbsolutePath());
     }
 
     Handle load(String scope, String key, Loaded loaded) {
         AtomicBoolean cancelled = new AtomicBoolean();
         if (closed.get()) return () -> { };
-        executeBestEffort(() -> {
+        FutureTask<Void> task = new FutureTask<>(() -> {
+            if (cancelled.get() || closed.get()) return;
             Bitmap bitmap = null;
             long fetchedAt = 0;
             try {
@@ -53,11 +83,8 @@ final class ArtworkDiskCache implements AutoCloseable {
                 long now = System.currentTimeMillis();
                 if (file.isFile()) {
                     if (isRetained(file.lastModified(), now)) {
-                        BitmapFactory.Options bounds = new BitmapFactory.Options();
-                        bounds.inJustDecodeBounds = true;
-                        BitmapFactory.decodeFile(file.getAbsolutePath(), bounds);
-                        if (BridgeClient.isSafeArtworkDimensions(bounds.outWidth, bounds.outHeight))
-                            bitmap = BitmapFactory.decodeFile(file.getAbsolutePath());
+                        bitmap = decoder.decode(file, () -> cancelled.get() || closed.get());
+                        if (cancelled.get() || closed.get()) return;
                         if (bitmap != null) fetchedAt = file.lastModified();
                         else file.delete();
                     } else {
@@ -69,11 +96,22 @@ final class ArtworkDiskCache implements AutoCloseable {
             }
             Bitmap result = bitmap;
             long storedAt = fetchedAt;
-            main.post(() -> {
+            dispatch.accept(() -> {
                 if (!cancelled.get() && !closed.get()) loaded.accept(result, storedAt);
             });
-        });
-        return () -> cancelled.set(true);
+        }, null);
+        try { executor.execute(task); }
+        catch (java.util.concurrent.RejectedExecutionException full) {
+            // A busy optional cache is a miss, never an observer left waiting indefinitely.
+            dispatch.accept(() -> {
+                if (!cancelled.get() && !closed.get()) loaded.accept(null, 0);
+            });
+        }
+        return () -> {
+            cancelled.set(true);
+            task.cancel(false);
+            executor.remove(task);
+        };
     }
 
     void save(String scope, String key, Bitmap bitmap) {
@@ -100,7 +138,7 @@ final class ArtworkDiskCache implements AutoCloseable {
     void clearScope(String scope) {
         if (closed.get()) return;
         String prefix = digest(scope) + "-";
-        executeBestEffort(() -> {
+        executeMaintenance(() -> {
             File[] files = directory.listFiles(file -> file.getName().startsWith(prefix));
             if (files == null) return;
             for (File file : files) file.delete();
@@ -108,7 +146,30 @@ final class ArtworkDiskCache implements AutoCloseable {
     }
 
     void remove(String scope, String key) {
-        if (!closed.get()) executeBestEffort(() -> file(scope, key).delete());
+        if (!closed.get()) executeMaintenance(() -> file(scope, key).delete());
+    }
+
+    private void executeMaintenance(Runnable operation) {
+        Runnable task = () -> {
+            try { operation.run(); } catch (Exception ignored) { }
+        };
+        while (!closed.get()) {
+            try {
+                executor.execute(task);
+                return;
+            } catch (java.util.concurrent.RejectedExecutionException full) {
+                if (executor.isShutdown()) return;
+                // Preserve deletion order without blocking the UI or dropping queued readers.
+                // Fold it into the tail slot when the bounded optional-work queue is full.
+                Runnable[] queued = executor.getQueue().toArray(new Runnable[0]);
+                if (queued.length == 0) continue;
+                Runnable tail = queued[queued.length - 1];
+                if (executor.remove(tail)) {
+                    Runnable deletion = task;
+                    task = () -> { tail.run(); deletion.run(); };
+                }
+            }
+        }
     }
 
     private void executeBestEffort(Runnable operation) {
@@ -117,7 +178,7 @@ final class ArtworkDiskCache implements AutoCloseable {
                 try { operation.run(); } catch (Exception ignored) { }
             });
         } catch (java.util.concurrent.RejectedExecutionException ignored) {
-            // The repository is closing and its observers have been cancelled.
+            // Optional maintenance/writes may be skipped when the cache is busy or closing.
         }
     }
 

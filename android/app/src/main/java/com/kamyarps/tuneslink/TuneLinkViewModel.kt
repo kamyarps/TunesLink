@@ -52,6 +52,7 @@ internal class TunesLinkViewModel(
 ) : ViewModel() {
     internal val mutableState = MutableStateFlow(
         TunesLinkUiState(
+            route = if (repository.isInitialized()) TunesLinkRoute.Welcome else TunesLinkRoute.Connecting,
             manualAddress = savedStateHandle[KEY_MANUAL_ADDRESS] ?: "",
             library = LibraryUiState(editingQuery = savedStateHandle[KEY_EDITING_QUERY] ?: ""),
             navigation = NavigationState(
@@ -123,21 +124,64 @@ internal class TunesLinkViewModel(
     private var backgroundStopJob: Job? = null
     private var artworkRefreshJob: Job? = null
     private var pairingCooldownJob: Job? = null
+    private var initializationRequest = BridgeRepository.RequestHandle.NONE
+    private var foregroundRequest = BridgeRepository.RequestHandle.NONE
+    private var storageRecoveryRequest = BridgeRepository.RequestHandle.NONE
+    private var pairingSettlementRequest = BridgeRepository.RequestHandle.NONE
 
     init {
+        pairingSettlementRequest = repository.observePairingSettlement {
+            refreshPendingRevocationCount()
+            if (repository.current() == null) {
+                // A cancelled re-pair invalidates the old token on the computer too.
+                // Reconcile even if its response arrives after the app has resumed.
+                stateUpdatesActive = false
+                pairAgainPrevious = null
+                mutableState.update {
+                    it.copy(route = TunesLinkRoute.Welcome, connection = ConnectionState.Unpaired,
+                        returnComputer = null)
+                }
+            }
+        }
         viewModelScope.launch {
             editingQuery.committedSearchQueries().collectLatest { commitSearch(it) }
         }
-        val saved = repository.current().takeIf { connectOnCreate }
-        if (saved != null && mutableState.value.navigation.switchingComputer) {
-            mutableState.update { it.copy(returnComputer = displayName(saved.name)) }
-        } else if (saved != null) {
-            updateBridge(saved.name, saved.host, saved.port)
-            connect(initial = true)
+        initializationRequest = repository.whenReady {
+            val saved = repository.current()
+            mutableState.update {
+                it.copy(
+                    pendingRevocationCount = repository.pendingRevocationCount(),
+                    discoveryError = if (repository.secureStorageRequiresRecovery()) {
+                        localizedString(R.string.secure_storage_recovery_required)
+                    } else it.discoveryError,
+                    route = if (saved == null && it.route == TunesLinkRoute.Connecting) {
+                        TunesLinkRoute.Welcome
+                    } else it.route,
+                )
+            }
+            if (saved != null && mutableState.value.navigation.switchingComputer) {
+                mutableState.update { it.copy(returnComputer = displayName(saved.name)) }
+            } else if (saved != null) {
+                updateBridge(saved.name, saved.host, saved.port)
+                if (connectOnCreate) connect(initial = true)
+            }
         }
     }
 
-    fun onForeground() {
+    fun onForeground(hasLocalNetworkAccess: () -> Boolean = { true }) {
+        foregroundRequest.cancel()
+        storageRecoveryRequest.cancel()
+        foregroundRequest = repository.whenReady {
+            // The grant can change while Keystore/disk initialization is in flight.
+            if (repository.secureStorageRequiresRecovery()) {
+                storageRecoveryRequest = repository.retrySecureStorage {
+                    if (ensureLocalNetworkPermission(hasLocalNetworkAccess())) resumeForeground()
+                }
+            } else if (ensureLocalNetworkPermission(hasLocalNetworkAccess())) resumeForeground()
+        }
+    }
+
+    private fun resumeForeground() {
         backgroundStopJob?.cancel()
         backgroundStopJob = null
         artworkRefreshJob?.cancel()
@@ -196,6 +240,8 @@ internal class TunesLinkViewModel(
     }
 
     fun onBackground() {
+        foregroundRequest.cancel()
+        storageRecoveryRequest.cancel()
         artworkRefreshJob?.cancel()
         artworkRefreshJob = null
         artworkRetryJob?.cancel()
@@ -1125,6 +1171,10 @@ internal class TunesLinkViewModel(
     }
 
     override fun onCleared() {
+        pairingSettlementRequest.cancel()
+        storageRecoveryRequest.cancel()
+        initializationRequest.cancel()
+        foregroundRequest.cancel()
         cancelTransientOperations()
         artworkRequest.cancel()
         libraryRequest.cancel()
@@ -1167,6 +1217,8 @@ internal class TunesLinkViewModel(
                         application.getSharedPreferences(UI_RECOVERY_PREFERENCES, 0),
                     ),
                     formatString = { res, arguments -> application.getString(res, *arguments.toTypedArray()) },
+                    // Activity checks the current permission after asynchronous storage loading.
+                    connectOnCreate = false,
                 )
             }
         }

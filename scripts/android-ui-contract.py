@@ -41,8 +41,11 @@ def main() -> int:
 
     minimum_target = round(44 * args.density / 160)
 
-    def clipped_by_scroll_ancestor(node: ET.Element, bounds: tuple[int, int, int, int]) -> bool:
+    def scroll_clipped_axes(
+        node: ET.Element, bounds: tuple[int, int, int, int]
+    ) -> tuple[bool, bool]:
         left, top, right, bottom = bounds
+        clipped_x = clipped_y = False
         ancestor = parents.get(node)
         while ancestor is not None:
             if ancestor.get("scrollable") == "true" or ancestor.get("class") == "android.widget.ScrollView":
@@ -51,15 +54,18 @@ def main() -> int:
                     ancestor_left, ancestor_top, ancestor_right, ancestor_bottom = map(
                         int, ancestor_match.groups()
                     )
-                    if (
-                        left < ancestor_left
-                        or top < ancestor_top
-                        or right > ancestor_right
-                        or bottom > ancestor_bottom
-                    ):
-                        return True
+                    # UI Automator may report only the visible intersection of a
+                    # Compose row with its scroll viewport. Equal edges can thus
+                    # indicate clipping too (API 23/31 tablet captures). Exempt
+                    # only the clipped dimension, and never a tiny viewport.
+                    clipped_x |= ancestor_right - ancestor_left >= minimum_target and (
+                        left <= ancestor_left or right >= ancestor_right
+                    )
+                    clipped_y |= ancestor_bottom - ancestor_top >= minimum_target and (
+                        top <= ancestor_top or bottom >= ancestor_bottom
+                    )
             ancestor = parents.get(ancestor)
-        return False
+        return clipped_x, clipped_y
 
     for node in app_nodes:
         match = BOUNDS.fullmatch(node.get("bounds", ""))
@@ -70,9 +76,10 @@ def main() -> int:
         if left < 0 or top < 0 or right > args.width or bottom > args.height:
             failures.append(f"clipped node {label!r}: {left},{top},{right},{bottom}")
         if node.get("clickable") == "true" and node.get("enabled") == "true":
-            if (
-                right - left < minimum_target or bottom - top < minimum_target
-            ) and not clipped_by_scroll_ancestor(node, (left, top, right, bottom)):
+            clipped_x, clipped_y = scroll_clipped_axes(node, (left, top, right, bottom))
+            if (right - left < minimum_target and not clipped_x) or (
+                bottom - top < minimum_target and not clipped_y
+            ):
                 failures.append(
                     f"small target {label!r}: {right-left}x{bottom-top}px; "
                     f"minimum {minimum_target}px"

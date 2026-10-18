@@ -201,6 +201,35 @@ final class SecureStore {
         return queued;
     }
 
+    /** Preserve an issued token for retry even when its pairing screen has gone away. */
+    synchronized PendingRevocation discardIssuedPairing(SavedBridge issued,
+                                                        SavedBridge previous) throws Exception {
+        State old = readStateForMutation();
+        SavedBridge active = old.active;
+        ArrayList<PendingRevocation> pending = new ArrayList<>(old.pending);
+        if (sameCredential(active, issued)) {
+            active = previous != null && !previous.id.equals(issued.id) ? previous : null;
+            SavedBridge restored = active;
+            if (restored != null) pending.removeIf(item -> sameCredential(item.bridge, restored));
+        } else if (sameCredential(active, previous) && active.id.equals(issued.id)) {
+            // Re-pairing already invalidated this computer's old token on the server.
+            active = null;
+        }
+        for (PendingRevocation item : pending) {
+            if (sameCredential(item.bridge, issued)) {
+                if (active != old.active) writeState(new State(active, pending), true);
+                return item;
+            }
+        }
+        if (pending.size() >= MAX_PENDING_REVOCATIONS)
+            throw new IllegalStateException("Pending revocation queue is full");
+        PendingRevocation queued = new PendingRevocation(UUID.randomUUID().toString(), issued,
+                System.currentTimeMillis());
+        pending.add(queued);
+        writeState(new State(active, pending), true);
+        return queued;
+    }
+
     synchronized List<PendingRevocation> pendingRevocations() {
         try {
             List<PendingRevocation> pending = readState(true).pending;

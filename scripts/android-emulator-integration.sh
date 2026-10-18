@@ -337,6 +337,14 @@ tap_node() {
   "$adb_command" shell input tap $center
 }
 
+deny_local_network_permission() {
+  local center
+  wait_node text "Allow" >/dev/null
+  center="$(node_center id "com.android.permissioncontroller:id/permission_deny_button" ||
+    node_center id "com.android.permissioncontroller:id/permission_deny_and_dont_ask_again_button")"
+  "$adb_command" shell input tap $center
+}
+
 open_search() {
   local center=""
 
@@ -701,12 +709,25 @@ set_rotation 0
 
 sdk_int="$("$adb_command" shell getprop ro.build.version.sdk | tr -d '\r')"
 entry_ready=0
+startup_relaunched=0
 for _ in $(seq 1 30); do
   dump_ui
   if node_center class "android.widget.EditText" >/dev/null ||
-      node_center text "Allow local network access" >/dev/null; then
+      node_center text "Allow local network access" >/dev/null ||
+      node_center id "com.android.permissioncontroller:id/permission_allow_button" >/dev/null; then
     entry_ready=1
     break
+  fi
+
+  # Clearing data can remove the old task after am start reports success on API 37.
+  # Retry that initial launch once if only Launcher is visible. The final crash-log
+  # assertion still fails the run if an app crash caused the disappearance.
+  if (( startup_relaunched == 0 )) &&
+      grep -q 'package="com.google.android.apps.nexuslauncher"' "$ui_xml" &&
+      ! grep -q "package=\"$package\"" "$ui_xml"; then
+    startup_relaunched=1
+    "$adb_command" shell am start -W -n "$component" >/dev/null
+    continue
   fi
 
   # Act on the same UI snapshot we just inspected. API 31 can deliver the tap
@@ -723,11 +744,19 @@ if (( entry_ready != 1 )); then
   exit 1
 fi
 if (( sdk_int >= 37 )); then
-  wait_node text "Allow local network access" >/dev/null
-  capture "local-network-rationale"
-  tap_node text "Continue"
+  dump_ui
+  if ! node_center id "com.android.permissioncontroller:id/permission_allow_button" >/dev/null; then
+    wait_node text "Allow local network access" >/dev/null
+    capture "local-network-rationale"
+    tap_node text "Continue"
+  fi
   wait_node text "Allow" >/dev/null
   capture "local-network-permission"
+  deny_local_network_permission
+  wait_node text "Local network access is required to find and control your computer." >/dev/null
+  capture "local-network-denied"
+  tap_node text "Enter address"
+  tap_node text "Continue"
   tap_node text "Allow"
   sleep 1
   permission_state="$("$adb_command" shell dumpsys package "$package" | tr -d '\r')"
@@ -1083,6 +1112,29 @@ if (( sdk_int >= 37 )); then
   sleep 1
   wait_node text "Golden Static" >/dev/null
   capture "regranted-local-network"
+
+  # Two denials must lead to Settings rather than a permission prompt loop.
+  "$adb_command" shell pm revoke "$package" android.permission.ACCESS_LOCAL_NETWORK
+  "$adb_command" shell pm clear-permission-flags "$package" \
+    android.permission.ACCESS_LOCAL_NETWORK user-set user-fixed
+  "$adb_command" shell am force-stop "$package"
+  "$adb_command" shell am start -W -n "$component" >/dev/null
+  tap_node text "Continue"
+  deny_local_network_permission
+  tap_node text "Enter address"
+  tap_node text "Continue"
+  deny_local_network_permission
+  wait_node text "Local network access is turned off for TunesLink. Open Settings, choose Permissions, and allow Local network." >/dev/null
+  tap_node text "Enter address"
+  wait_node text "Open Settings" >/dev/null
+  capture "local-network-permanently-denied"
+  tap_node text "Open Settings"
+  wait_node text "Permissions" >/dev/null
+  # Apply the Settings grant without depending on the system Settings layout.
+  "$adb_command" shell pm grant "$package" android.permission.ACCESS_LOCAL_NETWORK
+  "$adb_command" shell input keyevent KEYCODE_BACK
+  wait_node text "Golden Static" >/dev/null
+  capture "local-network-settings-recovered"
 fi
 
 # Restart the same pinned bridge identity without SSE and verify lifecycle-scoped polling fallback.
@@ -1130,7 +1182,7 @@ if [[ -n "$bridge_pid" ]]; then
 fi
 
 "$adb_command" logcat -d -b crash > "${reports}/crash-buffer.txt"
-if grep -q "$package" "${reports}/crash-buffer.txt"; then
+if grep -Eq "$package|hasReadColorBufferDma" "${reports}/crash-buffer.txt"; then
   cat "${reports}/crash-buffer.txt"
   exit 1
 fi
