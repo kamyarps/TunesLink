@@ -65,12 +65,13 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.saveable.rememberSaveableStateHolder
+import androidx.compose.runtime.saveable.SaveableStateHolder
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -116,6 +117,7 @@ internal fun TabletTunesWorkspace(
     state: TunesLinkUiState,
     destination: TunesLinkDestination,
     viewModel: TunesLinkViewModel,
+    panes: SaveableStateHolder,
     modifier: Modifier = Modifier,
 ) {
     val artwork = rememberLibraryArtworkSource(viewModel)
@@ -191,7 +193,6 @@ internal fun TabletTunesWorkspace(
                 VerticalDivider(color = TunesLinkTheme.colors.separator)
                 Box(Modifier.weight(1f).fillMaxHeight()) {
                     // Each pane keeps its scroll position while another one is shown.
-                    val panes = rememberSaveableStateHolder()
                     val searching = destination == TunesLinkDestination.Search
                     panes.SaveableStateProvider(if (searching) "search" else "library") {
                         if (searching) TabletSearchPane(state, searchActions)
@@ -216,7 +217,7 @@ private fun TabletWorkspaceHeader(
     val controlsEnabled = state.playbackControlsEnabled
     val density = LocalDensity.current
     val compactHeight = with(density) {
-        LocalWindowInfo.current.containerSize.height.toDp() < 500.dp
+        LocalWindowInfo.current.containerSize.height.toDp() < HEIGHT_MEDIUM_LOWER_BOUND_DP.dp
     }
     val headerMinHeight = if (compactHeight) 72.dp else 82.dp
     BoxWithConstraints(
@@ -233,13 +234,10 @@ private fun TabletWorkspaceHeader(
             compactWidth -> 188.dp
             else -> 230.dp
         }
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .heightIn(min = headerMinHeight)
-                .padding(vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
+        // Wrap rather than squeeze: when the now-playing surface would get less than its minimum
+        // (around 600-650 dp) it moves to its own row instead of collapsing its title.
+        val stacked = tabletHeaderStacksNowPlaying(maxWidth.value, leftWidth.value, rightWidth.value)
+        val transport = @Composable {
             Column(
                 Modifier.width(leftWidth),
                 verticalArrangement = Arrangement.Center,
@@ -272,26 +270,27 @@ private fun TabletWorkspaceHeader(
                         onClick = playbackActions.next,
                     )
                 }
+                // Tall enough to grab: a thin slider directly under 48 dp buttons cannot get
+                // its own expanded touch target.
                 TabletVolumeControl(
                     player = state.player,
                     controlsEnabled = controlsEnabled,
                     onVolumeChange = playbackActions.setVolume,
-                    modifier = Modifier.fillMaxWidth().height(if (compactHeight) 20.dp else 22.dp),
+                    modifier = Modifier.fillMaxWidth().height(32.dp),
                 )
             }
-            Row(
-                Modifier.weight(1f).padding(horizontal = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                TabletNowPlayingSurface(
-                    player = state.player,
-                    playbackSamples = playbackSamples,
-                    playbackActions = playbackActions,
-                    controlsEnabled = controlsEnabled,
-                    compact = compactWidth,
-                    modifier = Modifier.weight(1f),
-                )
-            }
+        }
+        val nowPlaying = @Composable { surfaceModifier: Modifier ->
+            TabletNowPlayingSurface(
+                player = state.player,
+                playbackSamples = playbackSamples,
+                playbackActions = playbackActions,
+                controlsEnabled = controlsEnabled,
+                compact = compactWidth,
+                modifier = surfaceModifier,
+            )
+        }
+        val search = @Composable {
             Row(
                 Modifier.width(rightWidth),
                 verticalAlignment = Alignment.CenterVertically,
@@ -320,8 +319,44 @@ private fun TabletWorkspaceHeader(
                 TabletConnectionButton(state, onShowConnectionDetails)
             }
         }
+        if (stacked) {
+            Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                Row(
+                    Modifier.fillMaxWidth().heightIn(min = headerMinHeight - 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    transport()
+                    Spacer(Modifier.weight(1f))
+                    search()
+                }
+                nowPlaying(Modifier.fillMaxWidth().padding(top = 4.dp))
+            }
+        } else {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = headerMinHeight)
+                    .padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                transport()
+                Row(
+                    Modifier.weight(1f).padding(horizontal = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    nowPlaying(Modifier.weight(1f))
+                }
+                search()
+            }
+        }
     }
 }
+
+/** The narrowest the header's now-playing surface can be before its title collapses. */
+internal const val TABLET_NOW_PLAYING_MIN_WIDTH_DP = 300f
+
+internal fun tabletHeaderStacksNowPlaying(headerWidthDp: Float, transportWidthDp: Float, searchWidthDp: Float): Boolean =
+    headerWidthDp - transportWidthDp - searchWidthDp - 16f < TABLET_NOW_PLAYING_MIN_WIDTH_DP
 
 @Composable
 private fun TabletNowPlayingSurface(
@@ -690,7 +725,7 @@ private fun TabletAlbumsPane(state: TunesLinkUiState, actions: TabletLibraryActi
         else -> BoxWithConstraints(Modifier.fillMaxSize()) {
             val density = LocalDensity.current
             val compactHeight = with(density) {
-                LocalWindowInfo.current.containerSize.height.toDp() < 500.dp
+                LocalWindowInfo.current.containerSize.height.toDp() < HEIGHT_MEDIUM_LOWER_BOUND_DP.dp
             }
             val contentPadding = if (compactHeight) 12.dp else 24.dp
             val targetCellWidth = if (compactHeight) 108.dp else 174.dp
@@ -885,9 +920,9 @@ private fun TabletAlbumCard(
     Column(
         Modifier
             .fillMaxWidth()
-            .scale(scale)
+            .graphicsLayer { scaleX = scale; scaleY = scale }
             .clip(RoundedCornerShape(18.dp))
-            .background(background)
+            .drawBehind { drawRect(background) }
             .clickable(
                 role = Role.Button,
                 onClickLabel = actionLabel,
@@ -1044,10 +1079,20 @@ private fun TabletCollectionMasterDetail(state: TunesLinkUiState, actions: Table
         )
         return
     }
+    // Below the expanded width class the sidebar, list and detail do not all fit (the detail would
+    // get ~250 dp at 600 dp), so show the list or the opened collection, with Back going up.
+    val density = LocalDensity.current
+    val singlePane = with(density) { LocalWindowInfo.current.containerSize.width.toDp() } <
+        WIDTH_EXPANDED_LOWER_BOUND_DP.dp
+    val selectedCollection = browse.selectedCollection
     BoxWithConstraints(Modifier.fillMaxSize()) {
-        val masterWidth = if (maxWidth < 700.dp) 196.dp else 280.dp
+        val masterWidth = when {
+            singlePane -> maxWidth
+            maxWidth < 700.dp -> 196.dp
+            else -> 280.dp
+        }
         Row(Modifier.fillMaxSize()) {
-        Column(Modifier.width(masterWidth).fillMaxHeight()) {
+        if (!singlePane || selectedCollection == null) Column(Modifier.width(masterWidth).fillMaxHeight()) {
             Text(
                 kind.tabletLabel(),
                 style = MaterialTheme.typography.headlineLarge,
@@ -1094,9 +1139,27 @@ private fun TabletCollectionMasterDetail(state: TunesLinkUiState, actions: Table
                 }
             }
         }
-        VerticalDivider(color = TunesLinkTheme.colors.separator)
-        Box(Modifier.weight(1f).fillMaxHeight()) {
-            val selected = browse.selectedCollection
+        if (!singlePane) VerticalDivider(color = TunesLinkTheme.colors.separator)
+        if (!singlePane || selectedCollection != null) Column(Modifier.weight(1f).fillMaxHeight()) {
+            if (singlePane) {
+                Row(
+                    Modifier.fillMaxWidth().padding(start = 8.dp, top = 8.dp, end = 16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    IconButton(onClick = actions.navigateUp) {
+                        Icon(TuneLinkIcons.ArrowBack, stringResource(R.string.back))
+                    }
+                    Text(
+                        kind.tabletLabel(),
+                        style = MaterialTheme.typography.titleMedium,
+                        color = TunesLinkTheme.colors.secondaryText,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+            Box(Modifier.weight(1f).fillMaxWidth()) {
+            val selected = selectedCollection
             when {
                 selected == null -> ContentState(
                     kind.tabletLabel(),
@@ -1125,6 +1188,7 @@ private fun TabletCollectionMasterDetail(state: TunesLinkUiState, actions: Table
                     emptyCopy = LibraryEmptyCopy(R.string.no_songs, R.string.no_songs_detail),
                 )
                 else -> TabletGroupedCollectionDetail(selected, state, actions)
+            }
             }
         }
         }
@@ -1193,11 +1257,13 @@ private fun TabletGroupedCollectionDetail(
     LibraryPagination(listState, state.browse.tracksCursor,
         onPrevious = { actions.loadPrevious(LibraryBrowseTarget.Tracks) },
         onNext = { actions.loadMore(LibraryBrowseTarget.Tracks) })
+    // Items are spaced by padding instead of spacedBy so an album's songs can be separate lazy
+    // items: a long album (a box set) composes row by row instead of all at once.
+    val spaced = Modifier.padding(top = 18.dp)
     LazyColumn(
         state = listState,
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(24.dp),
-        verticalArrangement = Arrangement.spacedBy(18.dp),
     ) {
         if (state.browse.tracksCursor.windowStart == 0) item(contentType = "heading") {
             TabletPaneHeading(
@@ -1210,53 +1276,86 @@ private fun TabletGroupedCollectionDetail(
                 detail = selected.subtitle,
             )
         }
-        if (state.browse.tracksCursor.isLoadingPrevious) item(contentType = "progress") { TabletProgress() }
+        if (state.browse.tracksCursor.isLoadingPrevious) item(contentType = "progress") {
+            Box(spaced) { TabletProgress() }
+        }
         if (state.browse.tracksCursor.error != null) item(key = "grouped-page-error", contentType = "error") {
-            LibraryPageError(state.browse.tracksCursor.error) { actions.retry(LibraryBrowseTarget.Tracks) }
+            Box(spaced) {
+                LibraryPageError(state.browse.tracksCursor.error) { actions.retry(LibraryBrowseTarget.Tracks) }
+            }
         }
         if (state.browse.tracks.isEmpty() && state.browse.tracksCursor.error == null) item(contentType = "empty") {
-            Text(stringResource(R.string.no_songs), color = TunesLinkTheme.colors.secondaryText)
+            Text(stringResource(R.string.no_songs), color = TunesLinkTheme.colors.secondaryText, modifier = spaced)
         }
-        items(albums, key = { it.heading.key }, contentType = { "album-group" }) { album ->
-            Row(horizontalArrangement = Arrangement.spacedBy(18.dp)) {
-                TabletArtwork(
-                    artworkId = album.heading.artworkId,
-                    artworkSource = actions.artwork,
-                    maxSize = 256,
-                    cornerRadius = TunesLinkShapes.artworkMedium,
-                    modifier = Modifier.size(132.dp),
-                )
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        album.heading.album.ifBlank { albumLabel },
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.SemiBold,
-                        color = TunesLinkTheme.colors.primaryText,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
+        albums.forEach { album ->
+            val besideArtwork = album.songs.take(TABLET_SONGS_BESIDE_ARTWORK)
+            item(key = album.heading.key, contentType = "album-group") {
+                Row(spaced, horizontalArrangement = Arrangement.spacedBy(TABLET_ALBUM_ARTWORK_GAP)) {
+                    TabletArtwork(
+                        artworkId = album.heading.artworkId,
+                        artworkSource = actions.artwork,
+                        maxSize = 256,
+                        cornerRadius = TunesLinkShapes.artworkMedium,
+                        modifier = Modifier.size(TABLET_ALBUM_ARTWORK_SIZE),
                     )
-                    album.songs.forEach { song ->
-                        TabletTrackRow(
-                            track = song.track,
-                            position = song.position,
-                            current = currentTrackId == song.track.id,
-                            playing = playing,
-                            enabled = enabled,
-                            onPlay = { actions.playTrack(song.track, selected) },
-                            showColumns = false,
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            album.heading.album.ifBlank { albumLabel },
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.SemiBold,
+                            color = TunesLinkTheme.colors.primaryText,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
                         )
+                        besideArtwork.forEach { song ->
+                            TabletTrackRow(
+                                track = song.track,
+                                position = song.position,
+                                current = currentTrackId == song.track.id,
+                                playing = playing,
+                                enabled = enabled,
+                                onPlay = { actions.playTrack(song.track, selected) },
+                                showColumns = false,
+                            )
+                        }
                     }
+                }
+            }
+            items(
+                album.songs.drop(besideArtwork.size),
+                key = LibraryBrowseRow.Song::key,
+                contentType = { "album-song" },
+            ) { song ->
+                Box(Modifier.padding(start = TABLET_ALBUM_ARTWORK_SIZE + TABLET_ALBUM_ARTWORK_GAP)) {
+                    TabletTrackRow(
+                        track = song.track,
+                        position = song.position,
+                        current = currentTrackId == song.track.id,
+                        playing = playing,
+                        enabled = enabled,
+                        onPlay = { actions.playTrack(song.track, selected) },
+                        showColumns = false,
+                    )
                 }
             }
         }
         if (state.browse.tracksCursor.error != null &&
             (state.browse.tracksCursor.hasMore || state.browse.tracksCursor.hasPrevious)
         ) item(key = "grouped-next-error", contentType = "error") {
-            LibraryPageError(state.browse.tracksCursor.error) { actions.retry(LibraryBrowseTarget.Tracks) }
+            Box(spaced) {
+                LibraryPageError(state.browse.tracksCursor.error) { actions.retry(LibraryBrowseTarget.Tracks) }
+            }
         }
-        if (state.browse.tracksCursor.isLoadingMore) item(contentType = "progress") { TabletProgress() }
+        if (state.browse.tracksCursor.isLoadingMore) item(contentType = "progress") {
+            Box(spaced) { TabletProgress() }
+        }
     }
 }
+
+/** Enough songs to sit beside the album artwork; the rest are lazy items of their own. */
+private const val TABLET_SONGS_BESIDE_ARTWORK = 3
+private val TABLET_ALBUM_ARTWORK_SIZE = 132.dp
+private val TABLET_ALBUM_ARTWORK_GAP = 18.dp
 
 @Composable
 private fun TabletSongsPane(

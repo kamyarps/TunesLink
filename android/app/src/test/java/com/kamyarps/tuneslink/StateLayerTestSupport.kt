@@ -1,10 +1,7 @@
 package com.kamyarps.tuneslink
 
-import android.app.Application
 import android.graphics.Bitmap
 import androidx.lifecycle.SavedStateHandle
-import kotlinx.coroutines.flow.MutableStateFlow
-import sun.misc.Unsafe
 
 internal const val TEST_FINGERPRINT = "AA"
 
@@ -110,57 +107,39 @@ internal fun playerState(trackId: String = "track", position: Double = 10.0, art
     BridgeClient.PlayerState(true, true, "Song", "Artist", "Album", 200.0, position, 50,
         artworkId, trackId, false, "off")
 
+internal class MemoryRecoveryStore : UiRecoveryStore {
+    val values = mutableMapOf<String, String>()
+    override fun getString(key: String): String? = values[key]
+    override fun putString(key: String, value: String?) {
+        if (value == null) values.remove(key) else values[key] = value
+    }
+}
+
+/** A monotonic clock the test advances explicitly. */
+internal class FakeClock(var now: Long = 1_000_000L) : () -> Long {
+    override fun invoke(): Long = now
+}
+
+internal val testFormatString: (Int, List<Any>) -> String = { res, arguments -> "resource:$res:$arguments" }
+
 /**
- * Builds the real ViewModel without Android construction so its reducers and flows run against
- * an in-memory repository. Resource formatting used by playback failures is supplied explicitly.
+ * Builds the real ViewModel through its constructor (so init and the SavedStateHandle restore
+ * run) against an in-memory repository. [connectOnCreate] is off by default so a test controls
+ * when a paired repository starts connecting; [state] then replaces the initial presentation.
  */
 internal fun testViewModel(
     repository: BridgeRepository,
-    state: TunesLinkUiState = TunesLinkUiState(),
+    state: TunesLinkUiState? = TunesLinkUiState(),
+    savedStateHandle: SavedStateHandle = SavedStateHandle(),
+    clock: FakeClock = FakeClock(),
+    recovery: UiRecoveryStore = MemoryRecoveryStore(),
+    connectOnCreate: Boolean = false,
 ): TunesLinkViewModel {
-    val unsafeField = Unsafe::class.java.getDeclaredField("theUnsafe").apply { isAccessible = true }
-    val unsafe = unsafeField.get(null) as Unsafe
-    val vm = unsafe.allocateInstance(TunesLinkViewModel::class.java) as TunesLinkViewModel
-    // Resource lookups on this stub application return null; flows under test avoid them.
-    val application = unsafe.allocateInstance(TunesLinkApplication::class.java)
-    var type: Class<*>? = TunesLinkViewModel::class.java.superclass
-    while (type != null) {
-        type.declaredFields.filter { Application::class.java.isAssignableFrom(it.type) }.forEach {
-            it.isAccessible = true
-            it.set(vm, application)
-        }
-        type = type.superclass
+    val vm = TunesLinkViewModel(savedStateHandle, repository, recovery, testFormatString, clock, connectOnCreate)
+    if (state != null) {
+        vm.mutableState.value = state
+        vm.editingQuery.value = state.library.editingQuery
+        vm.restoreDestination = TunesLinkDestination.Library
     }
-    for (field in TunesLinkViewModel::class.java.declaredFields) {
-        field.isAccessible = true
-        when (field.type) {
-            BridgeRepository.RequestHandle::class.java -> field.set(vm, BridgeRepository.RequestHandle.NONE)
-            Map::class.java -> field.set(vm, LinkedHashMap<Any, Any>())
-        }
-    }
-    fun set(name: String, value: Any?) = TunesLinkViewModel::class.java.getDeclaredField(name).run {
-        isAccessible = true
-        set(vm, value)
-    }
-    set("mutableState", MutableStateFlow(state))
-    set("savedStateHandle", SavedStateHandle())
-    set("repository", repository)
-    set("formatString", { res: Int, arguments: List<Any> -> "resource:$res:$arguments" })
-    set("editingQuery", MutableStateFlow(state.library.editingQuery))
-    set("restoreDestination", TunesLinkDestination.Library)
-    set("artworkSession", MutableStateFlow(0L))
-    set("artworkFailureId", "")
     return vm
 }
-
-internal fun TunesLinkViewModel.field(name: String): Any? =
-    TunesLinkViewModel::class.java.getDeclaredField(name).run {
-        isAccessible = true
-        get(this@field)
-    }
-
-internal fun TunesLinkViewModel.setField(name: String, value: Any?) =
-    TunesLinkViewModel::class.java.getDeclaredField(name).run {
-        isAccessible = true
-        set(this@setField, value)
-    }

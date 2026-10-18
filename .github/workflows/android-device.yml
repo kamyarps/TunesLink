@@ -89,17 +89,20 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.release-tag }}
         run: |
-          $releases = gh release list --repo $env:GITHUB_REPOSITORY --limit 100 `
-            --json tagName,isDraft,isPrerelease | ConvertFrom-Json
-          if ($LASTEXITCODE -ne 0) { throw "Could not list previous GitHub releases." }
+          Import-Module ./scripts/GitHubReadRetry.psm1
+          $releases = Invoke-TunesLinkGitHubRead -ArgumentList @(
+            "release", "list", "--repo", $env:GITHUB_REPOSITORY, "--limit", "100",
+            "--json", "tagName,isDraft,isPrerelease"
+          ) -FailureMessage "Could not list previous GitHub releases" | ConvertFrom-Json
           $previous = $releases | Where-Object {
             -not $_.isDraft -and -not $_.isPrerelease -and $_.tagName -ne $env:RELEASE_TAG
           } | Select-Object -First 1
           if ($null -ne $previous) {
             New-Item -ItemType Directory -Force artifacts/device-previous | Out-Null
-            gh release download $previous.tagName --repo $env:GITHUB_REPOSITORY `
-              --pattern TunesLink.apk --dir artifacts/device-previous
-            if ($LASTEXITCODE -ne 0) { throw "Could not download $($previous.tagName) APK." }
+            Invoke-TunesLinkGitHubRead -ArgumentList @(
+              "release", "download", $previous.tagName, "--repo", $env:GITHUB_REPOSITORY,
+              "--pattern", "TunesLink.apk", "--dir", "artifacts/device-previous", "--clobber"
+            ) -FailureMessage "Could not download $($previous.tagName) APK" | Out-Null
           }
       - name: Enable KVM access
         run: |

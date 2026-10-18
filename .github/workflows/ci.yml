@@ -54,6 +54,9 @@ jobs:
       - name: Test build-requirement detection
         shell: pwsh
         run: ../scripts/build-requirements-self-test.ps1
+      - name: Test GitHub release download retries
+        shell: pwsh
+        run: ../scripts/github-read-retry-self-test.ps1
       - name: Test Android integration selectors
         working-directory: ${{ github.workspace }}
         run: python3 scripts/android-integration-selector-self-test.py

@@ -950,6 +950,16 @@ if [[ -n "$bridge_pid" ]]; then
     exit 1
   fi
   rm -f "${bridge_config}.playback-fault"
+  # A ~620 dp window (split screen, small tablet): the workspace header wraps its now-playing
+  # surface onto a second row instead of collapsing the title, and no control is clipped.
+  "$adb_command" shell wm size 1240x1800
+  "$adb_command" shell wm density 320
+  set_rotation 0
+  wait_orientation portrait 0
+  wait_node text "Midnight Drive" >/dev/null
+  capture "tablet-medium-width"
+  python3 "$workspace/scripts/android-ui-contract.py" \
+    "${reports}/tablet-medium-width.xml" --width 1240 --height 1800 --density 320
   "$adb_command" shell wm size 1080x1920
   "$adb_command" shell wm density 420
   set_rotation 0

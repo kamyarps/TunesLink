@@ -223,6 +223,8 @@ internal data class TunesLinkUiState(
     val modalPresentation: ModalPresentation? = null,
     val discovered: List<BridgeClient.BridgeInfo> = emptyList(),
     val discoveryError: String? = null,
+    /** Local network access was denied without a rationale: only Settings can grant it now. */
+    val localNetworkBlocked: Boolean = false,
     val manualAddress: String = "",
     val manualAddressError: String? = null,
     val pairing: PairingUiState = PairingUiState(),

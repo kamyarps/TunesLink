@@ -38,6 +38,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameMillis
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -134,12 +135,15 @@ internal fun NowPlayingScreen(
         ),
         label = "Artwork ambient color",
     )
-    val background = Brush.verticalGradient(
-        listOf(animatedAmbient.copy(alpha = if (ambient == null) 0f else 0.14f), TunesLinkTheme.colors.canvas),
-    )
+    val ambientAlpha = if (ambient == null) 0f else 0.14f
+    val canvas = TunesLinkTheme.colors.canvas
     val artworkDescription = playerArtworkDescription(player)
     // The ambient wash is drawn full-bleed (under the status bar); content starts below it.
-    BoxWithConstraints(modifier.fillMaxSize().background(background).padding(top = topInset)) {
+    // Drawn in the draw phase so the colour fade on a track change does not recompose the screen.
+    val ambientWash = Modifier.drawBehind {
+        drawRect(Brush.verticalGradient(listOf(animatedAmbient.copy(alpha = ambientAlpha), canvas)))
+    }
+    BoxWithConstraints(modifier.fillMaxSize().then(ambientWash).padding(top = topInset)) {
         val fontScale = LocalDensity.current.fontScale
         val layoutMode = nowPlayingLayoutMode(maxWidth.value, maxHeight.value, fontScale)
         val compactHorizontal = layoutMode == NowPlayingLayoutMode.CompactHorizontal
@@ -528,7 +532,7 @@ private fun PlaybackModeToggle(
         modifier = Modifier
             .size(size)
             .clip(RoundedCornerShape(TunesLinkShapes.control))
-            .background(indicator)
+            .drawBehind { drawRect(indicator) }
             .semantics {
                 contentDescription = description
                 this.stateDescription = stateDescription

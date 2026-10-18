@@ -1,0 +1,5 @@
+# Compile TunesLink's own code ahead of time on install (profileinstaller ships with Compose).
+# Cold start and the first library scroll otherwise run app code interpreted until JIT warms up.
+# Library profiles (Compose, coroutines, lifecycle) are merged in by AGP automatically.
+HSPLcom/kamyarps/tuneslink/**->**(**)**
+Lcom/kamyarps/tuneslink/**;

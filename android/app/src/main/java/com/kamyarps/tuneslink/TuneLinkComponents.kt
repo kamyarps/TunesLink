@@ -1,7 +1,8 @@
 package com.kamyarps.tuneslink
 
+import android.content.res.Resources
 import android.graphics.Bitmap
-import android.content.res.Configuration
+import android.graphics.BitmapFactory
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateColorAsState
@@ -21,6 +22,8 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import kotlin.math.PI
 import kotlin.math.abs
@@ -82,7 +85,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
@@ -91,10 +93,10 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalResources
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
@@ -105,6 +107,8 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
@@ -161,7 +165,7 @@ internal fun TunesLinkPrimaryButton(
             },
         ),
         modifier = modifier
-            .scale(scale)
+            .graphicsLayer { scaleX = scale; scaleY = scale }
             .onFocusChanged { focused = it.isFocused }
             .TunesLinkFocusBorder(
                 focused = focused,
@@ -222,7 +226,7 @@ internal fun TunesLinkSecondaryButton(
     val contentColor = color.copy(alpha = if (enabled) 1f else DISABLED_CONTENT_ALPHA)
     Row(
         modifier = modifier
-            .scale(scale)
+            .graphicsLayer { scaleX = scale; scaleY = scale }
             .heightIn(min = TunesLinkSizes.primaryButtonMinHeight)
             .onFocusChanged { focused = it.isFocused }
             .TunesLinkFocusBorder(
@@ -351,7 +355,7 @@ internal fun ArtworkSurface(
             ArtworkPlaceholder(Modifier.fillMaxSize())
         } else {
             Image(
-                bitmap = art.asImageBitmap(),
+                bitmap = remember(art) { art.asImageBitmap() },
                 contentDescription = description,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize(),
@@ -360,12 +364,30 @@ internal fun ArtworkSurface(
     }
 }
 
+/**
+ * painterResource decodes a raster on every composition that uses it, which for lazy rows means
+ * once per row on the main thread. The placeholder is decoded once per process instead.
+ */
+private object DefaultArtwork {
+    private var bitmap: ImageBitmap? = null
+
+    fun get(resources: Resources): ImageBitmap = bitmap
+        ?: BitmapFactory.decodeResource(resources, R.drawable.default_artwork).asImageBitmap()
+            .also { bitmap = it }
+}
+
+@Composable
+private fun rememberDefaultArtwork(): ImageBitmap {
+    val resources = LocalResources.current
+    return remember(resources) { DefaultArtwork.get(resources) }
+}
+
 @Composable
 private fun ArtworkPlaceholder(modifier: Modifier) {
     val colors = TunesLinkTheme.colors
     if (!colors.isDark) {
         Image(
-            painter = painterResource(R.drawable.default_artwork),
+            bitmap = rememberDefaultArtwork(),
             contentDescription = null,
             contentScale = ContentScale.Crop,
             modifier = modifier,
@@ -392,6 +414,28 @@ private fun ArtworkPlaceholder(modifier: Modifier) {
     }
 }
 
+/**
+ * Centered with 22 dp gaps like spacedBy, but the gaps shrink instead of pushing the outer
+ * buttons off screen when the row is narrower (below ~360 dp with the mode toggles beside it).
+ */
+private val TransportArrangement = object : Arrangement.Horizontal {
+    override fun Density.arrange(
+        totalSize: Int,
+        sizes: IntArray,
+        layoutDirection: LayoutDirection,
+        outPositions: IntArray,
+    ) {
+        val content = sizes.sum()
+        val gapCount = (sizes.size - 1).coerceAtLeast(1)
+        val gap = ((totalSize - content) / gapCount).coerceIn(0, 22.dp.roundToPx())
+        var x = ((totalSize - content - gap * (sizes.size - 1)) / 2).coerceAtLeast(0)
+        sizes.forEachIndexed { index, size ->
+            outPositions[index] = if (layoutDirection == LayoutDirection.Ltr) x else totalSize - x - size
+            x += size + gap
+        }
+    }
+}
+
 @Composable
 internal fun TransportCluster(
     player: PlayerUiState,
@@ -408,7 +452,7 @@ internal fun TransportCluster(
     val nextDescription = stringResource(R.string.next_song)
     Row(
         modifier = modifier,
-        horizontalArrangement = Arrangement.spacedBy(22.dp, Alignment.CenterHorizontally),
+        horizontalArrangement = TransportArrangement,
         verticalAlignment = Alignment.CenterVertically,
     ) {
         TransportButton(
@@ -466,7 +510,7 @@ private fun TransportButton(
                     else -> 52.dp
                 },
             )
-            .scale(scale)
+            .graphicsLayer { scaleX = scale; scaleY = scale }
             .onFocusChanged { focused = it.isFocused }
             .TunesLinkFocusBorder(
                 focused = focused,
@@ -520,7 +564,12 @@ internal fun UnifiedPlayerBar(
     showNavigation: Boolean = true,
     insetStart: Boolean = true,
 ) {
-    val compactLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+    // Decided from the window, so a short wide split-screen or freeform window gets the one-row
+    // footer, and the destination buttons never squeeze the mini player in a narrow one.
+    val windowSize = LocalWindowInfo.current.containerSize
+    val windowWidth = with(LocalDensity.current) { windowSize.width.toDp() }
+    val compactLandscape = windowSize.width > windowSize.height
+    val navigationWidth = minOf(300.dp, windowWidth * 0.45f)
     // Keep the chrome clear of the navigation bar and, in landscape, the camera cutout.
     val insetSides = if (insetStart) {
         WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom
@@ -561,7 +610,7 @@ internal fun UnifiedPlayerBar(
                         onLibrary = onLibrary,
                         onPlayer = onPlayer,
                         onSearch = onSearch,
-                        modifier = Modifier.width(300.dp).fillMaxHeight(),
+                        modifier = Modifier.width(navigationWidth).fillMaxHeight(),
                     )
                 }
             }
@@ -749,7 +798,7 @@ private fun RowScope.DestinationAction(
             Icon(
                 icon,
                 contentDescription = null,
-                modifier = Modifier.size(24.dp).scale(iconScale),
+                modifier = Modifier.size(24.dp).graphicsLayer { scaleX = iconScale; scaleY = iconScale },
             )
         },
         label = {

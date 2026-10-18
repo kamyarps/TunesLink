@@ -1,5 +1,6 @@
 package com.kamyarps.tuneslink
 
+import androidx.compose.ui.input.key.Key
 import android.graphics.Bitmap
 
 internal enum class PairingPhase { Editing, Submitting, Success }
@@ -451,3 +452,19 @@ internal fun legacyFailureRes(diagnostic: String, fallbackRes: Int): Int {
 
 internal fun failureMessageRes(diagnostic: String, fallbackRes: Int, code: BridgeClient.ErrorCode): Int =
     bridgeErrorRes(code) ?: legacyFailureRes(diagnostic, fallbackRes)
+
+internal enum class KeyboardShortcut { PlayPause, Next, Previous, Search }
+
+/**
+ * Hardware-keyboard shortcuts for tablets, Chromebooks and desktop windows. The root sees a key
+ * only after the focused element declined it, so Space still types in a text field and still
+ * activates a focused button.
+ */
+internal fun keyboardShortcut(key: Key, ctrl: Boolean): KeyboardShortcut? = when {
+    key == Key.MediaPlayPause || key == Key.MediaPlay || key == Key.MediaPause -> KeyboardShortcut.PlayPause
+    key == Key.Spacebar && !ctrl -> KeyboardShortcut.PlayPause
+    key == Key.MediaNext || (ctrl && key == Key.DirectionRight) -> KeyboardShortcut.Next
+    key == Key.MediaPrevious || (ctrl && key == Key.DirectionLeft) -> KeyboardShortcut.Previous
+    ctrl && key == Key.F -> KeyboardShortcut.Search
+    else -> null
+}

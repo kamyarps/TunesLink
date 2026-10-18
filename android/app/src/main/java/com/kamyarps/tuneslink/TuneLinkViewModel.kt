@@ -1,12 +1,17 @@
 package com.kamyarps.tuneslink
 
-import android.app.Application
+import android.content.SharedPreferences
 import android.os.SystemClock
 import android.util.Log
-import androidx.lifecycle.AndroidViewModel
-import androidx.lifecycle.SavedStateHandle
-import androidx.lifecycle.viewModelScope
+import androidx.annotation.VisibleForTesting
 import androidx.core.content.edit
+import androidx.lifecycle.SavedStateHandle
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.createSavedStateHandle
+import androidx.lifecycle.viewModelScope
+import androidx.lifecycle.viewmodel.initializer
+import androidx.lifecycle.viewmodel.viewModelFactory
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -16,19 +21,35 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
+/** Survives process death alongside SavedStateHandle for the one value that must outlive a task. */
+internal interface UiRecoveryStore {
+    fun getString(key: String): String?
+    fun putString(key: String, value: String?)
+}
+
+private class SharedPreferencesRecoveryStore(private val preferences: SharedPreferences) : UiRecoveryStore {
+    override fun getString(key: String): String? = preferences.getString(key, null)
+    override fun putString(key: String, value: String?) = preferences.edit {
+        if (value == null) remove(key) else putString(key, value)
+    }
+}
+
 /**
  * Owns the complete mobile presentation model. The process-scoped repository remains responsible
  * for the unchanged TunesLink-3 transport and encrypted credential storage.
+ *
+ * Dependencies are passed in (see [Factory]) so tests build the real ViewModel, including its
+ * SavedStateHandle restore, with an in-memory repository and a controllable [clock].
  */
 internal class TunesLinkViewModel(
-    application: Application,
     internal val savedStateHandle: SavedStateHandle,
-) : AndroidViewModel(application) {
-    internal val formatString: (Int, List<Any>) -> String = { res, arguments ->
-        application.getString(res, *arguments.toTypedArray())
-    }
-    internal val repository = (application as TunesLinkApplication).session().repository
-    private val uiRecovery = application.getSharedPreferences(UI_RECOVERY_PREFERENCES, 0)
+    internal val repository: BridgeRepository,
+    private val uiRecovery: UiRecoveryStore,
+    internal val formatString: (Int, List<Any>) -> String,
+    /** Monotonic milliseconds, for cooldowns that must survive wall-clock changes. */
+    private val clock: () -> Long = SystemClock::elapsedRealtime,
+    connectOnCreate: Boolean = true,
+) : ViewModel() {
     internal val mutableState = MutableStateFlow(
         TunesLinkUiState(
             manualAddress = savedStateHandle[KEY_MANUAL_ADDRESS] ?: "",
@@ -43,7 +64,7 @@ internal class TunesLinkViewModel(
             ),
             pendingRevocationCount = repository.pendingRevocationCount(),
             discoveryError = if (repository.secureStorageRequiresRecovery()) {
-                application.getString(R.string.secure_storage_recovery_required)
+                formatString(R.string.secure_storage_recovery_required, emptyList())
             } else {
                 null
             },
@@ -76,11 +97,13 @@ internal class TunesLinkViewModel(
         BridgeRepository.RequestHandle.NONE
     internal var playTrackRequest: BridgeRepository.RequestHandle =
         BridgeRepository.RequestHandle.NONE
-    private var restoreDestination = mutableState.value.navigation.destination
-    private var pendingPermissionAction: PendingPermissionAction? = savedStateHandle
+    @VisibleForTesting
+    internal var restoreDestination = mutableState.value.navigation.destination
+    @VisibleForTesting
+    internal var pendingPermissionAction: PendingPermissionAction? = savedStateHandle
         .get<String>(KEY_PENDING_PERMISSION_ACTION)
         .orEmpty()
-        .ifBlank { uiRecovery.getString(KEY_PENDING_PERMISSION_ACTION, null).orEmpty() }
+        .ifBlank { uiRecovery.getString(KEY_PENDING_PERMISSION_ACTION).orEmpty() }
         .let { runCatching { PendingPermissionAction.valueOf(it) }.getOrNull() }
     internal val mutationTimeoutJobs = mutableMapOf<Long, Job>()
     internal var nextOperationId = 0L
@@ -93,7 +116,8 @@ internal class TunesLinkViewModel(
     private var manualGeneration = 0L
     private var pairingGeneration = 0L
     private var relocationGeneration = 0L
-    private var resetAfterModalDismiss = false
+    @VisibleForTesting
+    internal var resetAfterModalDismiss = false
     private var resetAnnouncement: UiAnnouncement? = null
     private var lastAvailabilityKind: ConnectionAvailabilityKind? = null
     private var backgroundStopJob: Job? = null
@@ -104,7 +128,7 @@ internal class TunesLinkViewModel(
         viewModelScope.launch {
             editingQuery.committedSearchQueries().collectLatest { commitSearch(it) }
         }
-        val saved = repository.current()
+        val saved = repository.current().takeIf { connectOnCreate }
         if (saved != null && mutableState.value.navigation.switchingComputer) {
             mutableState.update { it.copy(returnComputer = displayName(saved.name)) }
         } else if (saved != null) {
@@ -149,6 +173,10 @@ internal class TunesLinkViewModel(
     fun ensureLocalNetworkPermission(hasAccess: Boolean): Boolean {
         val savedBridge = repository.current()
         val hasPendingRevocations = repository.pendingRevocationCount() > 0
+        if (hasAccess && mutableState.value.localNetworkBlocked) {
+            // Access was granted from Settings while the app was in the background.
+            mutableState.update { it.copy(localNetworkBlocked = false, discoveryError = null) }
+        }
         if (hasAccess || (savedBridge == null && !hasPendingRevocations)) return true
         setPendingPermissionAction(
             if (savedBridge == null) PendingPermissionAction.RetryRevocations
@@ -200,13 +228,20 @@ internal class TunesLinkViewModel(
         openManualAddress()
     }
 
-    fun localNetworkPermissionResult(granted: Boolean) {
-        Log.d(NAVIGATION_TAG, "local-network-result granted=$granted pending=$pendingPermissionAction")
+    /**
+     * [blocked] means the system will no longer show its prompt (denied without a rationale), so
+     * the user can only grant access from the app's Settings page.
+     */
+    fun localNetworkPermissionResult(granted: Boolean, blocked: Boolean = false) {
+        Log.d(NAVIGATION_TAG, "local-network-result granted=$granted blocked=$blocked pending=$pendingPermissionAction")
         if (!granted) {
             mutableState.update {
                 it.copy(
                     route = TunesLinkRoute.Welcome,
-                    discoveryError = getApplication<Application>().getString(R.string.local_network_denied_error),
+                    discoveryError = localizedString(
+                        if (blocked) R.string.local_network_blocked_error else R.string.local_network_denied_error,
+                    ),
+                    localNetworkBlocked = blocked,
                 )
             }
             setPendingPermissionAction(null)
@@ -222,6 +257,7 @@ internal class TunesLinkViewModel(
                 route = if (resuming) resumeRoute() else TunesLinkRoute.Welcome,
                 connection = if (resuming) ConnectionState.Connecting else it.connection,
                 discoveryError = null,
+                localNetworkBlocked = false,
             )
         }
         viewModelScope.launch {
@@ -249,8 +285,7 @@ internal class TunesLinkViewModel(
         if (!repository.secureStorageRequiresRecovery()) return false
         mutableState.update {
             it.copy(
-                discoveryError = getApplication<Application>()
-                    .getString(R.string.secure_storage_recovery_required),
+                discoveryError = localizedString(R.string.secure_storage_recovery_required),
             )
         }
         announce(R.string.secure_storage_recovery_required, haptic = HapticIntent.Reject)
@@ -278,7 +313,7 @@ internal class TunesLinkViewModel(
                     found.isEmpty() -> mutableState.update {
                         it.copy(
                             connection = ConnectionState.Unpaired,
-                            discoveryError = getApplication<Application>().getString(R.string.no_computer_found_detail),
+                            discoveryError = localizedString(R.string.no_computer_found_detail),
                         )
                     }
                     // Never replace a dialog the user opened meanwhile; list the result instead.
@@ -365,9 +400,7 @@ internal class TunesLinkViewModel(
                 mutableState.update {
                     it.copy(
                         pairing = it.pairing.copy(
-                            codeError = getApplication<Application>().getString(
-                                R.string.pairing_code_incomplete,
-                            ),
+                            codeError = localizedString(R.string.pairing_code_incomplete),
                         ),
                     )
                 }
@@ -441,7 +474,7 @@ internal class TunesLinkViewModel(
             override fun rateLimited(retryAfterSeconds: Int) {
                 if (generation != pairingGeneration) return
                 savedStateHandle["pairingCooldownEndpoint"] = bridge.host + ":" + bridge.port
-                savedStateHandle["pairingCooldownUntil"] = SystemClock.elapsedRealtime() +
+                savedStateHandle["pairingCooldownUntil"] = clock() +
                     retryAfterSeconds.coerceIn(1, 3600) * 1000L
                 mutableState.update { it.copy(connection = ConnectionState.Unpaired,
                     pairing = it.pairing.copy(phase = PairingPhase.Editing, codeError = null)) }
@@ -457,7 +490,7 @@ internal class TunesLinkViewModel(
         val until = if (savedStateHandle.get<String>("pairingCooldownEndpoint") == endpoint) {
             savedStateHandle.get<Long>("pairingCooldownUntil") ?: 0L
         } else 0L
-        fun remaining() = ((until - SystemClock.elapsedRealtime() + 999L) / 1000L).coerceIn(0, 3600).toInt()
+        fun remaining() = ((until - clock() + 999L) / 1000L).coerceIn(0, 3600).toInt()
         mutableState.update { it.copy(pairing = it.pairing.copy(retryAfterSeconds = remaining())) }
         pairingCooldownJob = viewModelScope.launch {
             while (remaining() > 0) {
@@ -829,7 +862,7 @@ internal class TunesLinkViewModel(
                             state.copy(player = state.player.copy(
                                 pendingMutations = emptyMap(),
                                 commandError = if (state.player.pendingMutations.isNotEmpty()) {
-                                    getApplication<Application>().getString(R.string.playback_connection_interrupted)
+                                    localizedString(R.string.playback_connection_interrupted)
                                 } else state.player.commandError,
                             ))
                         }
@@ -987,7 +1020,7 @@ internal class TunesLinkViewModel(
     private fun resumeRoute(): TunesLinkRoute =
         if (connectedOnce) TunesLinkRoute.Connected(restoreDestination) else TunesLinkRoute.Connecting
 
-    internal fun localizedString(res: Int): String = getApplication<Application>().getString(res)
+    internal fun localizedString(res: Int): String = formatString(res, emptyList())
 
     internal fun announce(
         messageRes: Int,
@@ -1022,10 +1055,7 @@ internal class TunesLinkViewModel(
     private fun setPendingPermissionAction(action: PendingPermissionAction?) {
         pendingPermissionAction = action
         savedStateHandle[KEY_PENDING_PERMISSION_ACTION] = action?.name
-        uiRecovery.edit {
-            if (action == null) remove(KEY_PENDING_PERMISSION_ACTION)
-            else putString(KEY_PENDING_PERMISSION_ACTION, action.name)
-        }
+        uiRecovery.putString(KEY_PENDING_PERMISSION_ACTION, action?.name)
     }
 
     /** A dialog replaces discovery: stop it and release the "Finding computers…" state. */
@@ -1077,7 +1107,7 @@ internal class TunesLinkViewModel(
     }
 
     private fun manualAddressError(value: String): String? =
-        validateManualAddress(value)?.let { getApplication<Application>().getString(it) }
+        validateManualAddress(value)?.let(::localizedString)
 
     /**
      * Network and storage layers retain diagnostic text for logs and protocol compatibility. The
@@ -1126,6 +1156,20 @@ internal class TunesLinkViewModel(
         internal const val PAGE_SIZE = 60
         internal const val MAX_LIBRARY_WINDOW_ITEMS = PAGE_SIZE * 8
         internal const val ARTWORK_SIZE = 900
+
+        val Factory: ViewModelProvider.Factory = viewModelFactory {
+            initializer {
+                val application = checkNotNull(this[ViewModelProvider.AndroidViewModelFactory.APPLICATION_KEY])
+                TunesLinkViewModel(
+                    savedStateHandle = createSavedStateHandle(),
+                    repository = (application as TunesLinkApplication).session().repository,
+                    uiRecovery = SharedPreferencesRecoveryStore(
+                        application.getSharedPreferences(UI_RECOVERY_PREFERENCES, 0),
+                    ),
+                    formatString = { res, arguments -> application.getString(res, *arguments.toTypedArray()) },
+                )
+            }
+        }
 
         private fun savedDestination(value: String?): TunesLinkDestination =
             runCatching { TunesLinkDestination.valueOf(value.orEmpty()) }

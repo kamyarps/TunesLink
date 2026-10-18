@@ -9,16 +9,18 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.isActive
 
 /** The small artwork capability that library rows need from the screen owner. */
 internal class LibraryArtworkSource(
     private val repository: BridgeRepository,
     val session: StateFlow<Long>,
+    /** Resolved once per screen so rows do not each read the CompositionLocal. */
+    val lifecycle: Lifecycle,
 ) {
     fun cached(artworkId: String, size: Int): Bitmap? =
         if (artworkId.isBlank()) null else repository.cachedArtwork(artworkId, size)
@@ -28,8 +30,12 @@ internal class LibraryArtworkSource(
 }
 
 @Composable
-internal fun rememberLibraryArtworkSource(viewModel: TunesLinkViewModel): LibraryArtworkSource =
-    remember(viewModel) { LibraryArtworkSource(viewModel.repository, viewModel.artworkSession) }
+internal fun rememberLibraryArtworkSource(viewModel: TunesLinkViewModel): LibraryArtworkSource {
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    return remember(viewModel, lifecycle) {
+        LibraryArtworkSource(viewModel.repository, viewModel.artworkSession, lifecycle)
+    }
+}
 
 /** Refresh visible artwork on the cache's bounded schedule, only while the app is visible. */
 @Composable
@@ -39,18 +45,20 @@ internal fun rememberLibraryArtwork(artworkId: String, size: Int, source: Librar
     var artwork by remember(artworkId, size, source) {
         mutableStateOf(source.cached(artworkId, size))
     }
-    val lifecycle = LocalLifecycleOwner.current.lifecycle
-    val session by source.session.collectAsStateWithLifecycle()
-    LaunchedEffect(artworkId, size, source, lifecycle, session) {
+    // One effect per row: the session is collected inside it rather than as composition state,
+    // so a bridge change restarts the refresh loop without recomposing every visible row.
+    LaunchedEffect(artworkId, size, source) {
         if (artworkId.isBlank()) return@LaunchedEffect
-        lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
-            while (isActive) {
-                val request = source.request(artworkId, size, object : BridgeRepository.ArtworkResult {
-                    override fun success(value: Bitmap?) { artwork = value }
-                    override fun failure(message: String, unauthorized: Boolean) = Unit
-                })
-                try { delay(ArtworkDiskCache.REFRESH_INTERVAL_MS) }
-                finally { request.cancel() }
+        source.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            source.session.collectLatest {
+                while (isActive) {
+                    val request = source.request(artworkId, size, object : BridgeRepository.ArtworkResult {
+                        override fun success(value: Bitmap?) { artwork = value }
+                        override fun failure(message: String, unauthorized: Boolean) = Unit
+                    })
+                    try { delay(ArtworkDiskCache.REFRESH_INTERVAL_MS) }
+                    finally { request.cancel() }
+                }
             }
         }
     }

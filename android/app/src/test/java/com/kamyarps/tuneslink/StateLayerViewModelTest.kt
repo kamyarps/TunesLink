@@ -73,7 +73,7 @@ class StateLayerViewModelTest {
         val page = (listOf("t3") + (61 until 120).map { "t$it" }).map {
             BridgeClient.LibraryTrack(it, it, "Artist", "Album", 60.0, 0, 0, "", "")
         }
-        vm.browseTracksResult(vm.field("browseTracksGeneration") as Int, replace = false,
+        vm.browseTracksResult(vm.browseTracksGeneration, replace = false,
             requestedOffset = 60).page(BridgeClient.LibraryPage(page, 60, 60, 120, false, ""), true)
         val ids = vm.mutableState.value.browse.tracks.map { it.id }
         assertEquals(ids.size, ids.toSet().size)
@@ -103,14 +103,14 @@ class StateLayerViewModelTest {
             connection = ConnectionState.RecoverableFailure("PC"),
             player = PlayerUiState(trackId = "track", artworkId = "")))
         vm.setVolume(30)
-        assertEquals(1, (vm.field("commandRequests") as Map<*, *>).size)
+        assertEquals(1, vm.commandRequests.size)
         // connect() is private; drive the same listener the ViewModel installs.
         val connect = TunesLinkViewModel::class.java.getDeclaredMethod("connect", Boolean::class.java)
         connect.isAccessible = true
         connect.invoke(vm, false)
         client.listener!!.connectionChanged(true, null)
         assertEquals(1, client.commandCancels)
-        assertTrue((vm.field("commandRequests") as Map<*, *>).isEmpty())
+        assertTrue(vm.commandRequests.isEmpty())
         assertTrue(vm.mutableState.value.player.pendingMutations.isEmpty())
         repository.close()
     }
@@ -239,11 +239,11 @@ class StateLayerViewModelTest {
     @Test fun forgetResetsDestinationAndSearchSoTheSameQueryCommitsAgain() {
         val vm = testViewModel(BridgeRepository(FakeClient(), SecureStore(MemoryBackend(), CountingCrypto())),
             TunesLinkUiState(library = LibraryUiState(editingQuery = "abba")))
-        vm.setField("restoreDestination", TunesLinkDestination.Search)
-        vm.setField("resetAfterModalDismiss", true)
+        vm.restoreDestination = TunesLinkDestination.Search
+        vm.resetAfterModalDismiss = true
         vm.savedStateHandle[TunesLinkViewModel.KEY_EDITING_QUERY] = "abba"
         vm.completeModalDismiss()
-        assertEquals(TunesLinkDestination.Library, vm.field("restoreDestination"))
+        assertEquals(TunesLinkDestination.Library, vm.restoreDestination)
         assertEquals("", vm.editingQuery.value)
         assertEquals("", vm.savedStateHandle[TunesLinkViewModel.KEY_EDITING_QUERY])
         assertEquals("", vm.mutableState.value.library.editingQuery)
@@ -272,7 +272,7 @@ class StateLayerViewModelTest {
     @Test fun grantingPermissionToAPairedPhoneNeverShowsWelcome() {
         val vm = testViewModel(BridgeRepository(FakeClient(), pairedStore()),
             TunesLinkUiState(route = TunesLinkRoute.LocalNetworkPermission))
-        vm.setField("pendingPermissionAction", PendingPermissionAction.Reconnect)
+        vm.pendingPermissionAction = PendingPermissionAction.Reconnect
         vm.localNetworkPermissionResult(true)
         assertEquals(TunesLinkRoute.Connecting, vm.mutableState.value.route)
         assertEquals(ConnectionState.Connecting, vm.mutableState.value.connection)

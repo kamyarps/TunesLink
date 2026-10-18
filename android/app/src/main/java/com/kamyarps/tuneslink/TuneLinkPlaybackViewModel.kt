@@ -1,6 +1,5 @@
 package com.kamyarps.tuneslink
 
-import android.app.Application
 import android.graphics.Bitmap
 import android.util.Log
 import androidx.lifecycle.viewModelScope
@@ -209,8 +208,7 @@ private fun TunesLinkViewModel.settleUnconfirmedMutation(mutation: PendingMutati
         return
     }
     val authoritative = latestAuthoritativeState
-    val notApplied = getApplication<Application>()
-        .getString(R.string.playback_change_not_applied)
+    val notApplied = localizedString(R.string.playback_change_not_applied)
     mutableState.update { state ->
         val pending = state.player.pending(mutation.action)
         if (pending?.operationId != mutation.operationId) return@update state
@@ -278,7 +276,8 @@ internal fun TunesLinkViewModel.loadArtwork(artworkId: String) {
         }
 
         override fun failure(message: String, unauthorized: Boolean) {
-            Log.w(TunesLinkViewModel.TAG, "Artwork request failed: ${message.take(120)}")
+            // The message can carry the bridge address; log only that the request failed.
+            Log.w(TunesLinkViewModel.TAG, "Artwork request failed (unauthorized=$unauthorized)")
             if (mutableState.value.player.artworkId != artworkId) return
             mutableState.update { it.copy(player = it.player.withArtworkFailure(message.take(120))) }
             val retryDelay = artworkRetryDelayMillis(++artworkFailures)

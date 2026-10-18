@@ -51,6 +51,18 @@
     "android/app/build/reports/device-integration/changed-certificate-rejected.png": {
       "hash": "00000000000000000000757672265dfe776e7ffe7f027ffe0000000000000000",
       "average_rgb": [186, 184, 186]
+    },
+    "android/app/build/reports/device-integration/paired-landscape.png": {
+      "hash": "ffffb69ff79fffffffff77ffffff9fffffffbfffffffb000f00010001dffffff",
+      "average_rgb": [243, 239, 242]
+    },
+    "android/app/build/reports/device-integration/command-error-tablet.png": {
+      "hash": "bfffbfffaf9fffffffffffffffffffff20000000fffffbd6fffffffffffff797",
+      "average_rgb": [243, 239, 242]
+    },
+    "android/app/build/reports/device-integration/tablet-medium-width.png": {
+      "hash": "dffffffafffff3fffffffffff0001ffff7fff7fff7fffffffdfffdffffffffdf",
+      "average_rgb": [244, 243, 245]
     }
   }
 }

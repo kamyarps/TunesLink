@@ -1,14 +1,16 @@
 package com.kamyarps.tuneslink
 
 import android.animation.ValueAnimator
+import android.content.ActivityNotFoundException
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
-import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
@@ -71,11 +73,18 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.BlurEffect
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.TileMode
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalDensity
@@ -96,6 +105,11 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.core.graphics.get
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.navigationevent.NavigationEvent
+import androidx.navigationevent.NavigationEventInfo
+import androidx.navigationevent.NavigationEventTransitionState
+import androidx.navigationevent.compose.NavigationBackHandler
+import androidx.navigationevent.compose.rememberNavigationEventState
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.max
@@ -105,7 +119,7 @@ private const val ACCESS_LOCAL_NETWORK_PERMISSION = "android.permission.ACCESS_L
 internal enum class RecoveryDialogAction { Dismiss, Primary, ChooseAnother }
 
 class MainActivity : ComponentActivity() {
-    private val viewModel: TunesLinkViewModel by viewModels()
+    private val viewModel: TunesLinkViewModel by viewModels { TunesLinkViewModel.Factory }
     private var animationsEnabled by mutableStateOf(true)
     private var highContrastEnabled by mutableStateOf(false)
     private val localNetworkPermission = registerForActivityResult(
@@ -114,7 +128,13 @@ class MainActivity : ComponentActivity() {
         // API 37 preview builds can deliver the activity-result boolean before
         // PackageManager's final local-network grant has propagated. Treat the
         // authoritative permission state as granted when either source agrees.
-        viewModel.localNetworkPermissionResult(granted || hasLocalNetworkAccess())
+        val allowed = granted || hasLocalNetworkAccess()
+        // Without a rationale after a denial the system will not prompt again; only the app's
+        // Settings page can grant access, so the UI offers that instead of a dead Continue.
+        viewModel.localNetworkPermissionResult(
+            granted = allowed,
+            blocked = !allowed && !shouldShowRequestPermissionRationale(ACCESS_LOCAL_NETWORK_PERMISSION),
+        )
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -130,6 +150,11 @@ class MainActivity : ComponentActivity() {
                 SystemBarStyle.auto(Color.Transparent.toArgb(), Color.Transparent.toArgb())
             },
         )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            // SystemBarStyle.auto() turns contrast enforcement back on, which overrides the theme
+            // and draws a scrim behind three-button navigation over the translucent player bar.
+            window.isNavigationBarContrastEnforced = false
+        }
         setContent {
             TunesLinkDesignTheme(
                 highContrastEnabled = highContrastEnabled,
@@ -138,6 +163,7 @@ class MainActivity : ComponentActivity() {
                 TunesLinkApp(
                     viewModel = viewModel,
                     hasLocalNetworkAccess = ::hasLocalNetworkAccess,
+                    openAppSettings = ::openAppSettings,
                     requestLocalNetworkPermission = {
                         if (LocalNetworkAccessPolicy.isRuntimePermissionRequired(
                                 Build.VERSION.SDK_INT,
@@ -184,6 +210,18 @@ class MainActivity : ComponentActivity() {
             PackageManager.PERMISSION_GRANTED,
     )
 
+    private fun openAppSettings() {
+        val intent = Intent(
+            Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+            Uri.fromParts("package", packageName, null),
+        )
+        try {
+            startActivity(intent)
+        } catch (_: ActivityNotFoundException) {
+            startActivity(Intent(Settings.ACTION_SETTINGS))
+        }
+    }
+
     private fun isHighContrastEnabled(): Boolean = Settings.Secure.getInt(
         contentResolver,
         "high_text_contrast_enabled",
@@ -203,6 +241,7 @@ class MainActivity : ComponentActivity() {
 private fun TunesLinkApp(
     viewModel: TunesLinkViewModel,
     hasLocalNetworkAccess: () -> Boolean,
+    openAppSettings: () -> Unit,
     requestLocalNetworkPermission: () -> Unit,
 ) {
     // The playback clock is sampled every ~750 ms. Only the progress controls read it (through
@@ -217,8 +256,9 @@ private fun TunesLinkApp(
     val windowWidth = with(density) {
         LocalWindowInfo.current.containerSize.width.toDp()
     }
-    val useTabletWorkspace = windowWidth >= 600.dp && density.fontScale < 1.5f
-    val useNavigationRail = windowWidth >= 600.dp && !useTabletWorkspace
+    val layoutMode = appLayoutMode(windowWidth.value, density.fontScale)
+    val useTabletWorkspace = layoutMode == AppLayoutMode.TabletWorkspace
+    val useNavigationRail = layoutMode == AppLayoutMode.NavigationRail
     val haptic = LocalHapticFeedback.current
     val imeInsets = WindowInsets.ime
     // Read the insets inside derivedStateOf: every IME animation frame changes the inset, but the
@@ -303,7 +343,10 @@ private fun TunesLinkApp(
     val browseBackable = browseBackEnabled(backDestination, state.browse, useTabletWorkspace)
     val backHandled = !imeVisible && (showRecoveryDialog || browseBackable ||
         backAction != NavigationBackAction.System)
-    BackHandler(enabled = backHandled) {
+    // One handler owns every in-app back step. Modals are Compose Dialogs with their own
+    // dispatcher, so the gesture preview below only moves the screen that back would leave.
+    val backState = rememberNavigationEventState(currentInfo = NavigationEventInfo.None)
+    NavigationBackHandler(state = backState, isBackEnabled = backHandled) {
         if (showRecoveryDialog) {
             requestRecoveryAction(RecoveryDialogAction.Dismiss)
         } else if (state.modal == null && browseBackable) {
@@ -317,6 +360,7 @@ private fun TunesLinkApp(
             }
         }
     }
+    val previewBack = TunesLinkTheme.motion.spatialEnabled && !modalVisible
     val routeTransitionDuration = if (TunesLinkTheme.motion.spatialEnabled) {
         TunesLinkMotion.StatusCrossfade
     } else {
@@ -326,7 +370,32 @@ private fun TunesLinkApp(
         modifier = Modifier
             .focusRequester(appFocusRequester)
             .focusGroup()
-            .blur(backgroundBlurRadius),
+            .onKeyEvent { event ->
+                if (event.type != KeyEventType.KeyDown || connectedDestination == null || modalVisible) {
+                    return@onKeyEvent false
+                }
+                val shortcut = keyboardShortcut(event.key, event.isCtrlPressed) ?: return@onKeyEvent false
+                // Holding a key must not toggle playback or skip repeatedly.
+                if (event.nativeKeyEvent.repeatCount > 0) return@onKeyEvent true
+                when (shortcut) {
+                    KeyboardShortcut.PlayPause -> if (state.playbackControlsEnabled) viewModel.togglePlayback()
+                    KeyboardShortcut.Next -> if (state.playbackControlsEnabled) viewModel.next()
+                    KeyboardShortcut.Previous -> if (state.playbackControlsEnabled) viewModel.previous()
+                    KeyboardShortcut.Search -> viewModel.navigate(TunesLinkDestination.Search)
+                }
+                true
+            }
+            // Read in the draw phase so the blur animation does not recompose the whole app.
+            .graphicsLayer {
+                val radius = backgroundBlurRadius.toPx()
+                if (radius > 0f) {
+                    renderEffect = BlurEffect(radius, radius, TileMode.Clamp)
+                    clip = true
+                } else {
+                    renderEffect = null
+                    clip = false
+                }
+            },
         bottomBar = {
             val route = state.route as? TunesLinkRoute.Connected
             if (route != null && !imeVisible && !useTabletWorkspace) {
@@ -383,7 +452,23 @@ private fun TunesLinkApp(
             },
             contentKey = TunesLinkRoute::rootContentKey,
             label = "Root destination",
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    val gesture = (backState.transitionState as? NavigationEventTransitionState.InProgress)
+                        ?.latestEvent
+                    if (previewBack && gesture != null) {
+                        val scale = predictiveBackScale(gesture.progress)
+                        scaleX = scale
+                        scaleY = scale
+                        val direction = if (gesture.swipeEdge == NavigationEvent.EDGE_RIGHT) -1f else 1f
+                        translationX = direction * 12.dp.toPx() * gesture.progress
+                    } else {
+                        scaleX = 1f
+                        scaleY = 1f
+                        translationX = 0f
+                    }
+                },
         ) { route ->
             when (route) {
                 TunesLinkRoute.Welcome -> WelcomeScreen(
@@ -396,10 +481,13 @@ private fun TunesLinkApp(
                     onRetryRevocations = {
                         viewModel.requestRetryPendingRevocations(hasLocalNetworkAccess())
                     },
+                    onOpenSettings = openAppSettings,
                 )
                 TunesLinkRoute.LocalNetworkPermission -> PermissionScreen(
                     padding = scaffoldPadding,
+                    blocked = state.localNetworkBlocked,
                     onContinue = requestLocalNetworkPermission,
+                    onOpenSettings = openAppSettings,
                 )
                 TunesLinkRoute.Connecting -> ConnectingScreen(state.bridgeName, scaffoldPadding)
                 is TunesLinkRoute.Connected -> ConnectedScreen(
@@ -471,6 +559,7 @@ private fun WelcomeScreen(
     onChooseBridge: (BridgeClient.BridgeInfo) -> Unit,
     onReturnToComputer: () -> Unit,
     onRetryRevocations: () -> Unit,
+    onOpenSettings: () -> Unit,
 ) {
     BoxWithConstraints(
         Modifier
@@ -575,6 +664,15 @@ private fun WelcomeScreen(
                     textAlign = TextAlign.Center,
                     modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
                 )
+                if (state.localNetworkBlocked) {
+                    Spacer(Modifier.height(8.dp))
+                    TunesLinkTonalAction(
+                        label = stringResource(R.string.open_settings),
+                        onClick = onOpenSettings,
+                        modifier = Modifier.widthIn(max = 460.dp).fillMaxWidth(),
+                        color = TunesLinkTheme.colors.accentText,
+                    )
+                }
             }
             if (state.pendingRevocationCount > 0) {
                 Spacer(Modifier.height(12.dp))
@@ -633,7 +731,12 @@ internal fun ComputerChoice(
 }
 
 @Composable
-private fun PermissionScreen(padding: PaddingValues, onContinue: () -> Unit) {
+private fun PermissionScreen(
+    padding: PaddingValues,
+    blocked: Boolean,
+    onContinue: () -> Unit,
+    onOpenSettings: () -> Unit,
+) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -659,13 +762,21 @@ private fun PermissionScreen(padding: PaddingValues, onContinue: () -> Unit) {
         )
         Spacer(Modifier.height(12.dp))
         Text(
-            stringResource(R.string.local_network_detail),
+            stringResource(if (blocked) R.string.local_network_blocked_detail else R.string.local_network_detail),
             style = MaterialTheme.typography.bodyLarge,
             color = TunesLinkTheme.colors.secondaryText,
             textAlign = TextAlign.Center,
         )
         Spacer(Modifier.height(28.dp))
-        TunesLinkPrimaryButton(stringResource(R.string.continue_label), onContinue, Modifier.widthIn(max = 460.dp).fillMaxWidth())
+        if (blocked) {
+            TunesLinkPrimaryButton(
+                stringResource(R.string.open_settings),
+                onOpenSettings,
+                Modifier.widthIn(max = 460.dp).fillMaxWidth(),
+            )
+        } else {
+            TunesLinkPrimaryButton(stringResource(R.string.continue_label), onContinue, Modifier.widthIn(max = 460.dp).fillMaxWidth())
+        }
     }
 }
 
@@ -690,6 +801,9 @@ private fun ConnectedScreen(
 ) {
     val layoutDirection = LocalLayoutDirection.current
     val destinations = rememberSaveableStateHolder()
+    // Hoisted above the layout switch so folding, unfolding or resizing across 600 dp keeps
+    // the workspace panes' scroll positions.
+    val workspacePanes = rememberSaveableStateHolder()
     val commandError = state.player.commandError
     // The top inset is applied by each destination so Now Playing can draw its ambient
     // background full-bleed behind the status bar. Consuming the scaffold padding lets
@@ -727,6 +841,7 @@ private fun ConnectedScreen(
                     state = state,
                     destination = destination,
                     viewModel = viewModel,
+                    panes = workspacePanes,
                     modifier = Modifier.fillMaxSize().padding(top = topInset),
                 )
             } else {

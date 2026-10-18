@@ -87,6 +87,8 @@ if ($Component -in @("All", "Windows")) {
 
 & (Join-Path $PSScriptRoot "build-requirements-self-test.ps1")
 if (-not $?) { throw "Build-requirements self-tests failed." }
+& (Join-Path $PSScriptRoot "github-read-retry-self-test.ps1")
+if (-not $?) { throw "GitHub read retry self-tests failed." }
 & (Join-Path $PSScriptRoot "verify-repository.ps1") -RequireCleanWorktree:$startedClean
 if (-not $?) { throw "Repository hygiene verification failed." }
 $finalTrackedDiff = (& git -C $root diff --binary HEAD | Out-String)

@@ -72,3 +72,23 @@ internal fun browseBackEnabled(
 } else {
     browse.canNavigateUp
 }
+
+/** Window size class lower bounds (dp), matching androidx.window's WindowSizeClass. */
+internal const val WIDTH_MEDIUM_LOWER_BOUND_DP = 600f
+internal const val WIDTH_EXPANDED_LOWER_BOUND_DP = 840f
+internal const val HEIGHT_MEDIUM_LOWER_BOUND_DP = 480f
+
+/** Large text needs the rail's single column; the workspace packs too much into one row. */
+internal const val WORKSPACE_MAX_FONT_SCALE = 1.5f
+
+internal enum class AppLayoutMode { Phone, NavigationRail, TabletWorkspace }
+
+/** Chosen from the available window, never the device type, so split screen and folds adapt. */
+internal fun appLayoutMode(windowWidthDp: Float, fontScale: Float): AppLayoutMode = when {
+    windowWidthDp < WIDTH_MEDIUM_LOWER_BOUND_DP -> AppLayoutMode.Phone
+    fontScale < WORKSPACE_MAX_FONT_SCALE -> AppLayoutMode.TabletWorkspace
+    else -> AppLayoutMode.NavigationRail
+}
+
+/** The screen being left shrinks slightly as the predictive back gesture progresses. */
+internal fun predictiveBackScale(progress: Float): Float = 1f - 0.06f * progress.coerceIn(0f, 1f)
