@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# This runs only on the disposable CI emulator, after the debug integration suite.
-# Remove the debug signing identity before installing the actual release artifact.
+# This runs only on the disposable CI emulator. CI already ran the debug suites on this
+# commit; remove any other signing identity before installing the actual release artifact.
 workspace="${GITHUB_WORKSPACE:-$PWD}"
 export TunesLink_ANDROID_APK="${workspace}/artifacts/device-release/TunesLink.apk"
 export TunesLink_SMOKE_REPORTS="${workspace}/android/app/build/reports/device-release-smoke"
 test -f "$TunesLink_ANDROID_APK"
-adb uninstall com.kamyarps.tuneslink >/dev/null
+adb uninstall com.kamyarps.tuneslink >/dev/null 2>&1 || true
 bash "$workspace/scripts/android-emulator-smoke.sh"
 
 previous_apk="${workspace}/artifacts/device-previous/TunesLink.apk"

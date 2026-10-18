@@ -19,6 +19,9 @@ jobs:
     outputs:
       source-sha: ${{ steps.source.outputs.sha }}
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
     env:
       RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
     steps:
@@ -43,6 +46,26 @@ jobs:
             throw "Release tag must point at the current main commit."
           }
 
+      # Release device validation tests only the signed APK and the upgrade path, so the debug
+      # device suites, lint, and unit tests must already have passed in CI for this commit.
+      - name: Require a successful CI run for this commit
+        timeout-minutes: 90
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sha="$(git rev-parse HEAD)"
+          while true; do
+            run="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --commit "$sha" \
+              --event push --limit 1 --json status,conclusion,url \
+              --jq '.[0] | select(.) | "\(.status) \(.conclusion) \(.url)"')" || run=""
+            case "$run" in
+              "completed success "*) echo "CI passed: ${run##* }"; break ;;
+              completed*) echo "::error::CI did not pass for $sha: $run"; exit 1 ;;
+              "") echo "No CI run for $sha yet; waiting." ;;
+              *) echo "CI is still running: $run" ;;
+            esac
+            sleep 60
+          done
       - name: Record verified source commit
         id: source
         run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
@@ -113,7 +136,7 @@ jobs:
         working-directory: android
         run: >-
           ./gradlew --no-daemon --warning-mode all --dependency-verification strict
-          :app:lintRelease :app:testDebugUnitTest :app:assembleRelease
+          :app:assembleRelease
       - name: Verify Android signature
         run: |
           apk=android/app/build/outputs/apk/release/app-release.apk

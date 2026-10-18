@@ -37,8 +37,9 @@ a newer one and send cancellation both before and after request arrival. The COM
 fails during queue activation and verifies that the user's global mute setting is never changed.
 
 The emulator integration suite checks cooldown expiry and command errors across phone and
-tablet surfaces. Release publishing runs this same suite against the verified source commit,
-then installs the signed, optimized release APK for the viewport and launch smoke checks.
+tablet surfaces. Release publishing waits for CI, which runs this suite, to pass on the tagged
+commit. It then installs only the signed, optimized release APK for the viewport and launch
+smoke checks, without repeating the debug suites.
 When a previous GitHub APK exists, the release workflow also checks its package ID, signing
 certificate, and version code, then installs it on compatible emulators and upgrades to the new
 signed APK without removing the installation.

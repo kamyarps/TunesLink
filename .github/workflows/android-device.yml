@@ -8,7 +8,10 @@ on:
         required: true
         type: string
       release-artifact:
-        description: Optional signed APK artifact from the calling release workflow
+        description: >-
+          Optional signed APK artifact from the calling release workflow. When set, only the
+          signed APK and the upgrade from the previous release are tested: the release workflow
+          requires CI, which already ran the debug suites on the same commit.
         default: ""
         type: string
       release-tag:
@@ -67,12 +70,15 @@ jobs:
           distribution: temurin
           java-version: ${{ steps.requirements.outputs.java }}
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        if: inputs.release-artifact == ''
         with:
           global-json-file: global.json
       - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        if: inputs.release-artifact == ''
         with:
           cache-provider: basic
       - name: Build debug APK
+        if: inputs.release-artifact == ''
         working-directory: android
         run: ./gradlew --no-daemon --warning-mode all --dependency-verification strict :app:assembleDebug
       - name: Download the signed release APK under test
@@ -147,12 +153,15 @@ jobs:
           python3 scripts/android-emulator-run.py --avd tuneslink-ci \
             --emulator "$ANDROID_HOME/emulator/emulator" --memory "$EMULATOR_RAM_MB" --wipe-data -- \
             bash -euo pipefail -c '
-              bash scripts/android-emulator-smoke.sh
-              if [[ "$RUN_INTEGRATION" == "true" ]]; then bash scripts/android-emulator-integration.sh; fi
-              if [[ -n "$RELEASE_ARTIFACT" ]]; then bash scripts/android-release-smoke.sh; fi
+              if [[ -n "$RELEASE_ARTIFACT" ]]; then
+                bash scripts/android-release-smoke.sh
+              else
+                bash scripts/android-emulator-smoke.sh
+                if [[ "$RUN_INTEGRATION" == "true" ]]; then bash scripts/android-emulator-integration.sh; fi
+              fi
             '
       - name: Verify Android visual baselines
-        if: matrix.api-level == 36
+        if: matrix.api-level == 36 && inputs.release-artifact == ''
         run: python3 scripts/android-visual-regression.py
       - name: Verify repository hygiene
         shell: pwsh
