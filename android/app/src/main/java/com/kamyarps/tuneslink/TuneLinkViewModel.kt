@@ -1249,6 +1249,7 @@ internal class TunesLinkViewModel(
         internal fun validateManualAddress(value: String): Int? {
             val trimmed = value.trim()
             if (trimmed.isEmpty()) return R.string.address_required
+            if (DemoBridge.ENABLED && DemoBridge.isDemoAddress(trimmed)) return null
             val parts = trimmed.split(':')
             if (parts.size !in 1..2) return R.string.address_format_error
             val octets = parts[0].split('.').mapNotNull(String::toIntOrNull)

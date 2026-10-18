@@ -58,6 +58,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.key
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -65,6 +66,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.saveable.SaveableStateHolder
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.Alignment
@@ -90,6 +92,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import kotlin.math.max
 import kotlin.math.min
@@ -119,6 +122,7 @@ internal fun TabletTunesWorkspace(
     viewModel: TunesLinkViewModel,
     panes: SaveableStateHolder,
     modifier: Modifier = Modifier,
+    bottomInset: Dp = 0.dp,
 ) {
     val artwork = rememberLibraryArtworkSource(viewModel)
     val playbackSamples = rememberPlaybackSamples(viewModel)
@@ -155,54 +159,62 @@ internal fun TabletTunesWorkspace(
         if (openedCollection) viewModel.claimWorkspaceBrowse()
     }
 
-    Column(modifier.background(TunesLinkTheme.colors.canvas)) {
-        TabletWorkspaceHeader(
-            state = state,
-            playbackSamples = playbackSamples,
-            playbackActions = playbackActions,
-            onSearchQueryChange = { query ->
-                if (destination != TunesLinkDestination.Search) {
-                    viewModel.navigate(TunesLinkDestination.Search)
-                }
-                viewModel.updateSearchQuery(query)
-            },
-            onSearchFocusChange = { focused ->
-                viewModel.setSearchActive(focused)
-                if (focused && destination != TunesLinkDestination.Search) {
-                    viewModel.navigate(TunesLinkDestination.Search)
-                }
-            },
-            onClearSearch = { viewModel.updateSearchQuery("") },
-            onShowConnectionDetails = viewModel::showConnectionDetails,
-        )
-        HorizontalDivider(color = TunesLinkTheme.colors.separator)
-        BoxWithConstraints(Modifier.fillMaxSize()) {
-            val sidebarWidth = if (maxWidth < 800.dp) 148.dp else 204.dp
-            Row(Modifier.fillMaxSize()) {
-                TabletLibrarySidebar(
-                    selectedKind = state.browse.kind,
-                    selected = destination != TunesLinkDestination.Search,
-                    width = sidebarWidth,
-                    onSelect = { kind ->
-                        viewModel.claimWorkspaceBrowse()
-                        viewModel.cancelSearch()
-                        viewModel.navigate(TunesLinkDestination.Library)
-                        viewModel.openLibraryKind(kind)
-                    },
-                )
-                VerticalDivider(color = TunesLinkTheme.colors.separator)
-                Box(Modifier.weight(1f).fillMaxHeight()) {
-                    // Each pane keeps its scroll position while another one is shown.
-                    val searching = destination == TunesLinkDestination.Search
-                    panes.SaveableStateProvider(if (searching) "search" else "library") {
-                        if (searching) TabletSearchPane(state, searchActions)
-                        else TabletLibraryPane(state, libraryActions)
+    CompositionLocalProvider(LocalWorkspaceBottomInset provides bottomInset) {
+        Column(modifier.background(TunesLinkTheme.colors.canvas)) {
+            TabletWorkspaceHeader(
+                state = state,
+                playbackSamples = playbackSamples,
+                playbackActions = playbackActions,
+                onSearchQueryChange = { query ->
+                    if (destination != TunesLinkDestination.Search) {
+                        viewModel.navigate(TunesLinkDestination.Search)
+                    }
+                    viewModel.updateSearchQuery(query)
+                },
+                onSearchFocusChange = { focused ->
+                    viewModel.setSearchActive(focused)
+                    if (focused && destination != TunesLinkDestination.Search) {
+                        viewModel.navigate(TunesLinkDestination.Search)
+                    }
+                },
+                onClearSearch = { viewModel.updateSearchQuery("") },
+                onShowConnectionDetails = viewModel::showConnectionDetails,
+            )
+            HorizontalDivider(color = TunesLinkTheme.colors.separator)
+            BoxWithConstraints(Modifier.fillMaxSize()) {
+                val sidebarWidth = if (maxWidth < 800.dp) 148.dp else 204.dp
+                Row(Modifier.fillMaxSize()) {
+                    TabletLibrarySidebar(
+                        selectedKind = state.browse.kind,
+                        selected = destination != TunesLinkDestination.Search,
+                        width = sidebarWidth,
+                        onSelect = { kind ->
+                            viewModel.claimWorkspaceBrowse()
+                            viewModel.cancelSearch()
+                            viewModel.navigate(TunesLinkDestination.Library)
+                            viewModel.openLibraryKind(kind)
+                        },
+                    )
+                    VerticalDivider(color = TunesLinkTheme.colors.separator)
+                    Box(Modifier.weight(1f).fillMaxHeight()) {
+                        // Each pane keeps its scroll position while another one is shown.
+                        val searching = destination == TunesLinkDestination.Search
+                        panes.SaveableStateProvider(if (searching) "search" else "library") {
+                            if (searching) TabletSearchPane(state, searchActions)
+                            else TabletLibraryPane(state, libraryActions)
+                        }
                     }
                 }
             }
         }
     }
 }
+
+/**
+ * The gesture-bar height. Pane backgrounds and dividers run behind it; only the scrolling content
+ * is padded by it, so the last row can still scroll clear of the bar.
+ */
+private val LocalWorkspaceBottomInset = staticCompositionLocalOf { 0.dp }
 
 @Composable
 private fun TabletWorkspaceHeader(
@@ -606,7 +618,8 @@ private fun TabletLibrarySidebar(
             .fillMaxHeight()
             .background(TunesLinkTheme.colors.surface.copy(alpha = 0.72f))
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 10.dp, vertical = 16.dp),
+            .padding(start = 10.dp, top = 16.dp, end = 10.dp,
+                bottom = 16.dp + LocalWorkspaceBottomInset.current),
     ) {
         Text(
             stringResource(R.string.library),
@@ -744,7 +757,8 @@ private fun TabletAlbumsPane(state: TunesLinkUiState, actions: TabletLibraryActi
                 columns = GridCells.Fixed(columnCount),
                 state = gridState,
                 modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(contentPadding),
+                contentPadding = PaddingValues(start = contentPadding, top = contentPadding,
+                    end = contentPadding, bottom = contentPadding + LocalWorkspaceBottomInset.current),
                 horizontalArrangement = Arrangement.spacedBy(if (compactHeight) 12.dp else 18.dp),
                 verticalArrangement = Arrangement.spacedBy(if (compactHeight) 12.dp else 20.dp),
             ) {
@@ -1112,7 +1126,8 @@ private fun TabletCollectionMasterDetail(state: TunesLinkUiState, actions: Table
                 else -> LazyColumn(
                     state = listState,
                     modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(vertical = 8.dp),
+                    contentPadding = PaddingValues(top = 8.dp,
+                        bottom = 8.dp + LocalWorkspaceBottomInset.current),
                 ) {
                     if (browse.collectionsCursor.isLoadingPrevious) item(contentType = "progress") { TabletProgress() }
                     if (browse.collectionsCursor.hasPrevious && browse.collectionsCursor.error != null) {
@@ -1263,7 +1278,8 @@ private fun TabletGroupedCollectionDetail(
     LazyColumn(
         state = listState,
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(24.dp),
+        contentPadding = PaddingValues(start = 24.dp, top = 24.dp, end = 24.dp,
+            bottom = 24.dp + LocalWorkspaceBottomInset.current),
     ) {
         if (state.browse.tracksCursor.windowStart == 0) item(contentType = "heading") {
             TabletPaneHeading(
@@ -1416,8 +1432,10 @@ private fun TabletSongsPane(
                     state = listState,
                     modifier = Modifier.fillMaxWidth().weight(1f),
                     contentPadding = PaddingValues(
-                        horizontal = if (showFullColumns) 20.dp else 12.dp,
-                        vertical = 16.dp,
+                        start = if (showFullColumns) 20.dp else 12.dp,
+                        top = 16.dp,
+                        end = if (showFullColumns) 20.dp else 12.dp,
+                        bottom = 16.dp + LocalWorkspaceBottomInset.current,
                     ),
                 ) {
                     if (cursor.isLoadingPrevious) item(contentType = "progress") { TabletProgress() }

@@ -700,7 +700,8 @@ private fun WelcomeScreen(
                     ComputerChoice(bridge, onChooseBridge)
                 }
             }
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(if (compactHeight) 8.dp else 20.dp))
+            PrivacyPolicyLink()
         }
     }
 }
@@ -813,7 +814,9 @@ private fun ConnectedScreen(
             .padding(
                 start = padding.calculateStartPadding(layoutDirection),
                 end = padding.calculateEndPadding(layoutDirection),
-                bottom = padding.calculateBottomPadding(),
+                // The tablet workspace draws its panes behind the gesture bar and pads its
+                // scrolling content instead, so no empty band is left at the bottom edge.
+                bottom = if (showTabletWorkspace) 0.dp else padding.calculateBottomPadding(),
             )
             .consumeWindowInsets(padding),
     ) {
@@ -840,6 +843,7 @@ private fun ConnectedScreen(
                     destination = destination,
                     viewModel = viewModel,
                     panes = workspacePanes,
+                    bottomInset = padding.calculateBottomPadding(),
                     modifier = Modifier.fillMaxSize().padding(top = topInset),
                 )
             } else {

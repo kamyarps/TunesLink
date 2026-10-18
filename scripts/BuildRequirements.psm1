@@ -175,11 +175,15 @@ function Get-TunesLinkArtifactNames {
     param(
         [Parameter(Mandatory)]
         [ValidateSet("All", "Android", "Windows")]
-        [string]$Component
+        [string]$Component,
+        [switch]$PlayBundle
     )
 
     $names = New-Object System.Collections.Generic.List[string]
-    if ($Component -in @("All", "Android")) { $names.Add("TunesLink.apk") }
+    if ($Component -in @("All", "Android")) {
+        $names.Add("TunesLink.apk")
+        if ($PlayBundle) { $names.Add("TunesLink.aab") }
+    }
     if ($Component -in @("All", "Windows")) { $names.Add("TunesLink.Bridge.exe") }
     return $names.ToArray()
 }

@@ -188,6 +188,25 @@ jobs:
           path: android/app/build/outputs/mapping/release/mapping.txt
           if-no-files-found: error
           retention-days: 90
+      # Built after the public APK is staged: only the Google Play bundle contains the reviewer
+      # demo. Upload it to Play Console by hand; it is never attached to the GitHub release.
+      - name: Build Google Play bundle
+        working-directory: android
+        run: >-
+          ./gradlew --no-daemon --warning-mode all --dependency-verification strict
+          -PTunesLink.playDemo=true :app:bundleRelease
+      - name: Stage Google Play bundle
+        run: |
+          mkdir -p artifacts/play
+          cp android/app/build/outputs/bundle/release/app-release.aab artifacts/play/TunesLink.aab
+          cp android/app/build/outputs/mapping/release/mapping.txt artifacts/play/mapping.txt
+          jarsigner -verify artifacts/play/TunesLink.aab | grep -q "jar verified"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: TunesLink-play-bundle
+          path: artifacts/play
+          if-no-files-found: error
+          retention-days: 90
 
   windows:
     name: Windows release

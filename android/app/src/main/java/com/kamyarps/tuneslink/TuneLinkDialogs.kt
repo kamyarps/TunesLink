@@ -355,11 +355,14 @@ private fun PrivacyDialog(
         title = stringResource(R.string.privacy),
         detail = stringResource(R.string.privacy_detail),
         content = {
-            Text(
-                stringResource(R.string.privacy_body),
-                style = MaterialTheme.typography.bodyLarge,
-                color = TunesLinkTheme.colors.secondaryText,
-            )
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    stringResource(R.string.privacy_body),
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = TunesLinkTheme.colors.secondaryText,
+                )
+                PrivacyPolicyLink()
+            }
         },
         confirmLabel = stringResource(R.string.done),
         onConfirm = onDismiss,

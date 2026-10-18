@@ -3,7 +3,9 @@ param(
     [ValidateSet("All", "Android", "Windows")]
     [string]$Component = "All",
     [switch]$SkipChecks,
-    [switch]$SkipVisualChecks
+    [switch]$SkipVisualChecks,
+    # Also builds the Google Play bundle (TunesLink.aab), which includes the reviewer demo.
+    [switch]$PlayBundle
 )
 
 $ErrorActionPreference = "Stop"
@@ -135,6 +137,31 @@ try {
         $apkArtifact = Join-Path $staging "TunesLink.apk"
         Copy-Item -LiteralPath $apkSource -Destination $apkArtifact -Force
         Invoke-Checked (Resolve-ApkSigner) @("verify", "--verbose", $apkArtifact)
+
+        if ($PlayBundle) {
+            if (-not $androidIsReleaseSigned) {
+                throw "The Google Play bundle needs the release signing key. See android/keystore.properties.example."
+            }
+            # Built after the APK is copied: the demo source set must never reach TunesLink.apk.
+            Push-Location (Join-Path $root "android")
+            try {
+                Invoke-Checked $gradle @("--no-daemon", "--console=plain",
+                    "--dependency-verification", "strict", "-PTunesLink.playDemo=true",
+                    ":app:bundleRelease")
+            }
+            finally { Pop-Location }
+            $bundleSource = Join-Path $root "android\app\build\outputs\bundle\release\app-release.aab"
+            if (-not (Test-Path -LiteralPath $bundleSource)) {
+                throw "Android build did not produce the expected bundle: $bundleSource"
+            }
+            $bundleArtifact = Join-Path $staging "TunesLink.aab"
+            Copy-Item -LiteralPath $bundleSource -Destination $bundleArtifact -Force
+            # A self-signed upload key makes jarsigner warn, so check for the verified line instead.
+            $verification = & jarsigner -verify $bundleArtifact 2>&1 | Out-String
+            if ($LASTEXITCODE -ne 0 -or $verification -notmatch "jar verified") {
+                throw "TunesLink.aab is not signed: $verification"
+            }
+        }
     }
 
     if ($Component -in @("All", "Windows")) {
@@ -160,7 +187,8 @@ try {
             "--text-scale", "2.0", "--ui-state", "runtime-unavailable")
     }
 
-    $expected = @(Get-TunesLinkArtifactNames -Component $Component | Sort-Object)
+    $expected = @(Get-TunesLinkArtifactNames -Component $Component -PlayBundle:$PlayBundle |
+        Sort-Object)
     $actual = @(Get-ChildItem -LiteralPath $staging -File |
         Select-Object -ExpandProperty Name | Sort-Object)
     if (($expected -join '|') -cne ($actual -join '|')) {

@@ -93,6 +93,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.platform.LocalDensity
@@ -288,6 +289,34 @@ internal fun TunesLinkTonalAction(
         }
         Text(label, style = MaterialTheme.typography.bodyLarge, color = contentColor, fontWeight = FontWeight.Medium)
     }
+}
+
+/** Opens the hosted privacy policy that Google Play also links to. */
+@Composable
+internal fun PrivacyPolicyLink(modifier: Modifier = Modifier) {
+    val uriHandler = LocalUriHandler.current
+    val url = stringResource(R.string.privacy_policy_url)
+    var focused by remember { mutableStateOf(false) }
+    Text(
+        stringResource(R.string.privacy_policy),
+        style = MaterialTheme.typography.bodyMedium,
+        color = TunesLinkTheme.colors.accentText,
+        fontWeight = FontWeight.Medium,
+        modifier = modifier
+            .heightIn(min = TunesLinkSizes.minimumTarget)
+            .onFocusChanged { focused = it.isFocused }
+            .TunesLinkFocusBorder(
+                focused = focused,
+                color = TunesLinkTheme.colors.focusIndicator,
+                shape = RoundedCornerShape(12.dp),
+            )
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(role = Role.Button) {
+                // A device without a browser has nothing to open the link with.
+                runCatching { uriHandler.openUri(url) }
+            }
+            .padding(horizontal = 12.dp, vertical = 14.dp),
+    )
 }
 
 @Composable

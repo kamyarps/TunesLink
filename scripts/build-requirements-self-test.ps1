@@ -19,6 +19,8 @@ Assert-True ((Get-TunesLinkArtifactNames All) -join '|' -eq
     'TunesLink.apk|TunesLink.Bridge.exe') "all-build artifact contract"
 Assert-True ((Get-TunesLinkArtifactNames Android) -join '|' -eq
     'TunesLink.apk') "Android artifact contract"
+Assert-True ((Get-TunesLinkArtifactNames Android -PlayBundle) -join '|' -eq
+    'TunesLink.apk|TunesLink.aab') "Google Play artifact contract"
 Assert-True ((Get-TunesLinkArtifactNames Windows) -join '|' -eq
     'TunesLink.Bridge.exe') "Windows artifact contract"
 

@@ -33,6 +33,9 @@ def requiredJavaVersion = providers.gradleProperty("TunesLink.javaVersion").get(
 def requiredCompileSdk = providers.gradleProperty("TunesLink.compileSdk").get().toInteger()
 def requiredTargetSdk = providers.gradleProperty("TunesLink.targetSdk").get().toInteger()
 def requiredBuildTools = providers.gradleProperty("TunesLink.buildToolsVersion").get()
+// Google Play reviewer demo (type "demo" as the computer address). Only the Play bundle is built
+// with -PTunesLink.playDemo=true; every other build, including the GitHub APK, compiles the stub.
+def playDemo = providers.gradleProperty("TunesLink.playDemo").map { it.toBoolean() }.getOrElse(false)
 
 android {
     namespace = "com.kamyarps.tuneslink"
@@ -86,6 +89,16 @@ android {
 
     buildFeatures {
         compose = true
+    }
+
+    sourceSets {
+        main {
+            java.srcDirs += playDemo ? "src/demo/java" : "src/demoStub/java"
+            if (playDemo) resources.srcDirs += "src/demo/resources"
+        }
+        test {
+            if (playDemo) java.srcDirs += "src/testDemo/java"
+        }
     }
 
     tasks.withType(JavaCompile).configureEach {

@@ -3,24 +3,24 @@
   "max_color_distance": 18,
   "screenshots": {
     "android/app/build/reports/device-smoke/phone-portrait-motion.png": {
-      "hash": "fffffffffffffffffc3ffe7fffffffffb1dfffff8001ffffffffffffffffffff",
-      "average_rgb": [245, 238, 246]
+      "hash": "fffffffffffffdbffe7fffffffffffffffff8001ffffffffffffffffffffffff",
+      "average_rgb": [244, 240, 245]
     },
     "android/app/build/reports/device-smoke/phone-portrait-reduced-motion.png": {
-      "hash": "fffffffffffffffffc3ffe7fffffffffb1dfffff8001ffffffffffffffffffff",
-      "average_rgb": [245, 238, 246]
+      "hash": "fffffffffffffdbffe7fffffffffffffffff8001ffffffffffffffffffffffff",
+      "average_rgb": [244, 240, 245]
     },
     "android/app/build/reports/device-smoke/phone-landscape-font-200.png": {
-      "hash": "fffffe7fffffffffeb7ff127fffff1efffffc73bffbfffff80ff80e380ffffff",
-      "average_rgb": [229, 221, 229]
+      "hash": "fffffe7fffffffffeb7ff027ffffff2bffffdfffffffffff80ff80e380ffffff",
+      "average_rgb": [231, 223, 231]
     },
     "android/app/build/reports/device-smoke/tablet-portrait.png": {
-      "hash": "fffffffffffffffffe7ffffffffff8a7ffff8001ffffffffffffffffffffffff",
-      "average_rgb": [245, 239, 246]
+      "hash": "fffffffffffffffffffffffffe1fffffffffe007fffffe3fffffffffffffffff",
+      "average_rgb": [245, 240, 245]
     },
     "android/app/build/reports/device-smoke/tablet-landscape.png": {
-      "hash": "fffffffffffffffffffffffffdbffc3fffffffffffffffffffffffffffffffff",
-      "average_rgb": [249, 246, 250]
+      "hash": "ffffffffffffffffffffffffffdfff6fffff80ff80fffe7fffffffffffffffff",
+      "average_rgb": [247, 241, 247]
     },
     "android/app/build/reports/device-integration/paired-library-categories.png": {
       "hash": "cffdffffffffffffafffffffffffffffffffffffffffffffffffbfffffff8fff",

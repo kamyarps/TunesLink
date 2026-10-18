@@ -62,6 +62,8 @@ Connections are paired with a temporary six-digit code and then protected by cer
 HTTPS and a per-device token. TunesLink accepts private/local IPv4 clients only. Do not
 port-forward its ports or expose the bridge to the internet.
 
+The full [privacy policy](PRIVACY.md) lists exactly what moves between your devices.
+
 ## Requirements
 
 ### To use TunesLink
@@ -272,8 +274,8 @@ Bug reports and focused contributions are welcome.
 
 TunesLink is available under the [MIT License](LICENSE).
 
-iTunes is a trademark of Apple Inc. TunesLink is independent and is not affiliated with or
-endorsed by Apple.
+iTunes is a trademark of Apple Inc., registered in the U.S. and other countries. TunesLink is an
+independent, open-source project and is not affiliated with, endorsed by, or sponsored by Apple Inc.
 
 The device frames in the Windows bridge (Dell XPS 15 and Samsung Galaxy S24 Ultra) are from
 [MockUPhone](https://mockuphone.com/attribution), used under the

@@ -496,6 +496,10 @@ class BridgeClient extends BridgeClientSupport {
         ConnectionCancellation cancellation = new ConnectionCancellation();
         Future<?> future = executor.submit(() -> {
             try {
+                if (DemoBridge.ENABLED && DemoBridge.isDemoAddress(input)) {
+                    deliverSuccess(result, DemoBridge.info(), cancellation);
+                    return;
+                }
                 String candidate = input == null ? "" : input.trim();
                 int port = DEFAULT_PORT;
                 int colon = candidate.lastIndexOf(':');
@@ -957,6 +961,9 @@ class BridgeClient extends BridgeClientSupport {
         HttpsURLConnection connection = null;
         boolean[] receivedState = {false};
         try {
+            // The Google Play demo answers state polls instead of streaming.
+            if (DemoBridge.ENABLED && DemoBridge.isDemoHost(bridge.host))
+                return new StreamResult(StreamStatus.UNSUPPORTED, false, null);
             connection = http.openPinnedConnection(bridge.host, bridge.port, bridge.tlsFingerprint,
                     "/api/state/stream");
             activeStateConnection = connection;
@@ -1085,6 +1092,8 @@ class BridgeClient extends BridgeClientSupport {
     private BridgeHttpClient.Response request(String host, int port, String tlsFingerprint,
                                               String token, String method, String path, byte[] body,
                                               ConnectionCancellation cancellation) throws IOException {
+        if (DemoBridge.ENABLED && DemoBridge.isDemoHost(host))
+            return DemoBridge.respond(method, path, body, token);
         return http.request(host, port, tlsFingerprint, token, method, path, body, cancellation);
     }
 

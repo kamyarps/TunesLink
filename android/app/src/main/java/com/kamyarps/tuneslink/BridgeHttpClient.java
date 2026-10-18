@@ -17,6 +17,7 @@ import java.util.Locale;
 import javax.net.ssl.HostnameVerifier;
 import javax.net.ssl.HttpsURLConnection;
 import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLException;
 import javax.net.ssl.SSLSocket;
 import javax.net.ssl.SSLSocketFactory;
 import javax.net.ssl.X509TrustManager;
@@ -147,6 +148,10 @@ final class BridgeHttpClient {
     static String probeFingerprint(String host, int port,
                                    BridgeClient.ConnectionCancellation cancellation)
             throws Exception {
+        // Trust on first use, without ever trusting an unverified certificate: the probe records
+        // the leaf fingerprint and then rejects the handshake. Pairing pins that fingerprint, and
+        // every later connection goes through pinnedSocketFactory.
+        String[] observed = new String[1];
         X509TrustManager probeTrust = new X509TrustManager() {
             @Override public void checkClientTrusted(X509Certificate[] chain, String authType) {
                 throw new UnsupportedOperationException();
@@ -156,8 +161,8 @@ final class BridgeHttpClient {
                 if (chain == null || chain.length == 0) {
                     throw new CertificateException("Bridge sent no identity");
                 }
-                // Trust on first use: the fingerprint is pinned at pairing. A self-signed leaf's
-                // validity period adds nothing, and a slow phone clock must not block pairing.
+                observed[0] = fingerprint(chain[0]);
+                throw new CertificateException("Bridge identity recorded for pinning");
             }
             @Override public X509Certificate[] getAcceptedIssuers() {
                 return new X509Certificate[0];
@@ -169,15 +174,14 @@ final class BridgeHttpClient {
             if (cancellation != null) cancellation.attach(socket);
             socket.connect(new InetSocketAddress(host, port), CONNECT_TIMEOUT_MS);
             socket.setSoTimeout(DEFAULT_READ_TIMEOUT_MS);
-            socket.startHandshake();
-            Certificate[] peer = socket.getSession().getPeerCertificates();
-            if (peer.length == 0 || !(peer[0] instanceof X509Certificate certificate)) {
-                throw new IOException("Bridge sent no security identity");
+            try {
+                socket.startHandshake();
+            } catch (SSLException expected) {
+                if (observed[0] != null) return observed[0];
+                throw expected;
             }
-            return fingerprint(certificate);
-        } finally {
-            // The try-with-resources closes the socket. Cancellation retains no stale reference
-            // because attach() is only used for the duration of this bounded handshake.
+            // Unreachable with a conforming TLS stack: the trust manager always rejects.
+            throw new IOException("Bridge sent no security identity");
         }
     }
 

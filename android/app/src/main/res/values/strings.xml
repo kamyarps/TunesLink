@@ -74,6 +74,8 @@
     <string name="done">Done</string>
     <string name="address">Address</string>
     <string name="privacy">Privacy</string>
+    <string name="privacy_policy">Privacy policy</string>
+    <string name="privacy_policy_url" translatable="false">https://github.com/kamyarps/TunesLink/blob/main/PRIVACY.md</string>
     <string name="reconnect">Reconnect</string>
     <string name="privacy_body">No accounts, cloud service, analytics, ads, or tracking. Pairing credentials stay on your devices and the connection is encrypted on your local network.</string>
     <string name="this_computer">this computer</string>

@@ -36,6 +36,11 @@ class TunesLinkAccessibilityTest {
         assertEquals(R.string.address_not_private, TunesLinkViewModel.validateManualAddress("8.8.8.8"))
         assertEquals(R.string.address_invalid_port, TunesLinkViewModel.validateManualAddress("192.168.1.20:70000"))
         assertEquals(R.string.address_invalid_ipv4, TunesLinkViewModel.validateManualAddress("computer.local"))
+        // "demo" opens the reviewer demo only in the Google Play bundle; GitHub builds reject it.
+        assertEquals(
+            if (DemoBridge.ENABLED) null else R.string.address_invalid_ipv4,
+            TunesLinkViewModel.validateManualAddress("demo"),
+        )
     }
 
     private fun assertContrast(foreground: Int, background: Int, minimum: Double, label: String) {

@@ -90,6 +90,11 @@ jobs:
         run: >-
           "$ANDROID_HOME/build-tools/${{ steps.requirements.outputs.build_tools }}/zipalign"
           -c -P 16 4 app/build/outputs/apk/release/app-release-unsigned.apk
+      # Runs after the APK checks: this rebuild compiles the Play-only reviewer demo.
+      - name: Validate Google Play bundle with demo mode
+        run: >-
+          ./gradlew --no-daemon --warning-mode all --dependency-verification strict
+          -PTunesLink.playDemo=true :app:lintRelease :app:testDebugUnitTest :app:bundleRelease
       - name: Verify repository hygiene
         working-directory: ${{ github.workspace }}
         shell: pwsh
