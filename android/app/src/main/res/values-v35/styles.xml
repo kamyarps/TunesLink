@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Enforced edge-to-edge uses app-drawn backgrounds and Compose window insets.
+         Inherit the shared base directly to exclude legacy bar-color/contrast attributes. -->
+    <style name="AppTheme" parent="@style/TunesLinkThemeBase">
+        <item name="android:windowLayoutInDisplayCutoutMode">always</item>
+        <item name="android:enforceNavigationBarContrast">false</item>
+        <item name="android:windowSplashScreenBackground">@color/app_window_background</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/ic_launcher_foreground</item>
+        <item name="android:windowSplashScreenIconBackgroundColor">@color/splash_icon_background</item>
+    </style>
+</resources>

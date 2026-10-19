@@ -4,15 +4,15 @@ import android.animation.ValueAnimator
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.res.Configuration
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
-import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
-import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.animation.AnimatedContent
@@ -79,7 +79,6 @@ import androidx.compose.ui.graphics.BlurEffect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TileMode
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.isCtrlPressed
 import androidx.compose.ui.input.key.key
@@ -104,6 +103,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.core.graphics.get
+import androidx.core.view.WindowCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigationevent.NavigationEvent
 import androidx.navigationevent.NavigationEventInfo
@@ -141,19 +141,26 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         animationsEnabled = areSystemAnimationsEnabled()
         highContrastEnabled = isHighContrastEnabled()
-        enableEdgeToEdge(
-            statusBarStyle = SystemBarStyle.auto(Color.Transparent.toArgb(), Color.Transparent.toArgb()),
-            navigationBarStyle = if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
-                // Android 6/7 cannot draw dark navigation buttons over a light canvas.
-                SystemBarStyle.dark(ContextCompat.getColor(this, R.color.app_system_bar_background))
-            } else {
-                SystemBarStyle.auto(Color.Transparent.toArgb(), Color.Transparent.toArgb())
-            },
-        )
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            // SystemBarStyle.auto() turns contrast enforcement back on, which overrides the theme
-            // and draws a scrim behind three-button navigation over the translucent player bar.
-            window.isNavigationBarContrastEnforced = false
+        // Android 15+ enforces edge-to-edge for our target SDK. Older versions still need
+        // layout opt-in; bar backgrounds and contrast are supplied by versioned themes.
+        // Activity.enableEdgeToEdge also calls deprecated Window bar-color setters on API 35+.
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.VANILLA_ICE_CREAM) {
+            WindowCompat.setDecorFitsSystemWindows(window, false)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                window.attributes = window.attributes.apply {
+                    layoutInDisplayCutoutMode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                        WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+                    } else {
+                        WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+                    }
+                }
+            }
+        }
+        val darkSystemBars = resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK ==
+            Configuration.UI_MODE_NIGHT_YES
+        WindowCompat.getInsetsController(window, window.decorView).apply {
+            isAppearanceLightStatusBars = !darkSystemBars
+            isAppearanceLightNavigationBars = !darkSystemBars
         }
         setContent {
             TunesLinkDesignTheme(
