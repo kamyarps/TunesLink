@@ -211,6 +211,7 @@ internal sealed interface TunesLinkModal {
     data object ManualAddress : TunesLinkModal
     data object ConnectionDetails : TunesLinkModal
     data object Privacy : TunesLinkModal
+    data object PcSetup : TunesLinkModal
     data object ForgetConfirmation : TunesLinkModal
 }
 

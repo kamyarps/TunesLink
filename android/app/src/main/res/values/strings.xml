@@ -138,7 +138,19 @@
     <string name="turn_repeat_all_on">Turn repeat all on</string>
     <string name="turn_repeat_one_on">Turn repeat one on</string>
     <string name="turn_repeat_off">Turn repeat off</string>
-    <string name="no_computer_found_detail">No computer found. Make sure TunesLink is open on your PC.</string>
+    <string name="no_computer_found_detail">No computer found. Make sure TunesLink Bridge is open on your PC and both devices are on the same Wi-Fi.</string>
+    <string name="pc_setup_link">Set up TunesLink on your PC</string>
+    <string name="pc_setup_title">Set up your PC</string>
+    <string name="pc_setup_detail">TunesLink controls iTunes on a Windows PC. Your PC needs the free TunesLink Bridge app.</string>
+    <string name="pc_setup_step_download">On your Windows 10 or 11 PC, download TunesLink Bridge from %1$s.</string>
+    <string name="pc_setup_step_open">Open it while iTunes is running, and keep your PC and this device on the same Wi-Fi.</string>
+    <string name="pc_setup_step_pair">Tap Find my computer, then enter the pairing code shown on your PC.</string>
+    <string name="pc_setup_send_link">Send link to your PC</string>
+    <string name="pc_setup_share_title">TunesLink Bridge for Windows</string>
+    <string name="pc_setup_share_text">Download TunesLink Bridge for Windows: %1$s\n\nSetup help: %2$s</string>
+    <string name="bridge_home_address" translatable="false">github.com/kamyarps/TunesLink</string>
+    <string name="bridge_download_url" translatable="false">https://github.com/kamyarps/TunesLink/releases/latest/download/TunesLink.Bridge.exe</string>
+    <string name="bridge_help_url" translatable="false">https://github.com/kamyarps/TunesLink#install-and-connect</string>
     <string name="restoring_local_connection">Restoring your local connection.</string>
     <string name="connection_lost_detail">Check that %1$s and this phone are on the same network.</string>
     <string name="pairing_expired_detail">Pair with %1$s again to continue.</string>

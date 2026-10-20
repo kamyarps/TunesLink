@@ -487,6 +487,7 @@ private fun TunesLinkApp(
                         viewModel.requestRetryPendingRevocations(hasLocalNetworkAccess())
                     },
                     onOpenSettings = openAppSettings,
+                    onPcSetup = viewModel::showPcSetup,
                 )
                 TunesLinkRoute.LocalNetworkPermission -> PermissionScreen(
                     padding = scaffoldPadding,
@@ -565,6 +566,7 @@ private fun WelcomeScreen(
     onReturnToComputer: () -> Unit,
     onRetryRevocations: () -> Unit,
     onOpenSettings: () -> Unit,
+    onPcSetup: () -> Unit,
 ) {
     BoxWithConstraints(
         Modifier
@@ -649,6 +651,9 @@ private fun WelcomeScreen(
                     icon = TuneLinkIcons.Computer,
                 )
             }
+            // People who find TunesLink on Google Play may not know it needs a Windows app.
+            Spacer(Modifier.height(4.dp))
+            TunesLinkTextLink(stringResource(R.string.pc_setup_link), onPcSetup)
             state.returnComputer?.let { computer ->
                 // Choosing another computer never forgets the paired one until a new pairing
                 // succeeds, so offer the way back.

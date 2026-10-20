@@ -6,7 +6,10 @@ activity as the only window in the accessibility tree. The smoke and
 integration scripts dismiss that overlay instead of waiting for TunesLink
 controls that are no longer inspectable.
 
-Prints one of: none, anr, gboard-setup
+System UI can also crash on hosted emulators. Its "keeps stopping" dialog
+covers the app the same way the ANR dialog does.
+
+Prints one of: none, anr, system-crash, gboard-setup
 """
 
 from __future__ import annotations
@@ -28,6 +31,9 @@ def classify(path: str, app_package: str) -> str:
 
     if any(label == "System UI isn't responding" for label in labels):
         return "anr"
+    # Only System UI: a TunesLink crash dialog is a real failure.
+    if any(label in ("System UI keeps stopping", "System UI has stopped") for label in labels):
+        return "system-crash"
 
     # An IME overlay still includes the app's nodes. The first-run Theme
     # activity does not, so only treat Gboard as blocking when TunesLink is

@@ -296,9 +296,20 @@ internal fun TunesLinkTonalAction(
 internal fun PrivacyPolicyLink(modifier: Modifier = Modifier) {
     val uriHandler = LocalUriHandler.current
     val url = stringResource(R.string.privacy_policy_url)
+    TunesLinkTextLink(
+        label = stringResource(R.string.privacy_policy),
+        // A device without a browser has nothing to open the link with.
+        onClick = { runCatching { uriHandler.openUri(url) } },
+        modifier = modifier,
+    )
+}
+
+/** A quiet, accent-coloured action that still meets the minimum touch target. */
+@Composable
+internal fun TunesLinkTextLink(label: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
     var focused by remember { mutableStateOf(false) }
     Text(
-        stringResource(R.string.privacy_policy),
+        label,
         style = MaterialTheme.typography.bodyMedium,
         color = TunesLinkTheme.colors.accentText,
         fontWeight = FontWeight.Medium,

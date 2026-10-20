@@ -1,5 +1,6 @@
 package com.kamyarps.tuneslink
 
+import android.content.Intent
 import androidx.compose.animation.core.Animatable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -20,6 +21,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -44,6 +46,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -111,6 +114,9 @@ internal fun TunesLinkModalHost(state: TunesLinkUiState, viewModel: TunesLinkVie
             onForgetRequest = viewModel::requestForget,
         )
         TunesLinkModal.Privacy -> PrivacyDialog(
+            dismissRequested, viewModel::closeModal, viewModel::completeModalDismiss,
+        )
+        TunesLinkModal.PcSetup -> PcSetupDialog(
             dismissRequested, viewModel::closeModal, viewModel::completeModalDismiss,
         )
         TunesLinkModal.ForgetConfirmation -> ForgetDialog(
@@ -367,6 +373,71 @@ private fun PrivacyDialog(
         confirmLabel = stringResource(R.string.done),
         onConfirm = onDismiss,
     )
+}
+
+@Composable
+private fun PcSetupDialog(
+    dismissRequested: Boolean,
+    onDismiss: () -> Unit,
+    onDismissComplete: () -> Unit,
+) {
+    val context = LocalContext.current
+    val shareTitle = stringResource(R.string.pc_setup_share_title)
+    val shareText = stringResource(
+        R.string.pc_setup_share_text,
+        stringResource(R.string.bridge_download_url),
+        stringResource(R.string.bridge_help_url),
+    )
+    TunesLinkAlertDialog(
+        onDismiss = onDismiss,
+        dismissRequested = dismissRequested,
+        onDismissComplete = onDismissComplete,
+        title = stringResource(R.string.pc_setup_title),
+        detail = stringResource(R.string.pc_setup_detail),
+        titleIcon = TuneLinkIcons.Computer,
+        content = {
+            Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                PcSetupStep(1, stringResource(R.string.pc_setup_step_download, stringResource(R.string.bridge_home_address)))
+                PcSetupStep(2, stringResource(R.string.pc_setup_step_open))
+                PcSetupStep(3, stringResource(R.string.pc_setup_step_pair))
+            }
+        },
+        confirmLabel = stringResource(R.string.pc_setup_send_link),
+        onConfirm = {
+            // The phone can't run the Windows app, so hand the link to whatever reaches the PC.
+            val send = Intent(Intent.ACTION_SEND)
+                .setType("text/plain")
+                .putExtra(Intent.EXTRA_SUBJECT, shareTitle)
+                .putExtra(Intent.EXTRA_TEXT, shareText)
+            runCatching { context.startActivity(Intent.createChooser(send, shareTitle)) }
+        },
+        dismissLabel = stringResource(R.string.done),
+    )
+}
+
+@Composable
+private fun PcSetupStep(number: Int, text: String) {
+    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Box(
+            Modifier
+                .size(26.dp)
+                .clip(CircleShape)
+                .background(TunesLinkTheme.colors.accentText.copy(alpha = 0.14f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                number.toString(),
+                style = MaterialTheme.typography.labelLarge,
+                color = TunesLinkTheme.colors.accentText,
+            )
+        }
+        Text(
+            text,
+            style = MaterialTheme.typography.bodyLarge,
+            color = TunesLinkTheme.colors.primaryText,
+            modifier = Modifier.weight(1f),
+        )
+    }
 }
 
 @Composable

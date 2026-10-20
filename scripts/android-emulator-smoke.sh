@@ -104,6 +104,15 @@ capture() {
         continue
       fi
     fi
+    if [[ "$kind" == "system-crash" ]]; then
+      if center="$(python3 "$ui_node_center_script" "$xml" text "Close app")"; then
+        adb shell input tap $center
+      else
+        adb shell input keyevent KEYCODE_BACK
+      fi
+      sleep 2
+      continue
+    fi
     if [[ "$kind" == "gboard-setup" ]]; then
       if center="$(python3 "$ui_node_center_script" "$xml" desc "Navigate up")"; then
         adb shell input tap $center

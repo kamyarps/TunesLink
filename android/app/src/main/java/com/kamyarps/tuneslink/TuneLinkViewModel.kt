@@ -626,6 +626,11 @@ internal class TunesLinkViewModel(
         setModalPresentation(ModalPresentation(TunesLinkModal.Privacy, returnTo = parent))
     }
 
+    /** Explains the Windows half of TunesLink to people who found the app on its own. */
+    fun showPcSetup() {
+        setModalPresentation(ModalPresentation(TunesLinkModal.PcSetup))
+    }
+
     fun requestForget() {
         setModalPresentation(
             ModalPresentation(
@@ -1231,6 +1236,7 @@ internal class TunesLinkViewModel(
             TunesLinkModal.ManualAddress -> "manual"
             TunesLinkModal.ConnectionDetails -> "connection"
             TunesLinkModal.Privacy -> "privacy"
+            TunesLinkModal.PcSetup -> "pc-setup"
             TunesLinkModal.ForgetConfirmation -> "forget"
             is TunesLinkModal.Pairing, null -> null
         }
@@ -1239,6 +1245,7 @@ internal class TunesLinkViewModel(
             "manual" -> TunesLinkModal.ManualAddress
             "connection" -> TunesLinkModal.ConnectionDetails
             "privacy" -> TunesLinkModal.Privacy
+            "pc-setup" -> TunesLinkModal.PcSetup
             "forget" -> TunesLinkModal.ForgetConfirmation
             else -> null
         }

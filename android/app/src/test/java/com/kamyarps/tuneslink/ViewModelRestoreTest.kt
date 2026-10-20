@@ -54,6 +54,21 @@ class ViewModelRestoreTest {
         repository.close()
     }
 
+    @Test fun pcSetupGuideOpensAndSurvivesProcessDeath() {
+        val repository = BridgeRepository(FakeClient(), SecureStore(MemoryBackend(), CountingCrypto()))
+        val vm = testViewModel(repository, state = null)
+        vm.showPcSetup()
+        assertEquals(TunesLinkModal.PcSetup, vm.mutableState.value.modal)
+
+        val restored = testViewModel(
+            repository,
+            state = null,
+            savedStateHandle = SavedStateHandle(mapOf("modal" to "pc-setup")),
+        )
+        assertEquals(TunesLinkModal.PcSetup, restored.mutableState.value.modal)
+        repository.close()
+    }
+
     @Test fun unknownSavedValuesFallBackSafely() {
         val repository = BridgeRepository(FakeClient(), SecureStore(MemoryBackend(), CountingCrypto()))
         val saved = SavedStateHandle(mapOf("destination" to "Removed", "modal" to "gone"))

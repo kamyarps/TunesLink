@@ -97,6 +97,17 @@ dismiss_blocking_foreground() {
       sleep 2
       return 0
       ;;
+    system-crash)
+      printf 'Dismissing System UI crash dialog.
+' >&2
+      if center="$(node_center text "Close app")"; then
+        "$adb_command" shell input tap $center
+      else
+        "$adb_command" shell input keyevent KEYCODE_BACK
+      fi
+      sleep 2
+      return 0
+      ;;
     gboard-setup)
       printf 'Dismissing Gboard first-run UI covering TunesLink.\n' >&2
       if center="$(node_center desc "Navigate up")"; then

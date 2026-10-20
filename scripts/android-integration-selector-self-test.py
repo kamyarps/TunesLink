@@ -60,6 +60,14 @@ ANR_DIALOG = """\
 </hierarchy>
 """
 
+SYSTEM_UI_CRASH = """<hierarchy>
+  <node text="System UI keeps stopping" resource-id="android:id/alertTitle" class="android.widget.TextView" package="android" content-desc="" bounds="[133,738][947,916]" />
+  <node text="Close app" resource-id="android:id/aerr_close" class="android.widget.Button" package="android" content-desc="" bounds="[70,1081][1010,1207]" />
+</hierarchy>
+"""
+
+APP_CRASH = SYSTEM_UI_CRASH.replace("System UI keeps stopping", "TunesLink keeps stopping")
+
 
 def match(xml: str, mode: str, value: str, expected: str | None) -> None:
     with tempfile.TemporaryDirectory() as directory:
@@ -329,6 +337,10 @@ def main() -> None:
         raise AssertionError("Gboard IME overlay over TunesLink must not be treated as first-run setup")
     if classify_kind(ANR_DIALOG, APP_PACKAGE) != "anr":
         raise AssertionError("System UI ANR dialog must be classified as blocking")
+    if classify_kind(SYSTEM_UI_CRASH, APP_PACKAGE) != "system-crash":
+        raise AssertionError("System UI crash dialog must be classified as blocking")
+    if classify_kind(APP_CRASH, APP_PACKAGE) != "none":
+        raise AssertionError("A TunesLink crash must fail the run, not be dismissed")
     if classify_kind(PHONE_SEARCH, APP_PACKAGE) != "none":
         raise AssertionError("App-only dumps must not be classified as blocking")
 
@@ -346,6 +358,8 @@ def main() -> None:
         raise AssertionError("IME helper is missing Gboard suppression")
     if "gboard-setup" not in smoke_source:
         raise AssertionError("Smoke script must dismiss Gboard first-run UI")
+    if "system-crash" not in source or "system-crash" not in smoke_source:
+        raise AssertionError("Smoke and integration scripts must dismiss System UI crash dialogs")
 
     start = source.index("return_to_library()")
     restore = source[start : source.index("capture()", start)]
