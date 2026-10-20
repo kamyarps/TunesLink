@@ -322,10 +322,7 @@ internal fun TunesLinkTextLink(label: String, onClick: () -> Unit, modifier: Mod
                 shape = RoundedCornerShape(12.dp),
             )
             .clip(RoundedCornerShape(12.dp))
-            .clickable(role = Role.Button) {
-                // A device without a browser has nothing to open the link with.
-                runCatching { uriHandler.openUri(url) }
-            }
+            .clickable(role = Role.Button, onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 14.dp),
     )
 }
