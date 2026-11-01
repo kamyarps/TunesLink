@@ -26,7 +26,7 @@
     <Configurations>Debug;Release;UIQA</Configurations>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.5.1" />
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.6.4" />
     <ProjectReference Include="..\TuneLinkBridge.Core\TuneLinkBridge.Core.csproj" />
     <FrameworkReference Include="Microsoft.WindowsDesktop.App.WindowsForms" />
   </ItemGroup>

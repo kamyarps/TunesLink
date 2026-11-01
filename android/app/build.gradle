@@ -107,6 +107,8 @@ android {
 
     testOptions {
         unitTests.returnDefaultValues = true
+        // AGP 9.5 also creates Compose Preview tasks from this unit-test configuration.
+        unitTests.includeAndroidResources = true
     }
 
     lint {
@@ -124,8 +126,11 @@ dependencies {
     implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:$coroutinesVersion"
 
     implementation "androidx.activity:activity-compose:1.13.0"
+    implementation "androidx.core:core:1.19.1"
     implementation "androidx.lifecycle:lifecycle-runtime-compose:2.11.0"
     implementation "androidx.lifecycle:lifecycle-viewmodel-savedstate:2.11.0"
+    // NavigationEvent 1.2 requires API 24; 1.1.2 preserves Android 6 support.
+    implementation "androidx.navigationevent:navigationevent-compose:1.1.2"
     implementation "androidx.compose.animation:animation"
     implementation "androidx.compose.foundation:foundation"
     implementation "androidx.compose.material3:material3"

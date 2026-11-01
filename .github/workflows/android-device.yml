@@ -65,7 +65,7 @@ jobs:
           Import-Module ./scripts/BuildRequirements.psm1
           $required = Get-TunesLinkBuildRequirements -Root $env:GITHUB_WORKSPACE
           "java=$($required.JavaMajor)" >> $env:GITHUB_OUTPUT
-      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           distribution: temurin
           java-version: ${{ steps.requirements.outputs.java }}
@@ -73,7 +73,7 @@ jobs:
         if: inputs.release-artifact == ''
         with:
           global-json-file: global.json
-      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+      - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
         if: inputs.release-artifact == ''
         with:
           cache-provider: basic
@@ -132,8 +132,8 @@ jobs:
           image="system-images;android-${IMAGE_PLATFORM};${IMAGE_TARGET};x86_64"
           # Older avdmanager versions parse 37.0 as android-0, disabling the
           # renderer features this image needs and crashing SurfaceFlinger.
-          sdkmanager "cmdline-tools;22.0"
-          tools="$ANDROID_HOME/cmdline-tools/22.0/bin"
+          sdkmanager "cmdline-tools;23.0"
+          tools="$ANDROID_HOME/cmdline-tools/23.0/bin"
           "$tools/sdkmanager" "platform-tools" "emulator" "$image"
           mkdir -p "$ANDROID_AVD_HOME"
           avd_path="$ANDROID_AVD_HOME/tuneslink-ci.avd"
