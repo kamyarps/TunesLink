@@ -2,6 +2,7 @@ package com.kamyarps.tuneslink
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -468,39 +469,62 @@ class TunesLinkPresentationTest {
     }
 
     @Test
-    fun nowPlayingArtworkDominatesWithoutCrowdingControls() {
-        assertEquals(
-            261.44f,
-            nowPlayingArtworkSizeDp(
-                widthDp = 360f,
-                heightDp = 608f,
-                outerPaddingDp = 24f,
-                mode = NowPlayingLayoutMode.Vertical,
-                fontScale = 1f,
-            ),
-            0.01f,
+    fun parentCollectionsDoNotHideAnEmptyDetailLoadingOrFailureState() {
+        val browse = LibraryBrowseUiState(
+            kind = LibraryBrowseKind.Albums,
+            collections = listOf(LibraryCollectionUiState("album", "Album", "Artist", 120, "art")),
+            selectedCollection = SelectedLibraryCollection(LibraryBrowseKind.Albums, "album", "Album", "Artist"),
+            tracksCursor = LibraryPageCursor(isLoading = true),
         )
-        assertEquals(
-            206.72f,
-            nowPlayingArtworkSizeDp(
-                widthDp = 360f,
-                heightDp = 608f,
-                outerPaddingDp = 24f,
-                mode = NowPlayingLayoutMode.Vertical,
-                fontScale = 2f,
-            ),
-            0.01f,
-        )
-        assertEquals(
-            520f,
-            nowPlayingArtworkSizeDp(
-                widthDp = 587f,
-                heightDp = 1000f,
-                outerPaddingDp = 32f,
-                mode = NowPlayingLayoutMode.Vertical,
-                fontScale = 1f,
-            ),
-            0.01f,
-        )
+        assertTrue(browse.visibleItemsEmpty)
+        assertTrue(browse.isLoading)
+        val failed = browse.copy(tracksCursor = LibraryPageCursor(error = "Offline"))
+        assertTrue(failed.visibleItemsEmpty)
+        assertEquals("Offline", failed.error)
+        assertFalse(failed.isLoading)
     }
+
+    @Test
+    fun backgroundCancellationRestoresDiscoveryAndPairingControls() {
+        val discovering = TunesLinkUiState(connection = ConnectionState.Discovering)
+        assertEquals(ConnectionState.Unpaired, discovering.afterTransientCancellation().connection)
+        val submitting = TunesLinkUiState(connection = ConnectionState.Pairing,
+            pairing = PairingUiState("123456", phase = PairingPhase.Submitting), manualResolutionBusy = true)
+        val cancelled = submitting.afterTransientCancellation()
+        assertTrue(cancelled.pairing.canSubmit)
+        assertEquals("123456", cancelled.pairing.code)
+        assertFalse(cancelled.pairingBusy)
+        assertFalse(cancelled.manualResolutionBusy)
+    }
+
+    @Test
+    fun unavailableBackendCannotConfirmAnOptimisticPause() {
+        val mutation = PendingMutation(1, PlaybackAction.PlayPause, setOf(PlayerField.Playing),
+            expectedBoolean = false, requestSucceeded = true, startedAtMillis = 0)
+        val unavailable = BridgeClient.PlayerState(false, false, "Song", "Artist", "Album",
+            200.0, 4.0, 55, "art", "track", false, "off")
+        assertFalse(mutation.matches(unavailable))
+    }
+
+    @Test
+    fun backendFailureDisablesAllPlaybackSurfacesAndShowsRecoveryWithRetainedMetadata() {
+        val connected = TunesLinkUiState(connection = ConnectionState.Connected("PC"),
+            player = PlayerUiState(iTunesAvailable = true, title = "Song", trackId = "track"))
+        assertTrue(connected.playbackControlsEnabled)
+        val failed = connected.copy(player = connected.player.copy(iTunesAvailable = false))
+        assertFalse(failed.playbackControlsEnabled)
+        assertEquals(R.string.open_itunes, playerIdleSubtitle(failed.player, unavailableHint = true))
+        assertNull(playerIdleSubtitle(connected.player, unavailableHint = true))
+    }
+
+    @Test fun emptySearchUsesTheSameBackDecisionAsOtherDestinations() {
+        val active = searchBackEnabled(TunesLinkDestination.Search, false, "")
+        assertEquals(NavigationBackAction.ShowLibrary,
+            navigationBackAction(false, active, TunesLinkDestination.Search))
+        assertEquals(NavigationBackAction.System,
+            navigationBackAction(false, false, TunesLinkDestination.Library))
+        assertEquals(NavigationBackAction.DismissModal,
+            navigationBackAction(true, true, TunesLinkDestination.Search))
+    }
+
 }

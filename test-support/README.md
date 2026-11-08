@@ -13,7 +13,7 @@ Optional scenarios:
 
 For the Android emulator, connect manually to `10.0.2.2:<port>`. The default test pairing code is `123456`. Run the executable with `--discovery-port 0` to verify that recovery at a saved, reachable address works without UDP discovery.
 
-Automated release regressions run with the existing Android unit tests and Windows `--self-test` command. They cover unavailable optional storage, revoked pairing recovery, lifecycle cancellation, bounded page windows, non-advancing pages, worker failure/recovery, large HTTP offsets, and absolute metadata/artwork cache expiry.
+Android unit tests and Windows `--self-test` suites are grouped by behavior. They cover unavailable optional storage, revoked pairing recovery, lifecycle cancellation, bounded page windows, non-advancing pages, worker failure/recovery, large HTTP offsets, and absolute metadata/artwork cache expiry.
 
 Storage and cancellation regressions also cover pairing responses arriving after cancellation or
 shutdown, rollback while credentials are being saved, durable revocation retries, and re-pairing
@@ -27,19 +27,34 @@ It covers API 23/31 song rows whose reported bounds are clipped to a scroll view
 still rejecting undersized controls within the list, clipping on the wrong axis, and controls
 outside the screen. CI runs these checks before the Android build.
 
-Issue #4 regressions additionally cover album pages within artists/genres, distinct album artists,
+Collection tests additionally cover album pages within artists/genres, distinct album artists,
 authenticated scoped browsing, queue order with shuffle/repeat, and phone navigation history.
 
-Release-audit regressions cover reconnect retries, abandoned browse cursors, shrinking
+Recovery and playback tests cover reconnect retries, abandoned browse cursors, shrinking
 unversioned pages, long international collection names, pairing cooldowns, empty-search Back,
 and sequenced playback cancellation. The TLS tests deliberately overlap a slow selection with
 a newer one and send cancellation both before and after request arrival. The COM fixture also
 fails during queue activation and verifies that the user's global mute setting is never changed.
 
-The emulator integration suite checks cooldown expiry and command errors across phone and
-tablet surfaces. Release publishing waits for CI, which runs this suite, to pass on the tagged
-commit. It then installs only the signed, optimized release APK for the viewport and launch
-smoke checks, without repeating the debug suites.
+CI builds the debug app and instrumentation APK once and shares them across the device matrix.
+Every API runs viewport smoke checks and three real SQLite cache tests (revision isolation,
+eviction, and schema upgrade). API 23 and 37 run the full integration journey; API 31
+runs pairing, keyboard navigation, playback, search, and rotation; API 36 runs the visual and
+accessibility scenarios against the existing baselines. The complete journey retains cooldown
+expiry, delayed paging, stream lifecycle, stale artwork recovery, and permission scenarios.
+
+For a complete compatibility sweep, run the CI workflow manually with `full_device_suite`
+enabled. Release publishing completes the full journeys on API 31 and 36 using the debug
+APKs from successful CI for the tagged commit; that CI run already validated the full journeys
+on API 23 and 37. Signed release smoke and upgrade checks run separately.
+
+API 26 retains its original UI smoke scope plus the database tests. A paired-flow probe on its
+Android 8.0 image crashed in `ViewRootImpl.AccessibilityInteractionConnectionManager` while
+accessibility automation was enabling around dialog dismissal. The
+[8.0 callback](https://android.googlesource.com/platform/frameworks/base/+/refs/heads/oreo-release/core/java/android/view/ViewRootImpl.java#7691)
+dereferences a detached view; [8.1 adds a null-view guard](https://android.googlesource.com/platform/frameworks/base/+/android-8.1.0_r1/core/java/android/view/ViewRootImpl.java).
+Paired journeys remain on API 23, 31, 36, and 37, and app-crash checks remain enabled.
+
 When a previous GitHub APK exists, the release workflow also checks its package ID, signing
 certificate, and version code, then installs it on compatible emulators and upgrades to the new
 signed APK without removing the installation.
@@ -55,9 +70,24 @@ signed APK without removing the installation.
 API 37 is also required in the [device matrix](../.github/workflows/android-device.yml), including
 the [integration script](../scripts/android-emulator-integration.sh) permission scenarios. Release
 publishing depends on that matrix passing; a failed emulator boot does not count as validation.
-Use Command-line Tools 22.0 when creating the `android-37.0` AVD and check its `.ini` contains
+Use Command-line Tools 23.0 when creating the `android-37.0` AVD and check its `.ini` contains
 `target=android-37.0`. Older tools can write `target=android-0`, causing repeated SurfaceFlinger
 `hasReadColorBufferDma` crashes before app testing. The workflow checks this metadata explicitly.
+
+## Running and maintaining tests
+
+Run `scripts/test.ps1` for local build, lint, unit, Windows self-test, and layout checks.
+Build Android device tests with `:app:assembleDebug :app:assembleDebugAndroidTest`, then run
+`bash scripts/android-cache-device-test.sh` with `ANDROID_SERIAL` set to a disposable emulator.
+The integration script defaults to `TunesLink_DEVICE_PROFILE=full`; `quick` and `visual` select
+the focused CI journeys. Device tests clear the app's data, so use a test installation.
+
+Keep a test when it protects a user-visible behavior, security boundary, persistence guarantee,
+or platform integration. Prefer adding a case to its existing behavior suite and sharing small
+fixtures. Avoid tests of source spelling, current dependency version numbers, or exact cosmetic
+constants; the build, lint, device accessibility checks, and visual baselines cover those concerns.
+Add a regression test only when it would fail for the underlying bug and catches something the
+existing suite does not already cover.
 
 ## Live iTunes queue regression
 

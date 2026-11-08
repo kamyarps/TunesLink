@@ -32,13 +32,6 @@ class AdaptiveLayoutTest {
         assertFalse(tabletHeaderStacksNowPlaying(676f, 152f, 188f))
     }
 
-    @Test fun predictiveBackScaleIsBoundedByTheGesture() {
-        assertEquals(1f, predictiveBackScale(0f))
-        assertEquals(0.94f, predictiveBackScale(1f), 0.0001f)
-        assertEquals(0.94f, predictiveBackScale(3f), 0.0001f)
-        assertEquals(1f, predictiveBackScale(-1f))
-    }
-
     @Test fun keyboardShortcutsMapMediaKeysAndControlChords() {
         assertEquals(KeyboardShortcut.PlayPause, keyboardShortcut(Key.MediaPlayPause, ctrl = false))
         assertEquals(KeyboardShortcut.PlayPause, keyboardShortcut(Key.Spacebar, ctrl = false))

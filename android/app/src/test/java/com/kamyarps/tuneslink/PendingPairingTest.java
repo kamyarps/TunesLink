@@ -17,19 +17,20 @@ public final class PendingPairingTest {
         RecordingResult firstActivity = new RecordingResult();
         RecordingResult rotatedActivity = new RecordingResult();
 
-        assertEquals(PendingPairing.BeginResult.START, pairing.begin(bridge, firstActivity));
+        PendingPairing.Begin first = pairing.beginOperation(bridge, firstActivity);
+        assertEquals(PendingPairing.BeginResult.START, first.result);
         assertEquals(PendingPairing.BeginResult.ATTACHED,
-                pairing.begin(bridge, rotatedActivity));
-        assertSame(rotatedActivity, pairing.finish());
+                pairing.beginOperation(bridge, rotatedActivity).result);
+        assertSame(rotatedActivity, pairing.finish(first.generation));
     }
 
     @Test
     public void observerCannotAttachToAnotherBridge() {
         PendingPairing pairing = new PendingPairing();
         assertEquals(PendingPairing.BeginResult.START,
-                pairing.begin(bridge("bridge-1"), new RecordingResult()));
+                pairing.beginOperation(bridge("bridge-1"), new RecordingResult()).result);
         assertEquals(PendingPairing.BeginResult.BUSY,
-                pairing.begin(bridge("bridge-2"), new RecordingResult()));
+                pairing.beginOperation(bridge("bridge-2"), new RecordingResult()).result);
     }
 
     @Test

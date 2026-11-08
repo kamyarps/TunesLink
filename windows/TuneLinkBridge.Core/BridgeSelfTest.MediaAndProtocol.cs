@@ -17,7 +17,7 @@ namespace TunesLinkBridge;
 
 internal static partial class BridgeSelfTest
 {
-    private static async Task TestHardeningRegressionsAsync(string root)
+    private static async Task TestMediaAndProtocolAsync(string root)
     {
         TestListenerMatchingAndOrder();
         await TestStateHubClockAsync();

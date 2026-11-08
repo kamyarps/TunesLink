@@ -18,11 +18,6 @@ final class PendingDiscovery {
     private boolean inProgress;
     private long generation;
 
-    synchronized boolean begin(
-            BridgeClient.Result<List<BridgeClient.BridgeInfo>> candidateObserver) {
-        return beginOperation(candidateObserver).start;
-    }
-
     synchronized Begin beginOperation(
             BridgeClient.Result<List<BridgeClient.BridgeInfo>> candidateObserver) {
         observer = candidateObserver;
@@ -30,10 +25,6 @@ final class PendingDiscovery {
         inProgress = true;
         generation++;
         return new Begin(true, generation);
-    }
-
-    synchronized BridgeClient.Result<List<BridgeClient.BridgeInfo>> finish() {
-        return finish(generation);
     }
 
     synchronized BridgeClient.Result<List<BridgeClient.BridgeInfo>> finish(long candidate) {

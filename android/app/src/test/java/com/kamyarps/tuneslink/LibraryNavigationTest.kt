@@ -3,7 +3,7 @@ package com.kamyarps.tuneslink
 import org.junit.Assert.*
 import org.junit.Test
 
-class AlbumNavigationTest {
+class LibraryNavigationTest {
     @Test
     fun artistsAndGenresOpenAnAlbumListWithTheirOwnPagingAndParentHistory() {
         for (kind in listOf(LibraryBrowseKind.Artists, LibraryBrowseKind.Genres)) {
@@ -40,4 +40,17 @@ class AlbumNavigationTest {
         assertEquals("artist", detail.albumParent?.id)
         assertFalse(detail.copy(selectedCollection = null).showingTracks)
     }
+
+    @Test fun reconnectSettlesEveryBrowseLevelBeforeRetry() {
+        val busy = LibraryPageCursor(isLoading = true, isLoadingMore = true, isLoadingPrevious = true)
+        val browse = LibraryBrowseUiState(kind = LibraryBrowseKind.Albums,
+            collectionsCursor = busy, tracksCursor = busy,
+            parentBrowse = LibraryBrowseUiState(kind = LibraryBrowseKind.Artists, collectionsCursor = busy))
+        val restored = browse.afterReconnect()
+        assertFalse(restored.collectionsCursor.isBusy)
+        assertFalse(restored.tracksCursor.isBusy)
+        assertFalse(restored.parentBrowse!!.collectionsCursor.isBusy)
+        assertEquals(browse.kind, restored.kind)
+    }
+
 }

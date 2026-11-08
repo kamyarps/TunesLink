@@ -19,14 +19,14 @@ internal static partial class BridgeSelfTest
         Directory.CreateDirectory(directory);
         try
         {
-            Console.WriteLine("self-test:safety");
-            await TestSafetyRegressionsAsync(directory);
-            Console.WriteLine("self-test:release-regressions");
-            await TestReleaseRegressionsAsync(directory);
-            TestIssue4Regressions();
-            await TestAuditRegressionsAsync(directory);
-            Console.WriteLine("self-test:hardening");
-            await TestHardeningRegressionsAsync(directory);
+            Console.WriteLine("self-test:persistence-and-transport");
+            await TestPersistenceAndTransportAsync(directory);
+            Console.WriteLine("self-test:cache-and-availability");
+            await TestCacheAndAvailabilityAsync(directory);
+            TestCollectionBrowsing();
+            await TestPlaybackQueuesAsync(directory);
+            Console.WriteLine("self-test:media-and-protocol");
+            await TestMediaAndProtocolAsync(directory);
             Console.WriteLine("self-test:worker-isolation");
             await TestWorkerIsolationAsync();
             await TestWorkerFailureCategoriesAsync();

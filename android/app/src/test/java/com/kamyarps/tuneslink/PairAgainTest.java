@@ -3,10 +3,7 @@ package com.kamyarps.tuneslink;
 import static org.junit.Assert.*;
 
 import org.junit.Test;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
-import java.util.Set;
 
 public final class PairAgainTest {
     private static final String FINGERPRINT = "AA".repeat(32);
@@ -63,25 +60,7 @@ public final class PairAgainTest {
     }
 
     private static SecureStore store() throws Exception {
-        SecureStore store = new SecureStore(new SecureStore.Backend() {
-            private final Map<String, Object> values = new HashMap<>();
-            @Override public String getString(String key, String fallback) {
-                return values.get(key) instanceof String value ? value : fallback;
-            }
-            @Override public int getInt(String key, int fallback) {
-                return values.get(key) instanceof Integer value ? value : fallback;
-            }
-            @Override public boolean commit(Map<String, Object> additions, Set<String> removals) {
-                removals.forEach(values::remove);
-                values.putAll(additions);
-                return true;
-            }
-        }, new SecureStore.Crypto() {
-            @Override public SecureStore.Envelope encrypt(byte[] plaintext) {
-                return new SecureStore.Envelope(plaintext.clone(), new byte[] { 1 });
-            }
-            @Override public byte[] decrypt(byte[] ciphertext, byte[] iv) { return ciphertext.clone(); }
-        });
+        SecureStore store = new SecureStore(new MemoryBackend(), new CountingCrypto());
         store.save(info("192.168.1.20", FINGERPRINT), TOKEN);
         return store;
     }

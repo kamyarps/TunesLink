@@ -2,7 +2,7 @@ namespace TunesLinkBridge;
 
 internal static partial class BridgeSelfTest
 {
-    private static void TestIssue4Regressions()
+    private static void TestCollectionBrowsing()
     {
         Ensure(ItunesController.QueueOrder(6, 2, false, "off").SequenceEqual([2, 3, 4, 5]),
             "starting in the middle ends at the collection end with repeat off");

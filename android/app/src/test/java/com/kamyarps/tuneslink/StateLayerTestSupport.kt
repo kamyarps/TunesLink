@@ -18,12 +18,21 @@ internal class CountingCrypto : SecureStore.Crypto {
 }
 
 internal class MemoryBackend : SecureStore.Backend {
-    private val values = mutableMapOf<String, Any>()
+    @JvmField val values = mutableMapOf<String, Any>()
+    @JvmField var failNextCommit = false
+    fun contains(key: String) = values.containsKey(key)
     override fun getString(key: String, fallback: String?): String? = values[key] as? String ?: fallback
     override fun getInt(key: String, fallback: Int) = values[key] as? Int ?: fallback
     override fun commit(additions: Map<String, Any>, removals: Set<String>): Boolean {
-        removals.forEach(values::remove)
-        values.putAll(additions)
+        if (failNextCommit) {
+            failNextCommit = false
+            return false
+        }
+        val next = values.toMutableMap()
+        removals.forEach(next::remove)
+        next.putAll(additions)
+        values.clear()
+        values.putAll(next)
         return true
     }
 }

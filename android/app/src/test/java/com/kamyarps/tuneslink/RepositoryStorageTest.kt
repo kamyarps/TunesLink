@@ -274,4 +274,12 @@ class RepositoryStorageTest {
             vm.onBackground()
         }
     }
+
+    @Test fun playbackSequencesSurviveStoreRecreation() {
+        val backend = MemoryBackend()
+        val first = SecureStore(backend, CountingCrypto())
+        assertEquals(1L, first.nextPlaybackSequence())
+        assertEquals(2L, SecureStore(backend, CountingCrypto()).nextPlaybackSequence())
+    }
+
 }

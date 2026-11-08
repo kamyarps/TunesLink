@@ -32,7 +32,7 @@ internal static partial class BridgeSelfTest
         public int Year { get; } = 1994;
     }
 
-    private static async Task TestSafetyRegressionsAsync(string rootDirectory)
+    private static async Task TestPersistenceAndTransportAsync(string rootDirectory)
     {
         Ensure(ItunesController.SearchAllFields == 0, "iTunes search covers all metadata fields");
         // Every library reported one empty genre for as long as an unlisted property answered with

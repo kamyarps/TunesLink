@@ -19,11 +19,6 @@ final class PendingPairing {
     private boolean inProgress;
     private long generation;
 
-    synchronized BeginResult begin(BridgeClient.BridgeInfo candidate,
-                                   BridgeClient.Result<SecureStore.SavedBridge> candidateObserver) {
-        return beginOperation(candidate, candidateObserver).result;
-    }
-
     synchronized Begin beginOperation(BridgeClient.BridgeInfo candidate,
                                       BridgeClient.Result<SecureStore.SavedBridge> candidateObserver) {
         if (inProgress) {
@@ -36,10 +31,6 @@ final class PendingPairing {
         inProgress = true;
         generation++;
         return new Begin(BeginResult.START, generation);
-    }
-
-    synchronized BridgeClient.Result<SecureStore.SavedBridge> finish() {
-        return finish(generation);
     }
 
     synchronized BridgeClient.Result<SecureStore.SavedBridge> finish(long candidate) {

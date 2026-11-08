@@ -3,38 +3,7 @@ package com.kamyarps.tuneslink
 import org.junit.Assert.*
 import org.junit.Test
 
-class ReleaseAuditTest {
-    @Test fun authoritativeEmptyPageRemovesTheLastDeletedTrack() {
-        val window = mergePageWindow(listOf("deleted"), 0, emptyList(), 0, false, 480, total = 0)
-        assertTrue(window.items.isEmpty())
-        val cursor = settledCursor(LibraryPageCursor(isLoadingMore = true), window, 0, "", false)
-        assertFalse(cursor.isBusy)
-        assertFalse(cursor.hasMore)
-        assertFalse(cursor.hasPrevious)
-    }
-
-    @Test fun clampedEmptyPageTrimsAnUnversionedWindow() {
-        val window = mergePageWindow((0 until 60).toList(), 0, emptyList(), 30, false, 480, total = 30)
-        assertEquals((0 until 30).toList(), window.items)
-        assertEquals(0, window.startOffset)
-        assertFalse(settledCursor(LibraryPageCursor(), window, 30, "", false).hasMore)
-        val evicted = mergePageWindow((240 until 300).toList(), 240, emptyList(), 30, false, 480, total = 30)
-        assertTrue(evicted.items.isEmpty())
-        assertEquals(30, evicted.startOffset)
-    }
-
-    @Test fun reconnectSettlesEveryBrowseLevelBeforeRetry() {
-        val busy = LibraryPageCursor(isLoading = true, isLoadingMore = true, isLoadingPrevious = true)
-        val browse = LibraryBrowseUiState(kind = LibraryBrowseKind.Albums,
-            collectionsCursor = busy, tracksCursor = busy,
-            parentBrowse = LibraryBrowseUiState(kind = LibraryBrowseKind.Artists, collectionsCursor = busy))
-        val restored = browse.afterReconnect()
-        assertFalse(restored.collectionsCursor.isBusy)
-        assertFalse(restored.tracksCursor.isBusy)
-        assertFalse(restored.parentBrowse!!.collectionsCursor.isBusy)
-        assertEquals(browse.kind, restored.kind)
-    }
-
+class RepositoryRecoveryTest {
     @Test fun failedDiscoveryRetriesAndOnlyOneDiscoveryRunsAtATime() {
         val client = ProbeClient()
         BridgeRepository(client, store()).use { repository ->
@@ -112,44 +81,11 @@ class ReleaseAuditTest {
         assertEquals(3600, BridgeHttpClient.retryAfterSeconds("9999999"))
     }
 
-    @Test fun playbackSequencesSurviveStoreRecreation() {
-        val backend = MemoryBackend()
-        val first = SecureStore(backend, crypto())
-        assertEquals(1L, first.nextPlaybackSequence())
-        assertEquals(2L, SecureStore(backend, crypto()).nextPlaybackSequence())
-    }
-
-    @Test fun emptySearchUsesTheSameBackDecisionAsOtherDestinations() {
-        val active = searchBackEnabled(TunesLinkDestination.Search, false, "")
-        assertEquals(NavigationBackAction.ShowLibrary,
-            navigationBackAction(false, active, TunesLinkDestination.Search))
-        assertEquals(NavigationBackAction.System,
-            navigationBackAction(false, false, TunesLinkDestination.Library))
-        assertEquals(NavigationBackAction.DismissModal,
-            navigationBackAction(true, true, TunesLinkDestination.Search))
-    }
-
     private fun bridge(host: String = "192.168.1.20") =
         BridgeClient.BridgeInfo("audit-pc", "PC", host, 45832, "AA".repeat(32))
 
-    private fun store() = SecureStore(MemoryBackend(), crypto()).apply {
+    private fun store() = SecureStore(MemoryBackend(), CountingCrypto()).apply {
         save(bridge(), "test-token-" + "a".repeat(40))
-    }
-
-    private fun crypto() = object : SecureStore.Crypto {
-        override fun encrypt(plaintext: ByteArray) = SecureStore.Envelope(plaintext.clone(), byteArrayOf(1))
-        override fun decrypt(ciphertext: ByteArray, iv: ByteArray) = ciphertext.clone()
-    }
-
-    private class MemoryBackend : SecureStore.Backend {
-        private val values = mutableMapOf<String, Any>()
-        override fun getString(key: String, fallback: String?): String? = values[key] as? String ?: fallback
-        override fun getInt(key: String, fallback: Int) = values[key] as? Int ?: fallback
-        override fun commit(additions: Map<String, Any>, removals: Set<String>): Boolean {
-            removals.forEach(values::remove)
-            values.putAll(additions)
-            return true
-        }
     }
 
     private fun listener() = object : BridgeRepository.StateUpdatesListener {

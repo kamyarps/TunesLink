@@ -7,7 +7,7 @@ namespace TunesLinkBridge;
 
 internal static partial class BridgeSelfTest
 {
-    private static async Task TestReleaseRegressionsAsync(string root)
+    private static async Task TestCacheAndAvailabilityAsync(string root)
     {
         TestAbsoluteCacheExpiry(Path.Combine(root, "cache-expiry"));
         TestAlbumPlaybackSearch(Path.Combine(root, "album-search"));

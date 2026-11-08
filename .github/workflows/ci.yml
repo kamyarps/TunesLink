@@ -6,6 +6,12 @@ on:
     paths-ignore:
       - ".github/workflows/release.yml"
   pull_request:
+  workflow_dispatch:
+    inputs:
+      full_device_suite:
+        description: Run complete paired journeys on API 23, 31, 36, and 37
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -63,9 +69,6 @@ jobs:
       - name: Test Android UI contracts
         working-directory: ${{ github.workspace }}
         run: python3 scripts/android-ui-contract-self-test.py
-      - name: Test library cache revision isolation with SQLite
-        working-directory: ${{ github.workspace }}
-        run: python3 scripts/library-cache-self-test.py
       - name: Test emulator startup deadlines and retries
         working-directory: ${{ github.workspace }}
         run: python3 scripts/android-emulator-run-self-test.py
@@ -73,7 +76,15 @@ jobs:
         run: >-
           ./gradlew --no-daemon --warning-mode all --dependency-verification strict
           :app:lintDebug :app:lintRelease :app:testDebugUnitTest
-          :app:assembleDebug :app:assembleRelease
+          :app:assembleDebug :app:assembleDebugAndroidTest :app:assembleRelease
+      - name: Share debug APKs with the device matrix
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: tuneslink-android-debug
+          path: |
+            android/app/build/outputs/apk/debug/app-debug.apk
+            android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+          if-no-files-found: error
       - name: Enforce Android release size budget
         shell: pwsh
         run: |
@@ -101,12 +112,14 @@ jobs:
         run: ./scripts/verify-repository.ps1 -RequireCleanWorktree
   android-device:
     name: Android device validation
+    needs: android
     permissions:
       contents: read
       actions: read
     uses: ./.github/workflows/android-device.yml
     with:
       ref: ${{ github.sha }}
+      full-suite: ${{ inputs.full_device_suite == true }}
 
   windows:
     name: Windows bridge

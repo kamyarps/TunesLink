@@ -18,6 +18,7 @@ jobs:
     name: Validate release source
     outputs:
       source-sha: ${{ steps.source.outputs.sha }}
+      ci-run-id: ${{ steps.ci.outputs.run-id }}
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -46,9 +47,9 @@ jobs:
             throw "Release tag must point at the current main commit."
           }
 
-      # Release device validation tests only the signed APK and the upgrade path, so the debug
-      # device suites, lint, and unit tests must already have passed in CI for this commit.
+      # Reuse the debug APKs from successful CI for the complete compatibility sweep.
       - name: Require a successful CI run for this commit
+        id: ci
         timeout-minutes: 90
         env:
           GH_TOKEN: ${{ github.token }}
@@ -56,10 +57,10 @@ jobs:
           sha="$(git rev-parse HEAD)"
           while true; do
             run="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --commit "$sha" \
-              --event push --limit 1 --json status,conclusion,url \
-              --jq '.[0] | select(.) | "\(.status) \(.conclusion) \(.url)"')" || run=""
+              --event push --limit 1 --json status,conclusion,databaseId \
+              --jq '.[0] | select(.) | "\(.status) \(.conclusion) \(.databaseId)"')" || run=""
             case "$run" in
-              "completed success "*) echo "CI passed: ${run##* }"; break ;;
+              "completed success "*) echo "run-id=${run##* }" >> "$GITHUB_OUTPUT"; break ;;
               completed*) echo "::error::CI did not pass for $sha: $run"; exit 1 ;;
               "") echo "No CI run for $sha yet; waiting." ;;
               *) echo "CI is still running: $run" ;;
@@ -69,6 +70,20 @@ jobs:
       - name: Record verified source commit
         id: source
         run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  compatibility-validation:
+    name: Complete remaining Android compatibility checks
+    needs: validate
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/android-device.yml
+    with:
+      ref: ${{ needs.validate.outputs.source-sha }}
+      debug-run-id: ${{ needs.validate.outputs.ci-run-id }}
+      full-suite: true
+      # Successful CI already ran the full journey on API 23 and 37 for this SHA.
+      api-levels: "[31,36]"
 
   device-validation:
     name: Validate release on Android devices
@@ -323,7 +338,7 @@ jobs:
 
   publish:
     name: Publish GitHub release
-    needs: [validate, android, windows, device-validation]
+    needs: [validate, android, windows, device-validation, compatibility-validation]
     runs-on: windows-2025
     permissions:
       actions: read

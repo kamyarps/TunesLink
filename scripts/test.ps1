@@ -32,7 +32,7 @@ function Invoke-GuiProcessChecked {
         [string[]]$ArgumentList = @()
     )
 
-    $process = Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -PassThru -Wait
+    $process = Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -WindowStyle Hidden -PassThru -Wait
     if ($process.ExitCode -ne 0) {
         throw "Command failed with exit code $($process.ExitCode): $FilePath $($ArgumentList -join ' ')"
     }
@@ -45,7 +45,7 @@ if ($Component -in @("All", "Android")) {
         Invoke-Checked $gradle @("--no-daemon", "--console=plain", "--warning-mode", "all",
             "--dependency-verification", "strict",
             ":app:lintDebug", ":app:lintRelease", `
-            ":app:testDebugUnitTest", ":app:assembleDebug", ":app:assembleRelease")
+            ":app:testDebugUnitTest", ":app:assembleDebug", ":app:assembleDebugAndroidTest", ":app:assembleRelease")
     }
     finally {
         Pop-Location

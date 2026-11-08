@@ -8,7 +8,7 @@ namespace TunesLinkBridge;
 
 internal static partial class BridgeSelfTest
 {
-    private static async Task TestAuditRegressionsAsync(string root)
+    private static async Task TestPlaybackQueuesAsync(string root)
     {
         TestLongCollectionIds(Path.Combine(root, "long-collections"));
         TestQueueActivationDoesNotMute(Path.Combine(root, "queue-mute"));

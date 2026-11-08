@@ -7,12 +7,8 @@ function Assert-True {
     if (-not $Condition) { throw "Build-requirements self-test failed: $Message" }
 }
 
-$requirements = Get-TunesLinkBuildRequirements -Root $root
-Assert-True ($requirements.DotNetSdk -eq "10.0.403") "global.json SDK"
-Assert-True ($requirements.JavaMajor -eq 17) "JDK major"
-Assert-True ($requirements.CompileSdk -eq 37 -and $requirements.TargetSdk -eq 37) "Android API"
-Assert-True (Test-TunesLinkDotNetSdkList @("10.0.403 [C:\dotnet\sdk]") "10.0.403") "exact SDK accepted"
-Assert-True (-not (Test-TunesLinkDotNetSdkList @("10.0.402 [C:\dotnet\sdk]") "10.0.403")) "wrong SDK rejected"
+Assert-True (Test-TunesLinkDotNetSdkList @("8.0.123 [C:\dotnet\sdk]") "8.0.123") "exact SDK accepted"
+Assert-True (-not (Test-TunesLinkDotNetSdkList @("8.0.122 [C:\dotnet\sdk]") "8.0.123")) "wrong SDK rejected"
 Assert-True ((Get-TunesLinkJavaMajor 'openjdk version "17.0.19"') -eq 17) "JDK 17 parsed"
 Assert-True ((Get-TunesLinkJavaMajor 'openjdk version "21.0.1"') -ne 17) "wrong JDK distinguished"
 Assert-True ((Get-TunesLinkArtifactNames All) -join '|' -eq
@@ -26,6 +22,23 @@ Assert-True ((Get-TunesLinkArtifactNames Windows) -join '|' -eq
 
 $temporary = Join-Path ([IO.Path]::GetTempPath()) ("TunesLink-requirements-" + [guid]::NewGuid().ToString("N"))
 try {
+    $fixture = Join-Path $temporary "requirements"
+    [IO.Directory]::CreateDirectory((Join-Path $fixture "android")) | Out-Null
+    [IO.File]::WriteAllText((Join-Path $fixture "global.json"), '{"sdk":{"version":"8.0.123"}}')
+    [IO.File]::WriteAllText((Join-Path $fixture "android/gradle.properties"), @'
+# Deliberately different from the repository's current SDK versions.
+TunesLink.javaVersion = 11
+TunesLink.compileSdk = 35
+TunesLink.targetSdk = 34
+TunesLink.androidPlatformPackage = android-35-ext99
+TunesLink.buildToolsVersion = 35.0.1
+'@)
+    $requirements = Get-TunesLinkBuildRequirements -Root $fixture
+    Assert-True ($requirements.DotNetSdk -eq "8.0.123") "fixture SDK parsed"
+    Assert-True ($requirements.JavaMajor -eq 11) "fixture JDK parsed"
+    Assert-True ($requirements.CompileSdk -eq 35 -and $requirements.TargetSdk -eq 34) "distinct compile and target SDKs parsed"
+    Assert-True ($requirements.AndroidPlatformPackage -eq "android-35-ext99") "extension platform parsed"
+    Assert-True ($requirements.BuildToolsVersion -eq "35.0.1") "build tools parsed"
     $api36 = Join-Path $temporary "platforms\android-36"
     [IO.Directory]::CreateDirectory($api36) | Out-Null
     [IO.File]::WriteAllBytes((Join-Path $api36 "android.jar"), [byte[]]@())

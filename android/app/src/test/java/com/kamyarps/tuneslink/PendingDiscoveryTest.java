@@ -15,9 +15,10 @@ public final class PendingDiscoveryTest {
         BridgeClient.Result<List<BridgeClient.BridgeInfo>> original = observer();
         BridgeClient.Result<List<BridgeClient.BridgeInfo>> recreated = observer();
 
-        assertTrue(pending.begin(original));
-        assertFalse(pending.begin(recreated));
-        assertSame(recreated, pending.finish());
+        PendingDiscovery.Begin first = pending.beginOperation(original);
+        assertTrue(first.start);
+        assertFalse(pending.beginOperation(recreated).start);
+        assertSame(recreated, pending.finish(first.generation));
     }
 
     @Test
@@ -26,9 +27,10 @@ public final class PendingDiscoveryTest {
         BridgeClient.Result<List<BridgeClient.BridgeInfo>> first = observer();
         BridgeClient.Result<List<BridgeClient.BridgeInfo>> second = observer();
 
-        assertTrue(pending.begin(first));
-        assertSame(first, pending.finish());
-        assertTrue(pending.begin(second));
+        PendingDiscovery.Begin started = pending.beginOperation(first);
+        assertTrue(started.start);
+        assertSame(first, pending.finish(started.generation));
+        assertTrue(pending.beginOperation(second).start);
     }
 
     @Test
@@ -40,7 +42,7 @@ public final class PendingDiscoveryTest {
 
         assertFalse(pending.isCurrent(begin.generation));
         assertSame(null, pending.finish(begin.generation));
-        assertTrue(pending.begin(observer()));
+        assertTrue(pending.beginOperation(observer()).start);
     }
 
     private static BridgeClient.Result<List<BridgeClient.BridgeInfo>> observer() {

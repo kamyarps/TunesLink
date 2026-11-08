@@ -10,9 +10,6 @@ import org.junit.Test;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Set;
 
 public final class SecureStoreTest {
     private static final String FINGERPRINT =
@@ -22,7 +19,7 @@ public final class SecureStoreTest {
     @Test
     public void activePairingRoundTripsInsideVersionedEncryptedRecord() throws Exception {
         MemoryBackend backend = new MemoryBackend();
-        SecureStore store = new SecureStore(backend, new PassthroughCrypto());
+        SecureStore store = new SecureStore(backend, new CountingCrypto());
 
         store.save(info("bridge-1", "192.168.1.10"), TOKEN);
 
@@ -37,7 +34,7 @@ public final class SecureStoreTest {
     @Test
     public void legacyTokenMigratesOnlyAfterNewRecordCommits() {
         MemoryBackend backend = legacyBackend();
-        SecureStore store = new SecureStore(backend, new PassthroughCrypto());
+        SecureStore store = new SecureStore(backend, new CountingCrypto());
 
         SecureStore.SavedBridge saved = store.load();
 
@@ -52,7 +49,7 @@ public final class SecureStoreTest {
     public void failedLegacyMigrationKeepsLegacyPairingReadable() {
         MemoryBackend backend = legacyBackend();
         backend.failNextCommit = true;
-        SecureStore store = new SecureStore(backend, new PassthroughCrypto());
+        SecureStore store = new SecureStore(backend, new CountingCrypto());
 
         assertNull(store.load());
 
@@ -62,7 +59,7 @@ public final class SecureStoreTest {
 
     @Test
     public void forgetAtomicallyMovesCredentialToPendingQueue() throws Exception {
-        SecureStore store = new SecureStore(new MemoryBackend(), new PassthroughCrypto());
+        SecureStore store = new SecureStore(new MemoryBackend(), new CountingCrypto());
         store.save(info("bridge-1", "192.168.1.10"), TOKEN);
 
         SecureStore.PendingRevocation pending = store.prepareForget();
@@ -76,7 +73,7 @@ public final class SecureStoreTest {
 
     @Test
     public void pairingAnotherComputerQueuesThePreviousAuthorization() throws Exception {
-        SecureStore store = new SecureStore(new MemoryBackend(), new PassthroughCrypto());
+        SecureStore store = new SecureStore(new MemoryBackend(), new CountingCrypto());
         store.save(info("bridge-old", "192.168.1.10"), TOKEN);
 
         store.save(info("bridge-new", "192.168.1.20"), TOKEN + "new");
@@ -89,7 +86,7 @@ public final class SecureStoreTest {
 
     @Test
     public void repairingSameComputerDoesNotQueueAnAlreadyInvalidToken() throws Exception {
-        SecureStore store = new SecureStore(new MemoryBackend(), new PassthroughCrypto());
+        SecureStore store = new SecureStore(new MemoryBackend(), new CountingCrypto());
         store.save(info("bridge-1", "192.168.1.10"), TOKEN);
 
         store.save(info("bridge-1", "192.168.1.44"), TOKEN + "replacement");
@@ -100,7 +97,7 @@ public final class SecureStoreTest {
 
     @Test
     public void repairingAfterCertificateChangeDoesNotQueueAnUnreachableRevocation() throws Exception {
-        SecureStore store = new SecureStore(new MemoryBackend(), new PassthroughCrypto());
+        SecureStore store = new SecureStore(new MemoryBackend(), new CountingCrypto());
         store.save(info("bridge-1", "192.168.1.10"), TOKEN);
 
         store.save(new BridgeClient.BridgeInfo("bridge-1", "PC", "192.168.1.10", 45832,
@@ -112,7 +109,7 @@ public final class SecureStoreTest {
 
     @Test
     public void fullQueueRejectsForgetWithoutClearingActivePairing() throws Exception {
-        SecureStore store = new SecureStore(new MemoryBackend(), new PassthroughCrypto());
+        SecureStore store = new SecureStore(new MemoryBackend(), new CountingCrypto());
         for (int index = 0; index < SecureStore.MAX_PENDING_REVOCATIONS; index++) {
             store.save(info("bridge-" + index, "192.168.1." + (10 + index)),
                     TOKEN + index);
@@ -129,7 +126,7 @@ public final class SecureStoreTest {
     @Test
     public void failedWritePreservesPreviouslyCommittedPairing() throws Exception {
         MemoryBackend backend = new MemoryBackend();
-        SecureStore store = new SecureStore(backend, new PassthroughCrypto());
+        SecureStore store = new SecureStore(backend, new CountingCrypto());
         store.save(info("bridge-old", "192.168.1.10"), TOKEN);
         backend.failNextCommit = true;
 
@@ -141,7 +138,7 @@ public final class SecureStoreTest {
 
     @Test
     public void endpointRelocationPreservesCredentialAndRejectsNewIdentity() throws Exception {
-        SecureStore store = new SecureStore(new MemoryBackend(), new PassthroughCrypto());
+        SecureStore store = new SecureStore(new MemoryBackend(), new CountingCrypto());
         store.save(info("bridge-1", "192.168.1.10"), TOKEN);
         SecureStore.SavedBridge old = store.load();
 
@@ -163,7 +160,7 @@ public final class SecureStoreTest {
         backend.values.put("secureRecordVersion", 2);
         backend.values.put("secureRecord", Base64.getEncoder().encodeToString(new byte[]{1, 2}));
         backend.values.put("secureRecordIv", Base64.getEncoder().encodeToString(new byte[]{1}));
-        SecureStore store = new SecureStore(backend, new PassthroughCrypto());
+        SecureStore store = new SecureStore(backend, new CountingCrypto());
 
         assertNull(store.load());
         assertThrows(Exception.class,
@@ -189,45 +186,4 @@ public final class SecureStoreTest {
         return backend;
     }
 
-    private static final class PassthroughCrypto implements SecureStore.Crypto {
-        @Override public SecureStore.Envelope encrypt(byte[] plaintext) {
-            return new SecureStore.Envelope(plaintext.clone(), new byte[]{1});
-        }
-
-        @Override public byte[] decrypt(byte[] ciphertext, byte[] iv) {
-            return ciphertext.clone();
-        }
-    }
-
-    private static final class MemoryBackend implements SecureStore.Backend {
-        final Map<String, Object> values = new HashMap<>();
-        boolean failNextCommit;
-
-        @Override public String getString(String key, String fallback) {
-            Object value = values.get(key);
-            return value instanceof String ? (String) value : fallback;
-        }
-
-        @Override public int getInt(String key, int fallback) {
-            Object value = values.get(key);
-            return value instanceof Integer ? (Integer) value : fallback;
-        }
-
-        boolean contains(String key) {
-            return values.containsKey(key);
-        }
-
-        @Override public boolean commit(Map<String, Object> additions, Set<String> removals) {
-            if (failNextCommit) {
-                failNextCommit = false;
-                return false;
-            }
-            Map<String, Object> next = new HashMap<>(values);
-            for (String key : removals) next.remove(key);
-            next.putAll(additions);
-            values.clear();
-            values.putAll(next);
-            return true;
-        }
-    }
 }

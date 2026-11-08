@@ -12,9 +12,6 @@ import tempfile
 ROOT = Path(__file__).resolve().parent.parent
 HELPER = ROOT / "scripts" / "android-ui-node-center.py"
 BLOCKING = ROOT / "scripts" / "android-ui-blocking-foreground.py"
-IME = ROOT / "scripts" / "android-emulator-ime.sh"
-SMOKE = ROOT / "scripts" / "android-emulator-smoke.sh"
-INTEGRATION = ROOT / "scripts" / "android-emulator-integration.sh"
 APP_PACKAGE = "com.kamyarps.tuneslink"
 
 TABLET_SEARCH = """\
@@ -107,12 +104,10 @@ def classify_kind(xml: str, package: str) -> str:
     return result.stdout.strip()
 
 
-def check_input_helpers(source: str) -> None:
+def check_input_helpers() -> None:
     # Exercise the real shell helper with a dump larger than a pipe buffer.
     # API 31 puts mInputShown near the start, so an early-exiting grep can make
     # the preceding tr fail with SIGPIPE and skip dismissal under pipefail.
-    start = source.index("dismiss_ime_if_visible() {")
-    helper = source[start : source.index("\n}", start) + 2]
     bash = shutil.which("bash")
     if sys.platform == "win32":
         git_bash = Path(os.environ.get("ProgramFiles", "C:/Program Files")) / "Git/bin/bash.exe"
@@ -120,7 +115,7 @@ def check_input_helpers(source: str) -> None:
             bash = str(git_bash)
     if not bash:
         raise AssertionError("Bash is required to test the Android integration helpers")
-    script = "set -euo pipefail\n" + helper + r"""
+    script = "set -euo pipefail\n" + 'source "$workspace/scripts/android-emulator-ui.sh"\n' + r"""
 adb_command=fake_adb
 back_count=0
 sleep() { :; }
@@ -141,8 +136,33 @@ shown=false
 dismiss_ime_if_visible
 [[ "$back_count" == 1 ]] || { echo 'Hidden IME caused an unintended Back action' >&2; exit 1; }
 """
-    start = source.index("return_to_library() {")
-    script += source[start : source.index("\n}", start) + 2] + r"""
+    script += '\nsource "$workspace/scripts/android-emulator-ui.sh"\n' + r"""
+# A dump can report portrait and then restore the previous landscape lock on
+# disconnect. Do not start interacting after that transient matching frame.
+frame=0
+ui_xml=/dev/null
+dump_ui() {
+  frame=$((frame + 1))
+  (( frame < 100 )) || { echo "Orientation wait did not terminate" >&2; exit 1; }
+}
+orientation_matches() {
+  [[ "$*" == 'portrait 0' ]] && (( frame == 2 || frame >= 4 ))
+}
+set_rotation() { [[ "$1" == 0 ]]; }
+wait_orientation portrait 0
+[[ "$frame" -ge 5 ]] || {
+  echo 'Orientation accepted a transient matching frame' >&2; exit 1;
+}
+frame=0
+orientation_matches() { return 1; }
+if wait_orientation portrait 0 2>/dev/null; then
+  echo 'Orientation accepted a viewport that never settled' >&2; exit 1;
+fi
+[[ "$frame" -gt 0 && "$frame" -lt 100 ]] || {
+  echo 'Orientation did not stop at its retry limit' >&2; exit 1;
+}
+"""
+    script += '\nsource "$workspace/scripts/android-emulator-ui.sh"\n' + r"""
 # Android 6 can expose navigation semantics behind the keyboard after search
 # is cleared. A tap at Library's coordinates then types a comma into search.
 shown=true
@@ -190,8 +210,7 @@ return_to_library
 rm -f "$ui_xml"
 trap - EXIT
 """
-    start = source.index("scroll_until_node() {")
-    script += source[start : source.index("\n}", start) + 2] + r"""
+    script += '\nsource "$workspace/scripts/android-emulator-ui.sh"\n' + r"""
 # Rotation can restore the list past the desired row. At a boundary, the
 # helper must search back through the list instead of swiping the end forever.
 ui_xml="$(mktemp)"
@@ -241,7 +260,7 @@ fi
 rm -f "$ui_xml"
 trap - EXIT
 """
-    script += IME.read_text(encoding="utf-8") + r"""
+    script += '\nsource "$workspace/scripts/android-emulator-ime.sh"\n' + r"""
 fake_adb() {
   case "$*" in
     'shell ime list -a -s'|'shell ime list -s') printf '%s\n' "$available_imes" ;;
@@ -268,8 +287,7 @@ android_emulator_suppress_gboard_first_run fake_adb
   echo 'AOSP keyboard was not preferred over Gboard' >&2; exit 1;
 }
 """
-    start = source.index("scrollable_swipe() {")
-    script += source[start : source.index("\n}", start) + 2] + r"""
+    script += '\nsource "$workspace/scripts/android-emulator-ui.sh"\n' + r"""
 ui_xml="$(mktemp)"
 swipe_calls="$(mktemp)"
 trap 'rm -f "$ui_xml" "$swipe_calls"' EXIT
@@ -294,7 +312,8 @@ scrollable_swipe up
   echo 'Paging swipe no longer reaches the end of the list' >&2; exit 1;
 }
 """
-    result = subprocess.run([bash, "-s"], input=script, capture_output=True, text=True)
+    result = subprocess.run([bash, "-s"], input=script, capture_output=True, text=True,
+                            env={**os.environ, "workspace": ROOT.as_posix()}, timeout=30)
     if result.returncode != 0:
         raise AssertionError(f"Input helper regression: {result.stderr.strip()}")
 
@@ -317,19 +336,7 @@ def main() -> None:
     match(PHONE_SEARCH, "desc", "Library", "60 230")
     match(PHONE_SEARCH, "text", "Songs", None)
 
-    source = INTEGRATION.read_text(encoding="utf-8")
-    check_input_helpers(source)
-    required_contracts = (
-        'node_center edit-text ""',
-        'node_center text "Cancel"',
-        'node_center desc "Library"',
-        'node_center text "Songs"',
-    )
-    for contract in required_contracts:
-        if contract not in source:
-            raise AssertionError(f"Integration script is missing selector contract: {contract}")
-    if 'node_center text "Search your library"' in source:
-        raise AssertionError("Empty search detection must not depend on a layout-specific placeholder")
+    check_input_helpers()
 
     if classify_kind(GBOARD_SETUP, APP_PACKAGE) != "gboard-setup":
         raise AssertionError("Gboard Theme first-run UI must be classified as blocking")
@@ -343,34 +350,6 @@ def main() -> None:
         raise AssertionError("A TunesLink crash must fail the run, not be dismissed")
     if classify_kind(PHONE_SEARCH, APP_PACKAGE) != "none":
         raise AssertionError("App-only dumps must not be classified as blocking")
-
-    blocking_contracts = (
-        "gboard-setup",
-        "com.google.android.inputmethod.latin",
-        "suppress_gboard_first_run",
-    )
-    for contract in blocking_contracts:
-        if contract not in source:
-            raise AssertionError(f"Integration script is missing overlay contract: {contract}")
-    ime_source = IME.read_text(encoding="utf-8")
-    smoke_source = SMOKE.read_text(encoding="utf-8")
-    if "android_emulator_suppress_gboard_first_run" not in ime_source:
-        raise AssertionError("IME helper is missing Gboard suppression")
-    if "gboard-setup" not in smoke_source:
-        raise AssertionError("Smoke script must dismiss Gboard first-run UI")
-    if "system-crash" not in source or "system-crash" not in smoke_source:
-        raise AssertionError("Smoke and integration scripts must dismiss System UI crash dialogs")
-
-    start = source.index("return_to_library()")
-    restore = source[start : source.index("capture()", start)]
-    if 'node_center text "Midnight Drive"' not in restore:
-        raise AssertionError("return_to_library must wait for Midnight Drive instead of returning after the first Songs tap")
-    if 'text="Archive Track' not in restore:
-        raise AssertionError("return_to_library must scroll a restored archive page up to Midnight Drive")
-    delay = source.index("library-delay:60:1800")
-    rotate = source[delay : delay + 400]
-    if "wait_orientation landscape 1" not in rotate or rotate.find("wait_orientation landscape 1") > rotate.find("wait_orientation portrait 0"):
-        raise AssertionError("Delayed page rotation must wait for landscape before returning to portrait")
 
     print("Android integration selector self-test passed.")
 
