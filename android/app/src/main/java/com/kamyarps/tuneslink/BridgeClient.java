@@ -250,6 +250,25 @@ class BridgeClient extends BridgeClientSupport {
         void cancel();
     }
 
+    // TLS shutdown can perform network I/O, including on Android 6. Keep it off the caller
+    // thread and independent of request workers, which may all be blocked on those sockets.
+    // Shared for the process lifetime so cancellation remains safe after a client is closed.
+    private static final ExecutorService CONNECTION_CLOSER = Executors.newFixedThreadPool(2, task -> {
+        Thread thread = new Thread(task, "TunesLink-connection-close");
+        thread.setDaemon(true);
+        return thread;
+    });
+
+    private static void disconnectAsync(HttpsURLConnection connection) {
+        if (connection != null) CONNECTION_CLOSER.execute(connection::disconnect);
+    }
+
+    private static void closeAsync(SSLSocket socket) {
+        if (socket != null) CONNECTION_CLOSER.execute(() -> {
+            try { socket.close(); } catch (IOException ignored) { }
+        });
+    }
+
     static final class ConnectionCancellation implements Cancellation {
         private final AtomicBoolean cancelled = new AtomicBoolean();
         private final AtomicReference<HttpsURLConnection> connection = new AtomicReference<>();
@@ -260,7 +279,7 @@ class BridgeClient extends BridgeClientSupport {
         void attach(HttpsURLConnection active) throws InterruptedIOException {
             connection.set(active);
             if (cancelled.get()) {
-                disconnect(active);
+                if (connection.compareAndSet(active, null)) disconnectAsync(active);
                 throw new InterruptedIOException("Request cancelled");
             }
         }
@@ -285,8 +304,7 @@ class BridgeClient extends BridgeClientSupport {
         void attach(SSLSocket active) throws InterruptedIOException {
             sslSocket.set(active);
             if (cancelled.get()) {
-                sslSocket.compareAndSet(active, null);
-                try { active.close(); } catch (IOException ignored) { }
+                if (sslSocket.compareAndSet(active, null)) closeAsync(active);
                 throw new InterruptedIOException("Request cancelled");
             }
         }
@@ -307,21 +325,12 @@ class BridgeClient extends BridgeClientSupport {
         @Override
         public void cancel() {
             if (!cancelled.compareAndSet(false, true)) return;
-            HttpsURLConnection active = connection.getAndSet(null);
-            if (active != null) active.disconnect();
-            DatagramSocket datagram = datagramSocket.getAndSet(null);
-            if (datagram != null) datagram.close();
-            SSLSocket socket = sslSocket.getAndSet(null);
-            if (socket != null) {
-                try { socket.close(); } catch (IOException ignored) { }
-            }
             Future<?> future = task.get();
             if (future != null) future.cancel(true);
-        }
-
-        private void disconnect(HttpsURLConnection active) {
-            connection.compareAndSet(active, null);
-            active.disconnect();
+            disconnectAsync(connection.getAndSet(null));
+            DatagramSocket datagram = datagramSocket.getAndSet(null);
+            if (datagram != null) datagram.close();
+            closeAsync(sslSocket.getAndSet(null));
         }
     }
 
@@ -1042,7 +1051,7 @@ class BridgeClient extends BridgeClientSupport {
     private void disconnectStateConnection() {
         HttpsURLConnection connection = activeStateConnection;
         activeStateConnection = null;
-        if (connection != null) connection.disconnect();
+        disconnectAsync(connection);
     }
 
     private void deliverState(StateListener listener, int generation, PlayerState state,

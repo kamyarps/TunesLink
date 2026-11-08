@@ -3,6 +3,7 @@ package com.kamyarps.tuneslink;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNotSame;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
@@ -14,6 +15,10 @@ import java.net.URL;
 import java.security.cert.Certificate;
 import java.security.cert.CertificateException;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.FutureTask;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import javax.net.ssl.HttpsURLConnection;
 
@@ -156,31 +161,46 @@ public final class BridgeClientTest {
     }
 
     @Test
-    public void artworkCancellationDisconnectsAnActiveRequest() throws Exception {
+    public void cancellationClosesConnectionsOffTheCallerThread() throws Exception {
         BridgeClient.ConnectionCancellation cancellation =
                 new BridgeClient.ConnectionCancellation();
         DisconnectTrackingConnection connection = new DisconnectTrackingConnection();
         cancellation.attach(connection);
+        FutureTask<Void> task = new FutureTask<>(() -> null);
+        cancellation.setTask(task);
 
         cancellation.cancel();
+        cancellation.cancel();
 
-        assertTrue(connection.disconnected);
+        assertTrue(cancellation.isCancelled());
+        assertTrue(task.isCancelled());
+        assertTrue(connection.disconnected.await(5, TimeUnit.SECONDS));
+        assertNotSame(Thread.currentThread(), connection.closedBy);
+        assertEquals(1, connection.closeCount.get());
+        DisconnectTrackingConnection lateConnection = new DisconnectTrackingConnection();
         try {
-            cancellation.attach(new DisconnectTrackingConnection());
+            cancellation.attach(lateConnection);
             throw new AssertionError("Cancelled request accepted another connection");
         } catch (InterruptedIOException expected) {
-            assertTrue(cancellation.isCancelled());
+            assertTrue(lateConnection.disconnected.await(5, TimeUnit.SECONDS));
+            assertNotSame(Thread.currentThread(), lateConnection.closedBy);
         }
     }
 
     private static final class DisconnectTrackingConnection extends HttpsURLConnection {
-        boolean disconnected;
+        final CountDownLatch disconnected = new CountDownLatch(1);
+        final AtomicInteger closeCount = new AtomicInteger();
+        Thread closedBy;
 
         DisconnectTrackingConnection() throws Exception {
             super(new URL("https://192.168.1.10/"));
         }
 
-        @Override public void disconnect() { disconnected = true; }
+        @Override public void disconnect() {
+            closedBy = Thread.currentThread();
+            closeCount.incrementAndGet();
+            disconnected.countDown();
+        }
         @Override public boolean usingProxy() { return false; }
         @Override public void connect() { }
         @Override public String getCipherSuite() { return ""; }
