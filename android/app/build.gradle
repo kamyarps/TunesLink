@@ -132,6 +132,12 @@ dependencies {
     implementation "androidx.lifecycle:lifecycle-viewmodel-savedstate:2.11.0"
     // NavigationEvent 1.2 requires API 24; 1.1.2 preserves Android 6 support.
     implementation "androidx.navigationevent:navigationevent-compose:1.1.2"
+    constraints {
+        // Update compatible indirect libraries without adding unused runtime dependencies.
+        implementation "androidx.profileinstaller:profileinstaller:1.4.1"
+        implementation "androidx.startup:startup-runtime:1.2.0"
+        implementation "androidx.window:window:1.5.1"
+    }
     implementation "androidx.compose.animation:animation"
     implementation "androidx.compose.foundation:foundation"
     implementation "androidx.compose.material3:material3"

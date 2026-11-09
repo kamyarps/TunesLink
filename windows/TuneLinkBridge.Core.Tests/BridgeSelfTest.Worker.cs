@@ -46,10 +46,10 @@ internal static partial class BridgeSelfTest
             "operational worker failures recycle worker");
 
         using IsolatedItunesController isolated = new("--itunes-worker-demo", diagnostics: false);
-        Ensure(!isolated.WorkerRunningForTest && isolated.WorkerGenerationForTest == 0,
+        Ensure(!isolated.InteractiveWorker.WorkerRunning && isolated.InteractiveWorker.WorkerGeneration == 0,
             "isolated controller does not start a worker before first request");
         _ = await isolated.GetStateAsync();
-        int originalGeneration = isolated.WorkerGenerationForTest;
+        int originalGeneration = isolated.InteractiveWorker.WorkerGeneration;
 
         try
         {
@@ -57,8 +57,8 @@ internal static partial class BridgeSelfTest
             throw new InvalidOperationException("Self-test failed: expected validation failure");
         }
         catch (ArgumentException) { }
-        Ensure(isolated.WorkerRunningForTest
-               && isolated.WorkerGenerationForTest == originalGeneration,
+        Ensure(isolated.InteractiveWorker.WorkerRunning
+               && isolated.InteractiveWorker.WorkerGeneration == originalGeneration,
             "validation failure keeps worker process");
 
         try
@@ -67,8 +67,8 @@ internal static partial class BridgeSelfTest
             throw new InvalidOperationException("Self-test failed: expected not-found failure");
         }
         catch (MediaNotFoundException) { }
-        Ensure(isolated.WorkerRunningForTest
-               && isolated.WorkerGenerationForTest == originalGeneration,
+        Ensure(isolated.InteractiveWorker.WorkerRunning
+               && isolated.InteractiveWorker.WorkerGeneration == originalGeneration,
             "not-found failure keeps worker process");
 
         using (CancellationTokenSource cancelled = new(TimeSpan.FromMilliseconds(250)))
@@ -81,11 +81,11 @@ internal static partial class BridgeSelfTest
             }
             catch (OperationCanceledException) when (cancelled.IsCancellationRequested) { }
         }
-        Ensure(isolated.WorkerRunningForTest
-               && isolated.WorkerGenerationForTest == originalGeneration,
+        Ensure(isolated.InteractiveWorker.WorkerRunning
+               && isolated.InteractiveWorker.WorkerGeneration == originalGeneration,
             "cancelled operation keeps worker process");
         _ = await isolated.GetStateAsync();
-        Ensure(isolated.WorkerGenerationForTest == originalGeneration,
+        Ensure(isolated.InteractiveWorker.WorkerGeneration == originalGeneration,
             "worker answers normally after a cancelled operation");
 
         try
@@ -96,10 +96,10 @@ internal static partial class BridgeSelfTest
         catch (ItunesWorkerException exception)
             when (exception.Category == ItunesWorkerFailureCategory.MalformedResponse)
         { }
-        Ensure(!isolated.WorkerRunningForTest, "malformed response terminates worker process");
+        Ensure(!isolated.InteractiveWorker.WorkerRunning, "malformed response terminates worker process");
 
         _ = await isolated.GetStateAsync();
-        Ensure(isolated.WorkerGenerationForTest == originalGeneration + 1,
+        Ensure(isolated.InteractiveWorker.WorkerGeneration == originalGeneration + 1,
             "request after malformed response starts a clean worker");
 
         try
@@ -110,10 +110,10 @@ internal static partial class BridgeSelfTest
         catch (ItunesWorkerException exception)
             when (exception.Category == ItunesWorkerFailureCategory.Internal)
         { }
-        Ensure(!isolated.WorkerRunningForTest, "internal failure terminates worker process");
+        Ensure(!isolated.InteractiveWorker.WorkerRunning, "internal failure terminates worker process");
 
         _ = await isolated.GetStateAsync();
-        Ensure(isolated.WorkerGenerationForTest == originalGeneration + 2,
+        Ensure(isolated.InteractiveWorker.WorkerGeneration == originalGeneration + 2,
             "request after internal failure starts a clean worker");
     }
 }

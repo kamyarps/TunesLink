@@ -57,12 +57,12 @@ jobs:
           "java=$($required.JavaMajor)" >> $env:GITHUB_OUTPUT
           "platform=platforms;$($required.AndroidPlatformPackage)" >> $env:GITHUB_OUTPUT
           "build_tools=$($required.BuildToolsVersion)" >> $env:GITHUB_OUTPUT
-      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+      - uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
         with:
           distribution: temurin
           java-version: ${{ steps.requirements.outputs.java }}
-      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
-        if: inputs.release-artifact == ''
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        if: inputs.release-artifact == '' && matrix.api-level != 26
         with:
           global-json-file: global.json
       - name: Download the debug APKs built by CI
@@ -166,7 +166,10 @@ jobs:
             '
       - name: Verify Android visual baselines
         if: matrix.api-level == 36 && inputs.release-artifact == ''
-        run: python3 scripts/android-visual-regression.py
+        run: |
+          python3 -m venv "$RUNNER_TEMP/tuneslink-visual"
+          "$RUNNER_TEMP/tuneslink-visual/bin/python" -m pip install -r scripts/requirements-visual.txt
+          "$RUNNER_TEMP/tuneslink-visual/bin/python" scripts/android-visual-regression.py
       - name: Verify repository hygiene
         shell: pwsh
         run: ./scripts/verify-repository.ps1 -RequireCleanWorktree
@@ -181,3 +184,4 @@ jobs:
             android/app/build/reports/device-cache
             android/app/build/reports/device-release-smoke
           if-no-files-found: warn
+          retention-days: 14

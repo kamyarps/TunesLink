@@ -178,6 +178,27 @@ internal static partial class BridgeSelfTest
 
     private static async Task TestItunesBusyAndArtworkAsync(string directory)
     {
+        foreach (int hresult in new[] { unchecked((int)0x80010001), unchecked((int)0x8001010A),
+                     unchecked((int)0x80010108) })
+        {
+            BusyPropertyProbe property = new(hresult);
+            foreach (Action read in new Action[]
+                     {
+                         () => ItunesController.ReadString(property, "Name"),
+                         () => ItunesController.ReadInt(property, "TrackID"),
+                         () => ItunesController.ReadDouble(property, "Duration"),
+                         () => ItunesController.ReadBool(property, "Compilation"),
+                         () => ItunesController.ReadString(property, "ReflectedText")
+                     })
+            {
+                bool propagated = false;
+                try { read(); }
+                catch (Exception failure) when (failure.GetBaseException().HResult == hresult)
+                { propagated = true; }
+                Ensure(propagated, "busy/disconnected property reads never become empty metadata");
+            }
+        }
+
         BusyItunesProbe busy = new();
         using (ItunesController controller = FakeComController(directory, busy))
         {
@@ -211,6 +232,15 @@ internal static partial class BridgeSelfTest
 
     // The runtime's own COM exception, as an RPC failure would surface through interop.
     private static Exception ComFailure(int hresult) => Marshal.GetExceptionForHR(hresult)!;
+
+    public sealed class BusyPropertyProbe(int hresult)
+    {
+        public string Name => throw ComFailure(hresult);
+        public int TrackID => throw ComFailure(hresult);
+        public double Duration => throw ComFailure(hresult);
+        public bool Compilation => throw ComFailure(hresult);
+        public string ReflectedText => throw ComFailure(hresult);
+    }
 
     public sealed class BusyItunesProbe
     {

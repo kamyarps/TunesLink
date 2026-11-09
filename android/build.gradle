@@ -14,7 +14,7 @@ buildscript {
             classpath("org.bouncycastle:bcutil-jdk18on:1.86") {
                 because "Keep Bouncy Castle utilities aligned with the provider and PKIX"
             }
-            classpath("com.google.guava:guava:33.7.2-jre") {
+            classpath("com.google.guava:guava:33.8.0-jre") {
                 because "Fix GHSA-xxph-c9ww-hj94 (untrusted deserialization allocation)"
             }
             classpath("org.apache.commons:commons-lang3:3.21.0") {
@@ -31,6 +31,6 @@ buildscript {
 }
 
 plugins {
-    id "com.android.application" version "9.5.0" apply false
+    id "com.android.application" version "9.5.1" apply false
     id "org.jetbrains.kotlin.plugin.compose" version "2.4.21" apply false
 }

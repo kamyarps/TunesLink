@@ -3,8 +3,6 @@ name: CI
 on:
   push:
     branches: [main]
-    paths-ignore:
-      - ".github/workflows/release.yml"
   pull_request:
   workflow_dispatch:
     inputs:
@@ -21,8 +19,39 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Repository checks and change detection
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.changes.outputs.code }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Verify repository hygiene
+        shell: pwsh
+        run: ./scripts/verify-repository.ps1
+      - name: Detect application changes
+        id: changes
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          code=true
+          if [[ "$EVENT_NAME" != workflow_dispatch && -n "$BASE_SHA" && ! "$BASE_SHA" =~ ^0+$ ]]; then
+            changed="$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")"
+            if ! printf '%s\n' "$changed" | grep -vE '(^assets/|\.md$|^LICENSE$|^$)' > /dev/null; then
+              code=false
+            fi
+          fi
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+
   android:
     name: Android
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     defaults:
@@ -40,13 +69,10 @@ jobs:
           "java=$($required.JavaMajor)" >> $env:GITHUB_OUTPUT
           "platform=platforms;$($required.AndroidPlatformPackage)" >> $env:GITHUB_OUTPUT
           "build_tools=$($required.BuildToolsVersion)" >> $env:GITHUB_OUTPUT
-      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+      - uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
         with:
           distribution: temurin
           java-version: ${{ steps.requirements.outputs.java }}
-      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
-        with:
-          global-json-file: global.json
       - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
         with:
           packages: ""
@@ -66,6 +92,12 @@ jobs:
       - name: Test Android integration selectors
         working-directory: ${{ github.workspace }}
         run: python3 scripts/android-integration-selector-self-test.py
+      - name: Test visual comparison
+        working-directory: ${{ github.workspace }}
+        run: |
+          python3 -m venv "$RUNNER_TEMP/tuneslink-visual"
+          "$RUNNER_TEMP/tuneslink-visual/bin/python" -m pip install -r scripts/requirements-visual.txt
+          "$RUNNER_TEMP/tuneslink-visual/bin/python" scripts/android-visual-regression.py --self-test
       - name: Test Android UI contracts
         working-directory: ${{ github.workspace }}
         run: python3 scripts/android-ui-contract-self-test.py
@@ -85,6 +117,7 @@ jobs:
             android/app/build/outputs/apk/debug/app-debug.apk
             android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
           if-no-files-found: error
+          retention-days: 14
       - name: Enforce Android release size budget
         shell: pwsh
         run: |
@@ -123,40 +156,39 @@ jobs:
 
   windows:
     name: Windows bridge
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: windows-2025
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with:
           global-json-file: global.json
       - name: Build
         run: dotnet build .\windows\TuneLink.sln --configuration Release
-      - name: Build WinUI snapshot configuration
-        run: dotnet build .\windows\TuneLinkBridge.WinUI\TuneLinkBridge.WinUI.csproj --configuration UIQA
       - name: Verify responsive and accessibility window layouts
         shell: pwsh
         run: |
           $project = ".\windows\TuneLinkBridge.WinUI\TuneLinkBridge.WinUI.csproj"
           $cases = @(
+            @("480x580", "1.0", "two-phones"),
             @("500x840", "1.0", "paired"),
             @("420x640", "2.0", "long-name"),
             @("500x840", "1.5", "both-errors"),
             @("420x640", "2.0", "runtime-unavailable")
           )
           foreach ($case in $cases) {
-            dotnet run --project $project --configuration UIQA --no-build -- `
+            dotnet run --project $project --configuration Release --no-build -- `
               --verify-layout --viewport $case[0] --text-scale $case[1] --ui-state $case[2]
             if ($LASTEXITCODE -ne 0) { throw "WinUI layout verification failed: $($case -join ', ')" }
           }
       - name: Verify formatting
+        env:
+          Configuration: Release
         run: dotnet format .\windows\TuneLink.sln --verify-no-changes --severity warn --no-restore
-      - name: Self-test
-        shell: pwsh
-        run: |
-          $executable = ".\windows\TuneLinkBridge.WinUI\bin\Release\net10.0-windows10.0.17763.0\win-x64\TunesLink.Bridge.exe"
-          $process = Start-Process -FilePath $executable -ArgumentList "--self-test" -PassThru -Wait
-          if ($process.ExitCode -ne 0) { throw "Self-test failed with exit code $($process.ExitCode)." }
+      - name: Regression suite
+        run: dotnet run --project .\windows\TuneLinkBridge.Core.Tests\TuneLinkBridge.Core.Tests.csproj --configuration Release --no-build
       - name: Publish
         run: >-
           dotnet publish .\windows\TuneLinkBridge.WinUI\TuneLinkBridge.WinUI.csproj

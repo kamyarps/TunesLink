@@ -46,7 +46,7 @@ function Invoke-GuiProcessChecked {
         [string[]]$ArgumentList = @()
     )
 
-    $process = Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -PassThru -Wait
+    $process = Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -WindowStyle Hidden -PassThru -Wait
     if ($process.ExitCode -ne 0) {
         throw "Command failed with exit code $($process.ExitCode): $FilePath $($ArgumentList -join ' ')"
     }

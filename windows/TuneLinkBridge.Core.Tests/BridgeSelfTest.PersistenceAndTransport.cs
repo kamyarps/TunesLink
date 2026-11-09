@@ -443,7 +443,7 @@ internal static partial class BridgeSelfTest
         Ensure(initial.Title == "Midnight Drive", "isolated worker state");
         LibraryPage library = await isolated.GetLibraryAsync("", 0, 1);
         string trackId = library.Items[0].Id;
-        isolated.TerminateWorkerForTest();
+        isolated.InteractiveWorker.StopWorker();
         await isolated.PlayTrackAsync(new PlaybackSelection(trackId));
         PlaybackState restarted = await isolated.GetStateAsync();
         Ensure(restarted.Title == "Midnight Drive", "track remains playable after worker restart");
@@ -472,7 +472,7 @@ internal static partial class BridgeSelfTest
         }
         catch (OperationCanceledException) when (timeout.IsCancellationRequested)
         {
-            Ensure(!isolated.WorkerRunningForTest, "hung worker terminated");
+            Ensure(!isolated.InteractiveWorker.WorkerRunning, "hung worker terminated");
         }
         PlaybackState recovered = await isolated.GetStateAsync();
         Ensure(recovered.Title == "Midnight Drive", "worker recovery after timeout");
@@ -481,11 +481,11 @@ internal static partial class BridgeSelfTest
             workerIdleTimeout: TimeSpan.FromMilliseconds(100));
         _ = await idle.GetStateAsync();
         await Task.Delay(500);
-        Ensure(!idle.WorkerRunningForTest, "idle worker terminates when demand stops");
+        Ensure(!idle.InteractiveWorker.WorkerRunning, "idle worker terminates when demand stops");
 
         IsolatedItunesController disposing = new("--itunes-worker-demo", diagnostics: false);
         Task hung = disposing.ExerciseHangForSelfTestAsync(CancellationToken.None);
-        for (int attempt = 0; attempt < 20 && !disposing.WorkerRunningForTest; attempt++)
+        for (int attempt = 0; attempt < 20 && !disposing.InteractiveWorker.WorkerRunning; attempt++)
             await Task.Delay(25);
         System.Diagnostics.Stopwatch shutdown = System.Diagnostics.Stopwatch.StartNew();
         disposing.Dispose();

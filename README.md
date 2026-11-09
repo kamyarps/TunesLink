@@ -248,23 +248,25 @@ used to prepare a release.
 ### What verification covers
 
 The full workflow runs Android lint and unit tests, debug and release package builds, the Windows
-release build, formatting verification, bridge self-tests, a WinUI layout check of the packaged
-bridge, build requirements self-tests, and repository hygiene checks. Add `-IncludeVisualChecks` to
+release build, formatting verification, bridge regression tests in a separate test executable,
+a packaged smoke check, a WinUI layout check of the packaged bridge, build requirements self-tests,
+and repository hygiene checks. Add `-IncludeVisualChecks` to
 `scripts\one-click-build.ps1` to also run the responsive WinUI layout cases.
 
 [CI](https://github.com/kamyarps/TunesLink/actions) adds Android emulator coverage on API 23, 26,
-31, and 36, integration tests, SQLite cache regression tests, artifact-size budgets, and a
+31, 36, and 37, integration tests, SQLite cache regression tests, artifact-size budgets, and a
 full-history secret scan. Release
 publishing requires device validation and smoke tests of the signed, optimized APK. See the
 [manual release checklist](test-support/README.md#manual-release-checklist) for additional checks.
 
-To run the optional integration test against a real iTunes library and current track:
+To run the optional read-only check against an open iTunes library:
 
 ```powershell
-& '.\artifacts\TunesLink.Bridge.exe' --live-itunes-test
+dotnet run --project .\windows\TuneLinkBridge.Core.Tests --configuration Release -- --live-itunes-test
 ```
 
-The test restores the original playback settings when it finishes.
+This check only reads state, library metadata, and artwork; it leaves playback untouched.
+Playback-changing fixture checks are documented in [test support](test-support/README.md).
 
 ## Contributing, support, and security
 

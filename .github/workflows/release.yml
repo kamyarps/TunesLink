@@ -13,6 +13,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: release-${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
+  cancel-in-progress: false
+
 jobs:
   validate:
     name: Validate release source
@@ -20,6 +24,7 @@ jobs:
       source-sha: ${{ steps.source.outputs.sha }}
       ci-run-id: ${{ steps.ci.outputs.run-id }}
     runs-on: ubuntu-24.04
+    timeout-minutes: 95
     permissions:
       contents: read
       actions: read
@@ -57,10 +62,18 @@ jobs:
           sha="$(git rev-parse HEAD)"
           while true; do
             run="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --commit "$sha" \
-              --event push --limit 1 --json status,conclusion,databaseId \
-              --jq '.[0] | select(.) | "\(.status) \(.conclusion) \(.databaseId)"')" || run=""
+              --limit 10 --json status,conclusion,databaseId,event \
+              --jq '[.[] | select(.event == "push" or .event == "workflow_dispatch")][0] | select(.) | "\(.status) \(.conclusion) \(.databaseId)"')" || run=""
             case "$run" in
-              "completed success "*) echo "run-id=${run##* }" >> "$GITHUB_OUTPUT"; break ;;
+              "completed success "*)
+                id="${run##* }"
+                count="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id/artifacts" \
+                  --jq '[.artifacts[] | select(.name == "tuneslink-android-debug" and .expired == false)] | length')"
+                if [[ "$count" == 0 ]]; then
+                  echo "::error::CI debug APKs are missing or expired. Run CI manually for $sha before releasing."
+                  exit 1
+                fi
+                echo "run-id=$id" >> "$GITHUB_OUTPUT"; break ;;
               completed*) echo "::error::CI did not pass for $sha: $run"; exit 1 ;;
               "") echo "No CI run for $sha yet; waiting." ;;
               *) echo "CI is still running: $run" ;;
@@ -101,6 +114,7 @@ jobs:
     name: Signed Android release
     needs: validate
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     permissions:
       contents: read
       id-token: write
@@ -124,7 +138,7 @@ jobs:
           "java=$($required.JavaMajor)" >> $env:GITHUB_OUTPUT
           "platform=platforms;$($required.AndroidPlatformPackage)" >> $env:GITHUB_OUTPUT
           "build_tools=$($required.BuildToolsVersion)" >> $env:GITHUB_OUTPUT
-      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+      - uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
         with:
           distribution: temurin
           java-version: ${{ steps.requirements.outputs.java }}
@@ -219,7 +233,7 @@ jobs:
           name: TunesLink-android-signed
           path: artifacts/release
           if-no-files-found: error
-      # Private: retraces obfuscated release crash reports. Never attached to the public release.
+      # Retraces obfuscated crash reports. Public workflow artifact, not a release asset.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: TunesLink-android-r8-mapping
@@ -250,6 +264,7 @@ jobs:
     name: Windows release
     needs: validate
     runs-on: windows-2025
+    timeout-minutes: 20
     permissions:
       contents: read
       id-token: write
@@ -259,13 +274,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.validate.outputs.source-sha }}
-      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with:
           global-json-file: global.json
-      - name: Test and publish
+      # The required CI run already tested this exact commit. Verify the final package below.
+      - name: Publish and verify release package
         shell: pwsh
         run: |
-          .\scripts\test.ps1 -Component Windows
           dotnet publish .\windows\TuneLinkBridge.WinUI\TuneLinkBridge.WinUI.csproj `
             --configuration Release --runtime win-x64 --self-contained true `
             -p:PublishSingleFile=true -p:DebugType=None -p:DebugSymbols=false `
@@ -340,6 +355,7 @@ jobs:
     name: Publish GitHub release
     needs: [validate, android, windows, device-validation, compatibility-validation]
     runs-on: windows-2025
+    timeout-minutes: 10
     permissions:
       actions: read
       contents: write

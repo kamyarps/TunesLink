@@ -221,6 +221,9 @@ public sealed partial class MainWindow
 
     private void VerifyThemeResources()
     {
+        ResourceDictionary appResources = Microsoft.UI.Xaml.Application.Current.Resources;
+        foreach (string key in new[] { "Default", "Light" })
+            ThemeContrast.Verify((ResourceDictionary)appResources.ThemeDictionaries[key]);
         // The high-contrast dictionaries are only resolved when high contrast is on, which a
         // capture cannot switch; touching every entry still catches a broken key or brush.
         foreach (ResourceDictionary resources in new[]

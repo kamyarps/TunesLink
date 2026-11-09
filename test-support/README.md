@@ -13,7 +13,7 @@ Optional scenarios:
 
 For the Android emulator, connect manually to `10.0.2.2:<port>`. The default test pairing code is `123456`. Run the executable with `--discovery-port 0` to verify that recovery at a saved, reachable address works without UDP discovery.
 
-Android unit tests and Windows `--self-test` suites are grouped by behavior. They cover unavailable optional storage, revoked pairing recovery, lifecycle cancellation, bounded page windows, non-advancing pages, worker failure/recovery, large HTTP offsets, and absolute metadata/artwork cache expiry.
+Android unit tests and Windows `TuneLinkBridge.Core.Tests` suites are grouped by behavior. They cover unavailable optional storage, revoked pairing recovery, lifecycle cancellation, bounded page windows, non-advancing pages, worker failure/recovery, large HTTP offsets, and absolute metadata/artwork cache expiry.
 
 Storage and cancellation regressions also cover pairing responses arriving after cancellation or
 shutdown, rollback while credentials are being saved, durable revocation retries, and re-pairing
@@ -99,3 +99,17 @@ The live test also checks Previous before the initially selected track, repeat-a
 repeat-off stopping at the collection end, preserving pause/position during mode changes, and
 restoring queue identity and earlier tracks after the controller restarts. Recovery metadata is
 stored alongside the bridge's optional library cache.
+
+The full Windows regression suite runs from `windows/TuneLinkBridge.Core.Tests`, outside the
+shipping bridge. `TunesLink.Bridge.exe --self-test` is a small packaged worker smoke check.
+`dotnet run --project windows/TuneLinkBridge.Core.Tests -c Release -- --live-itunes-test`
+only reads the open iTunes library. Use `TuneLinkItunesQueueTest --run-live` with a dedicated
+test library when validating playback changes; it explicitly adds and removes fixture tracks.
+
+The optional screenshot gate needs `python -m pip install -r scripts/requirements-visual.txt`.
+It uses area averages, not isolated sample points. Current baselines were regenerated from
+API-36 captures of the passing CI run 42525132028 for commit 28f831e. Rebaseline only after
+reviewing the actual screenshots. Docs-only CI skips app builds; manually dispatch full CI on
+the release commit if its automatic run did not produce debug APKs.
+CI debug APKs and emulator reports are kept for 14 days; rerun CI if the release APK inputs
+have expired. Releases reuse the tested commit's CI results and verify the final packages.

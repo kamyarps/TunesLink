@@ -63,8 +63,7 @@ internal static class Program
         }
         if (args.Contains("--self-test", StringComparer.OrdinalIgnoreCase))
         {
-            VisualContract.VerifyContrast();
-            result = BridgeSelfTest.RunAsync().GetAwaiter().GetResult();
+            result = BridgeSmokeTest.RunAsync().GetAwaiter().GetResult();
             return true;
         }
         if (args.Contains("--itunes-smoke-test", StringComparer.OrdinalIgnoreCase))
@@ -81,11 +80,6 @@ internal static class Program
             LibraryPage page = controller.GetLibraryAsync("", 0, 10)
                 .WaitAsync(TimeSpan.FromSeconds(20)).GetAwaiter().GetResult();
             result = page.Total > 0 ? 0 : 1;
-            return true;
-        }
-        if (args.Contains("--live-itunes-test", StringComparer.OrdinalIgnoreCase))
-        {
-            result = LiveItunesTest.RunAsync().GetAwaiter().GetResult();
             return true;
         }
         result = 0;

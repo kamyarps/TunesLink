@@ -20,7 +20,6 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 
@@ -117,6 +116,7 @@ final class BridgeRepository implements AutoCloseable {
     private final LibraryCacheStore libraryCache;
     private final ArtworkDiskCache artworkDiskCache;
     private final BridgeSession session = new BridgeSession();
+    private final LibraryPageLoader pages;
     private record CachedArtwork(Bitmap bitmap, long fetchedAt) { }
 
     private final LruCache<String, CachedArtwork> artworkCache =
@@ -189,6 +189,7 @@ final class BridgeRepository implements AutoCloseable {
         this.libraryCache = libraryCache;
         this.artworkDiskCache = artworkDiskCache;
         this.connectivity = connectivity;
+        this.pages = new LibraryPageLoader(client, libraryCache, session);
         storageWork(store::load, (saved, failure) -> {
             current = saved;
             if (current != null) session.activate(current);
@@ -735,7 +736,7 @@ final class BridgeRepository implements AutoCloseable {
                                     PageResult<BridgeClient.LibraryPage> result) {
         BridgeSession.Request request = capture();
         if (request == null) return RequestHandle.NONE;
-        String key = libraryRequestKey("songs", "", query, offset, limit);
+        String key = LibraryPageLoader.requestKey("songs", "", query, offset, limit);
         return loadCachedTracksThenNetwork(request, key, result,
                 networkResult -> client.getLibrary(request.bridge, query, offset, limit,
                         networkResult));
@@ -745,7 +746,7 @@ final class BridgeRepository implements AutoCloseable {
                                       PageResult<BridgeClient.LibraryPage> result) {
         BridgeSession.Request request = capture();
         if (request == null) return RequestHandle.NONE;
-        String key = libraryRequestKey(kind, id, query, offset, limit);
+        String key = LibraryPageLoader.requestKey(kind, id, query, offset, limit);
         return loadCachedTracksThenNetwork(request, key, result,
                 networkResult -> client.getLibrary(request.bridge, query, offset, limit, kind, id,
                         networkResult));
@@ -759,114 +760,13 @@ final class BridgeRepository implements AutoCloseable {
     RequestHandle getCollections(String kind, String parentId, String query, int offset, int limit,
                                  PageResult<BridgeClient.LibraryCollectionPage> result) {
         BridgeSession.Request request = capture();
-        if (request == null) return RequestHandle.NONE;
-        String key = libraryRequestKey(kind, parentId, query, offset, limit);
-        if (libraryCache == null) {
-            BridgeClient.Cancellation network = client.getCollections(
-                    request.bridge, kind, parentId, query, offset, limit,
-                    authoritativeOnly(request, result));
-            return network::cancel;
-        }
-        AtomicBoolean cancelled = new AtomicBoolean();
-        AtomicReference<BridgeClient.Cancellation> network =
-                new AtomicReference<>(BridgeClient.Cancellation.NONE);
-        LibraryCacheStore.LoadHandle load = libraryCache.loadCollections(
-                BridgeSession.cacheScope(request.bridge), key, cached -> {
-                    if (cancelled.get() || !session.isCurrent(request)) return;
-                    if (cached != null) result.page(cached, false);
-                    BridgeClient.Cancellation started = client.getCollections(request.bridge,
-                            kind, parentId, query, offset, limit,
-                            cacheCollectionsResult(request, key, cancelled, result));
-                    network.set(started);
-                    if (cancelled.get()) started.cancel();
-                });
-        return () -> {
-            cancelled.set(true);
-            load.cancel();
-            network.get().cancel();
-        };
+        return request == null ? RequestHandle.NONE
+                : pages.getCollections(request, kind, parentId, query, offset, limit, result);
     }
 
-    private interface TrackNetworkStart {
-        BridgeClient.Cancellation start(BridgeClient.Result<BridgeClient.LibraryPage> result);
-    }
-
-    private RequestHandle loadCachedTracksThenNetwork(
-            BridgeSession.Request request,
-            String key,
-            PageResult<BridgeClient.LibraryPage> result,
-            TrackNetworkStart networkStart) {
-        if (libraryCache == null) {
-            BridgeClient.Cancellation network = networkStart.start(
-                    authoritativeOnly(request, result));
-            return network::cancel;
-        }
-        AtomicBoolean cancelled = new AtomicBoolean();
-        AtomicReference<BridgeClient.Cancellation> network =
-                new AtomicReference<>(BridgeClient.Cancellation.NONE);
-        LibraryCacheStore.LoadHandle load = libraryCache.loadTracks(
-                BridgeSession.cacheScope(request.bridge), key, cached -> {
-                    if (cancelled.get() || !session.isCurrent(request)) return;
-                    if (cached != null) result.page(cached, false);
-                    BridgeClient.Cancellation started = networkStart.start(
-                            cacheTracksResult(request, key, cancelled, result));
-                    network.set(started);
-                    if (cancelled.get()) started.cancel();
-                });
-        return () -> {
-            cancelled.set(true);
-            load.cancel();
-            network.get().cancel();
-        };
-    }
-
-    private <T> BridgeClient.Result<T> authoritativeOnly(BridgeSession.Request request,
-                                                         PageResult<T> result) {
-        return pageNetworkResult(request, new AtomicBoolean(), result, null);
-    }
-
-    private BridgeClient.Result<BridgeClient.LibraryPage> cacheTracksResult(
-            BridgeSession.Request request, String key, AtomicBoolean cancelled,
-            PageResult<BridgeClient.LibraryPage> result) {
-        return pageNetworkResult(request, cancelled, result, page ->
-                libraryCache.saveTracks(BridgeSession.cacheScope(request.bridge), key, page));
-    }
-
-    private BridgeClient.Result<BridgeClient.LibraryCollectionPage> cacheCollectionsResult(
-            BridgeSession.Request request, String key, AtomicBoolean cancelled,
-            PageResult<BridgeClient.LibraryCollectionPage> result) {
-        return pageNetworkResult(request, cancelled, result, page ->
-                libraryCache.saveCollections(BridgeSession.cacheScope(request.bridge), key, page));
-    }
-
-    /** Delivers an authoritative page (optionally caching it) or a typed failure. */
-    private <T> BridgeClient.Result<T> pageNetworkResult(
-            BridgeSession.Request request, AtomicBoolean cancelled, PageResult<T> result,
-            java.util.function.Consumer<T> cache) {
-        return new BridgeClient.Result<>() {
-            @Override public void success(T value) {
-                if (cancelled.get() || !session.isCurrent(request)) return;
-                if (cache != null) cache.accept(value);
-                result.page(value, true);
-            }
-
-            @Override public void failure(String message, boolean unauthorized) {
-                failure(message, unauthorized, BridgeClient.ErrorCode.NONE);
-            }
-
-            @Override public void failure(String message, boolean unauthorized,
-                                          BridgeClient.ErrorCode code) {
-                if (!cancelled.get() && session.isCurrent(request))
-                    result.failure(message, unauthorized, code);
-            }
-        };
-    }
-
-    private static String libraryRequestKey(String kind, String collectionId, String query,
-                                            int offset, int limit) {
-        return kind + "\u001f" + (collectionId == null ? "" : collectionId) + "\u001f"
-                + (query == null ? "" : query.trim().toLowerCase(java.util.Locale.ROOT))
-                + "\u001f" + Math.max(0, offset) + "\u001f" + Math.max(1, limit);
+    private RequestHandle loadCachedTracksThenNetwork(BridgeSession.Request request, String key,
+            PageResult<BridgeClient.LibraryPage> result, LibraryPageLoader.TrackNetworkStart networkStart) {
+        return pages.loadTracks(request, key, result, networkStart);
     }
 
     RequestHandle playTrack(String trackId, String collectionKind, String collectionId,

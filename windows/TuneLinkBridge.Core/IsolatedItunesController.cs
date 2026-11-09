@@ -46,24 +46,8 @@ internal sealed class IsolatedItunesController : IMediaController
         CancellationToken cancellationToken = default) =>
         libraryWorker.GetArtworkAsync(id, maxSize, cancellationToken);
 
-    internal Task ExerciseHangForSelfTestAsync(CancellationToken cancellationToken) =>
-        interactiveWorker.ExerciseHangForSelfTestAsync(cancellationToken);
-
-    internal Task ExerciseCancellableHangForSelfTestAsync(CancellationToken cancellationToken) =>
-        interactiveWorker.ExerciseCancellableHangForSelfTestAsync(cancellationToken);
-
-    internal Task ExerciseLibraryHangForSelfTestAsync(CancellationToken cancellationToken) =>
-        libraryWorker.ExerciseHangForSelfTestAsync(cancellationToken);
-
-    internal Task ExerciseInternalFailureForSelfTestAsync() =>
-        interactiveWorker.ExerciseInternalFailureForSelfTestAsync();
-
-    internal Task ExerciseMalformedResponseForSelfTestAsync() =>
-        interactiveWorker.ExerciseMalformedResponseForSelfTestAsync();
-
-    internal bool WorkerRunningForTest => interactiveWorker.WorkerRunningForTest;
-    internal int WorkerGenerationForTest => interactiveWorker.WorkerGenerationForTest;
-    internal void TerminateWorkerForTest() => interactiveWorker.TerminateWorkerForTest();
+    internal ItunesWorkerClient InteractiveWorker => interactiveWorker;
+    internal ItunesWorkerClient LibraryWorker => libraryWorker;
 
     public void Dispose()
     {
@@ -149,31 +133,13 @@ internal sealed class ItunesWorkerClient : IDisposable
         CallAsync(new ItunesWorkerRequest(NextId(), "artwork", TrackId: id, MaxSize: maxSize),
             response => response.Artwork, BridgeProtocol.MediaTimeout, cancellationToken);
 
-    internal Task ExerciseHangForSelfTestAsync(CancellationToken cancellationToken) =>
-        CallAsync(new ItunesWorkerRequest(NextId(), "selfTestHang"),
-            _ => true, TimeSpan.FromSeconds(30), cancellationToken);
+    internal bool WorkerRunning => worker is { HasExited: false };
+    internal int WorkerGeneration => workerGeneration;
+    internal void StopWorker() => TerminateWorker();
 
-    internal Task ExerciseCancellableHangForSelfTestAsync(CancellationToken cancellationToken) =>
-        CallAsync(new ItunesWorkerRequest(NextId(), "selfTestCancellableHang"),
-            _ => true, TimeSpan.FromSeconds(30), cancellationToken);
+    internal int NextId() => Interlocked.Increment(ref nextRequestId);
 
-    internal Task ExerciseInternalFailureForSelfTestAsync() =>
-        CallAsync(new ItunesWorkerRequest(NextId(), "selfTestInternalFailure"),
-            _ => true, TimeSpan.FromSeconds(5), CancellationToken.None);
-
-    internal Task ExerciseMalformedResponseForSelfTestAsync() =>
-        CallAsync(new ItunesWorkerRequest(NextId(), "selfTestMalformedResponse"),
-            _ => true, TimeSpan.FromSeconds(5), CancellationToken.None);
-
-    internal bool WorkerRunningForTest => worker is { HasExited: false };
-
-    internal int WorkerGenerationForTest => workerGeneration;
-
-    internal void TerminateWorkerForTest() => TerminateWorker();
-
-    private int NextId() => Interlocked.Increment(ref nextRequestId);
-
-    private async Task<T> CallAsync<T>(ItunesWorkerRequest request,
+    internal async Task<T> CallAsync<T>(ItunesWorkerRequest request,
                                        Func<ItunesWorkerResponse, T> select,
                                        TimeSpan timeout,
                                        CancellationToken cancellationToken)

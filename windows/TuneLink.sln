@@ -9,6 +9,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TuneLinkBridge.WinUI", "Tun
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TuneLinkDemoBridge", "..\test-support\TuneLinkDemoBridge\TuneLinkDemoBridge.csproj", "{6FD157C8-11DC-4AF7-9535-DF35B67A9A51}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TuneLinkBridge.Core.Tests", "TuneLinkBridge.Core.Tests\TuneLinkBridge.Core.Tests.csproj", "{AAAA4D6C-9300-44C1-BC97-7AEA70654A13}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -30,5 +32,9 @@ Global
 		{6FD157C8-11DC-4AF7-9535-DF35B67A9A51}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{6FD157C8-11DC-4AF7-9535-DF35B67A9A51}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{6FD157C8-11DC-4AF7-9535-DF35B67A9A51}.Release|Any CPU.Build.0 = Release|Any CPU
+		{AAAA4D6C-9300-44C1-BC97-7AEA70654A13}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{AAAA4D6C-9300-44C1-BC97-7AEA70654A13}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{AAAA4D6C-9300-44C1-BC97-7AEA70654A13}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{AAAA4D6C-9300-44C1-BC97-7AEA70654A13}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

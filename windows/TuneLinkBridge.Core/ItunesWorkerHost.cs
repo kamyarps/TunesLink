@@ -5,7 +5,8 @@ namespace TunesLinkBridge;
 
 internal static class ItunesWorkerHost
 {
-    internal static async Task<int> RunAsync(IMediaController media)
+    internal static async Task<int> RunAsync(IMediaController media,
+        Func<ItunesWorkerRequest, CancellationToken, Task<ItunesWorkerResponse>>? customOperation = null)
     {
         using (media)
         {
@@ -51,15 +52,9 @@ internal static class ItunesWorkerHost
 
                 if (request.Operation == "cancel") continue;
 
-                if (request.Operation == "selfTestMalformedResponse")
-                {
-                    await Console.Out.WriteLineAsync("{").ConfigureAwait(false);
-                    return 1;
-                }
-
                 using CancellationTokenSource cancellation = new();
                 Task<ItunesWorkerResponse> execution =
-                    ExecuteAsync(media, request, cancellation.Token);
+                    ExecuteAsync(media, request, customOperation, cancellation.Token);
                 while (!execution.IsCompleted)
                 {
                     pendingRead ??= requests.ReadLineAsync();
@@ -122,7 +117,9 @@ internal static class ItunesWorkerHost
     }
 
     private static async Task<ItunesWorkerResponse> ExecuteAsync(
-        IMediaController media, ItunesWorkerRequest request, CancellationToken cancellationToken)
+        IMediaController media, ItunesWorkerRequest request,
+        Func<ItunesWorkerRequest, CancellationToken, Task<ItunesWorkerResponse>>? customOperation,
+        CancellationToken cancellationToken)
     {
         switch (request.Operation)
         {
@@ -162,20 +159,12 @@ internal static class ItunesWorkerHost
                 return new ItunesWorkerResponse(request.Id, true,
                     Artwork: await media.GetArtworkAsync(request.TrackId, request.MaxSize,
                         cancellationToken).ConfigureAwait(false));
-            case "selfTestHang":
-                await Task.Delay(Timeout.InfiniteTimeSpan, CancellationToken.None)
-                    .ConfigureAwait(false);
-                throw new InvalidOperationException("Unreachable");
-            case "selfTestCancellableHang":
-                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken)
-                    .ConfigureAwait(false);
-                throw new InvalidOperationException("Unreachable");
-            case "selfTestInternalFailure":
-                throw new InvalidOperationException("Self-test worker failure");
             case "shutdown":
                 return new ItunesWorkerResponse(request.Id, true);
             default:
-                throw new ArgumentException("Unknown worker operation");
+                return customOperation is null
+                    ? throw new ArgumentException("Unknown worker operation")
+                    : await customOperation(request, cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -192,9 +181,7 @@ internal static class ItunesWorkerHost
 
     internal static ItunesWorkerFailureCategory ClassifyFailure(Exception exception)
     {
-        Exception failure = exception is AggregateException aggregate
-            ? aggregate.GetBaseException()
-            : exception;
+        Exception failure = exception.GetBaseException();
         return failure switch
         {
             MediaNotFoundException => ItunesWorkerFailureCategory.NotFound,

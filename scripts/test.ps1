@@ -54,13 +54,11 @@ if ($Component -in @("All", "Android")) {
 
 if ($Component -in @("All", "Windows")) {
     $winUiProject = Join-Path $root "windows\TuneLinkBridge.WinUI\TuneLinkBridge.WinUI.csproj"
-    $integrationProject = Join-Path $root "test-support\TuneLinkDemoBridge\TuneLinkDemoBridge.csproj"
-    Invoke-Checked "dotnet" @("build", $winUiProject, "--configuration", "Release")
-    Invoke-Checked "dotnet" @("build", $integrationProject, "--configuration", "Release")
+    Invoke-Checked "dotnet" @("build", (Join-Path $root "windows\TuneLink.sln"),
+        "--configuration", "Release")
     if (-not $SkipVisualChecks) {
-        Invoke-Checked "dotnet" @("build", $winUiProject, "--configuration", "UIQA")
-        $winUiUiqaExecutable = Join-Path (Split-Path -Parent $winUiProject) `
-            "bin\UIQA\net10.0-windows10.0.17763.0\win-x64\TunesLink.Bridge.exe"
+        $winUiReleaseExecutable = Join-Path (Split-Path -Parent $winUiProject) `
+            "bin\Release\net10.0-windows10.0.17763.0\win-x64\TunesLink.Bridge.exe"
         $layoutCases = @(
             @("480x580", "1.0", "two-phones"),
             @("500x840", "1.0", "paired"),
@@ -69,19 +67,26 @@ if ($Component -in @("All", "Windows")) {
             @("420x640", "2.0", "runtime-unavailable")
         )
         foreach ($layoutCase in $layoutCases) {
-            Invoke-GuiProcessChecked $winUiUiqaExecutable @(
+            Invoke-GuiProcessChecked $winUiReleaseExecutable @(
                 "--verify-layout", "--viewport", $layoutCase[0],
                 "--text-scale", $layoutCase[1], "--ui-state", $layoutCase[2])
         }
     }
     else {
-        Write-Host "Windows visual UIQA previews skipped for this non-interactive build." `
+        Write-Host "Windows layout previews skipped for this non-interactive build." `
             -ForegroundColor DarkGray
     }
-    Invoke-Checked "dotnet" @("format", (Join-Path $root "windows\TuneLink.sln"),
-        "--verify-no-changes", "--severity", "warn", "--no-restore")
+    $previousFormatConfiguration = $env:Configuration
+    $env:Configuration = "Release"
+    try {
+        Invoke-Checked "dotnet" @("format", (Join-Path $root "windows\TuneLink.sln"),
+            "--verify-no-changes", "--severity", "warn", "--no-restore")
+    }
+    finally { $env:Configuration = $previousFormatConfiguration }
     $winUiReleaseExecutable = Join-Path (Split-Path -Parent $winUiProject) `
         "bin\Release\net10.0-windows10.0.17763.0\win-x64\TunesLink.Bridge.exe"
+    $testsProject = Join-Path $root "windows\TuneLinkBridge.Core.Tests\TuneLinkBridge.Core.Tests.csproj"
+    Invoke-Checked "dotnet" @("run", "--project", $testsProject, "--configuration", "Release", "--no-build")
     Invoke-GuiProcessChecked $winUiReleaseExecutable @("--self-test")
 }
 

@@ -3,66 +3,127 @@
   "max_color_distance": 18,
   "screenshots": {
     "android/app/build/reports/device-smoke/phone-portrait-motion.png": {
-      "hash": "fffffffffffffdbfffff8ce3dfffffff80018001fe7fffffffffffbfffffffff",
-      "average_rgb": [237, 226, 237]
+      "hash": "fffffffffe7ffc3fffff8001cb1bd0f380018001f81ff81ffffffe7fffffffff",
+      "average_rgb": [
+        242,
+        235,
+        242
+      ]
     },
     "android/app/build/reports/device-smoke/phone-portrait-reduced-motion.png": {
-      "hash": "fffffffffffffdbfffff8ce3dfffffff80018001fe7fffffffffffbfffffffff",
-      "average_rgb": [237, 226, 237]
+      "hash": "fffffffffe7ffc3fffff8001cb1bd0f380018001f81ff81ffffffe7fffffffff",
+      "average_rgb": [
+        242,
+        235,
+        242
+      ]
     },
     "android/app/build/reports/device-smoke/phone-landscape-font-200.png": {
-      "hash": "fffffe7fffffffffeb7ff027ffffff2bffffdfffffffffff80ff80e380ffffff",
-      "average_rgb": [231, 223, 231]
+      "hash": "fffffe7fff7fffffe00fe007ffffc003feffe003fe7fffff00ff008300ffffff",
+      "average_rgb": [
+        236,
+        230,
+        237
+      ]
     },
     "android/app/build/reports/device-smoke/tablet-portrait.png": {
-      "hash": "fffffffffffffffffe7fffffffffffffc003dffbffffffffffffffffffffffff",
-      "average_rgb": [247, 243, 248]
+      "hash": "fffffffffffffffffe7ff00fc003c007c003fc3ff81ffc7fffffffffffffffff",
+      "average_rgb": [
+        245,
+        241,
+        246
+      ]
     },
     "android/app/build/reports/device-smoke/tablet-landscape.png": {
-      "hash": "fffffffffffffffffffffeffff9ffc9f80ff80fffffffffffeffffffffffffff",
-      "average_rgb": [245, 239, 245]
+      "hash": "fffffffffffffe7ffffff81ff00ff00f80c780c7fc3ffffffe7fffffffffffff",
+      "average_rgb": [
+        245,
+        241,
+        246
+      ]
     },
     "android/app/build/reports/device-integration/paired-library-categories.png": {
-      "hash": "cffdffffffffffffafffffffffffffffffffffffffffffffffffbfffffff8fff",
-      "average_rgb": [247, 246, 249]
+      "hash": "87c18fff83ff83ff87ff83ffafffa7ff83fdffffffffffffffff01fd1fffce7b",
+      "average_rgb": [
+        246,
+        245,
+        247
+      ]
     },
     "android/app/build/reports/device-integration/paired-library-songs.png": {
-      "hash": "c7fdffffffff9fff95ffffff9ffdffff9fff95ffffff9ffdffffbfffffff8fff",
-      "average_rgb": [238, 235, 244]
+      "hash": "c7ffffff9fff9ffd81ff9fff80ff9dff9fff90ff9fff80ff9fff03fd9fffde7b",
+      "average_rgb": [
+        235,
+        232,
+        242
+      ]
     },
     "android/app/build/reports/device-integration/now-playing-modes.png": {
-      "hash": "e7fbe007e007e007e007e007e007e007b7fffffffffffe7ffe7fffffffffffff",
-      "average_rgb": [196, 182, 224]
+      "hash": "ffffe007e007e007e007e007e007e007fffffffffffffe7ffe7fffffffffffff",
+      "average_rgb": [
+        200,
+        187,
+        226
+      ]
     },
     "android/app/build/reports/device-integration/searched-library.png": {
-      "hash": "cfffffffffffffff97ffffffffffffffffff0003f5b700005ffa1ff800000ff0",
-      "average_rgb": [240, 240, 245]
+      "hash": "87f9bffd87fdffff80fd9fffffffffffffff00000658ffff262625b00ff007f0",
+      "average_rgb": [
+        241,
+        239,
+        244
+      ]
     },
     "android/app/build/reports/device-integration/paired-large-text-player-controls.png": {
-      "hash": "8195f00ff00ff00ff00ff00ff00fb3fffffffffffffffe6fffffffffffffffff",
-      "average_rgb": [205, 194, 225]
+      "hash": "81fff00ff00ff00ff00ff00ff00f81ffffffbffffe7ff42fffffffffffffffff",
+      "average_rgb": [
+        212,
+        202,
+        230
+      ]
     },
     "android/app/build/reports/device-integration/paired-font-200-landscape.png": {
-      "hash": "7fffeffff7ffffffcbffffffeffffffffffff7fff3ffffffffffddffdfffffff",
-      "average_rgb": [243, 242, 245],
+      "hash": "3ffcc7e1c7f97fffc3ffffffc3ffc1ffffffc3ffc3ffffffffffc1ffc1fec1ff",
+      "average_rgb": [
+        244,
+        244,
+        246
+      ],
       "max_hash_distance": 12,
       "max_color_distance": 8
     },
     "android/app/build/reports/device-integration/changed-certificate-rejected.png": {
-      "hash": "00000000000000000000757672265dfe776e7ffe7f027ffe0000000000000000",
-      "average_rgb": [186, 184, 186]
+      "hash": "000000000000000027fc7ffe7ffe7ffe7ffe7ffe7f027ffe0000000000000000",
+      "average_rgb": [
+        194,
+        191,
+        194
+      ]
     },
     "android/app/build/reports/device-integration/paired-landscape.png": {
-      "hash": "ffffb69ff79fffffffff77ffffff9fffffffbfffffffb000f00010001dffffff",
-      "average_rgb": [243, 239, 242]
+      "hash": "9fff040f800a9fffffffe3fdffff3fffffff39fff0fe3001e000100110fe387f",
+      "average_rgb": [
+        242,
+        238,
+        241
+      ]
     },
     "android/app/build/reports/device-integration/command-error-tablet.png": {
-      "hash": "bfffbfffaf9fffffffffffffffffffff20000000fffffbd6fffffffffffff797",
-      "average_rgb": [243, 239, 242]
+      "hash": "bfffadff000e2fff67febffffffff3b7600000003393f382f393fffff392f393",
+      "average_rgb": [
+        245,
+        243,
+        245
+      ]
     },
     "android/app/build/reports/device-integration/tablet-medium-width.png": {
-      "hash": "dffffffafffff3fffffffffff0001ffff7fff7fff7fffffffdfffdffffffffdf",
-      "average_rgb": [244, 243, 245]
+      "hash": "0fff3c781ff8f1fdfffff87f1000181ff81ff81ff81ff81ff81ff81ff81ff81f",
+      "average_rgb": [
+        242,
+        241,
+        243
+      ]
     }
-  }
+  },
+  "algorithm": "area-average-v1"
 }
