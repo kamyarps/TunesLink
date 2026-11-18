@@ -27,7 +27,7 @@
     <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.6.5" />
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.7.0" />
     <ProjectReference Include="..\TuneLinkBridge.Core\TuneLinkBridge.Core.csproj" />
     <FrameworkReference Include="Microsoft.WindowsDesktop.App.WindowsForms" />
   </ItemGroup>
