@@ -11,6 +11,8 @@ internal static partial class BridgeSelfTest
     {
         public void WriteText(string path, string contents) =>
             throw new IOException("Injected persistence failure");
+        public void Write(string path, Action<Stream> write) =>
+            throw new IOException("Injected persistence failure");
     }
 
     private sealed class MutableTimeProvider(DateTimeOffset now) : TimeProvider

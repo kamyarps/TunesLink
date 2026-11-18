@@ -16,20 +16,20 @@ internal static class LiveItunesTest
             passed.Add("state");
 
             Progress("Reading the song library");
-            LibraryPage library = await controller.GetLibraryAsync("", 0, 5)
+            LibraryPage library = await WhenIndexedAsync(() => controller.GetLibraryAsync("", 0, 5))
                 .ConfigureAwait(false);
             passed.Add($"library ({library.Total} tracks)");
 
             foreach (string kind in new[] { "artists", "albums", "genres", "playlists" })
             {
                 Progress($"Browsing {kind}");
-                LibraryCollectionPage collections = await controller.GetCollectionsAsync(
-                    kind, "", 0, 5).ConfigureAwait(false);
+                LibraryCollectionPage collections = await WhenIndexedAsync(() =>
+                    controller.GetCollectionsAsync(kind, "", 0, 5)).ConfigureAwait(false);
                 LibraryCollection? populated = collections.Items.FirstOrDefault(
                     collection => collection.TrackCount > 0);
                 if (populated is null) continue;
-                LibraryPage scoped = await controller.GetCollectionTracksAsync(kind,
-                    populated.Id, "", 0, 5).ConfigureAwait(false);
+                LibraryPage scoped = await WhenIndexedAsync(() => controller.GetCollectionTracksAsync(kind,
+                    populated.Id, "", 0, 5)).ConfigureAwait(false);
                 Require(scoped.Total > 0 && scoped.Items.Count > 0,
                     $"The first {kind} collection returned no tracks");
                 passed.Add($"{kind} ({collections.Total})");
@@ -53,6 +53,20 @@ internal static class LiveItunesTest
         {
             Console.Error.WriteLine("Live iTunes test failed: " + exception.Message);
             return 1;
+        }
+    }
+
+    private static async Task<T> WhenIndexedAsync<T>(Func<Task<T>> read)
+    {
+        using CancellationTokenSource timeout = new(TimeSpan.FromMinutes(30));
+        while (true)
+        {
+            try { return await read().WaitAsync(timeout.Token).ConfigureAwait(false); }
+            catch (ItunesWorkerException exception)
+                when (exception.Category == ItunesWorkerFailureCategory.LibraryIndexing)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(2), timeout.Token).ConfigureAwait(false);
+            }
         }
     }
 

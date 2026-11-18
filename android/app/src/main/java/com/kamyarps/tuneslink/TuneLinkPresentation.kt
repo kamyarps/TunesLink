@@ -400,6 +400,7 @@ internal fun bridgeErrorRes(code: BridgeClient.ErrorCode): Int? = when (code) {
     BridgeClient.ErrorCode.PAIRING_RATE_LIMITED -> R.string.pairing_rate_limited
     BridgeClient.ErrorCode.BUSY -> R.string.error_bridge_busy
     BridgeClient.ErrorCode.ITUNES_BUSY -> R.string.error_itunes_busy
+    BridgeClient.ErrorCode.LIBRARY_INDEXING -> R.string.library_indexing
     BridgeClient.ErrorCode.ITUNES_UNAVAILABLE -> R.string.error_itunes_unavailable
     BridgeClient.ErrorCode.NOT_FOUND -> R.string.error_item_not_found
     else -> null

@@ -25,7 +25,8 @@ internal sealed record ItunesWorkerResponse(
     ArtworkData? Artwork = null,
     string? Error = null,
     string? ErrorType = null,
-    ItunesWorkerFailureCategory? FailureCategory = null);
+    ItunesWorkerFailureCategory? FailureCategory = null,
+    bool IndexPending = false);
 
 internal enum ItunesWorkerFailureCategory
 {
@@ -43,10 +44,12 @@ internal enum ItunesWorkerFailureCategory
     ItunesBusy = 10,
     // A COM call failed for a reason that does not affect the connection, such as one track's
     // artwork failing to save.
-    ComFailure = 11
+    ComFailure = 11,
+    LibraryIndexing = 12
 }
 
 internal sealed class MediaNotFoundException(string message) : ArgumentException(message);
+internal sealed class LibraryIndexingException() : InvalidOperationException("Indexing the iTunes library.");
 
 internal sealed class MediaUnavailableException(string message)
     : InvalidOperationException(message);
@@ -75,7 +78,8 @@ internal static class ItunesWorkerProtocol
             or ItunesWorkerFailureCategory.Cancelled
             or ItunesWorkerFailureCategory.Unavailable
             or ItunesWorkerFailureCategory.ItunesBusy
-            or ItunesWorkerFailureCategory.ComFailure;
+            or ItunesWorkerFailureCategory.ComFailure
+            or ItunesWorkerFailureCategory.LibraryIndexing;
 
     // Only a dead server or a severed connection makes the worker's COM state unusable. Every
     // other HRESULT is a failure of one call, so recycling the worker would only lose its caches.

@@ -10,6 +10,8 @@ internal static class ItunesWorkerHost
     {
         using (media)
         {
+            ItunesController? controller = media as ItunesController;
+            if (controller is not null) controller.HostDrivesIndex = true;
             Console.OutputEncoding = System.Text.Encoding.UTF8;
             using StreamReader input = new(Console.OpenStandardInput(),
                 System.Text.Encoding.UTF8, detectEncodingFromByteOrderMarks: false);
@@ -97,6 +99,7 @@ internal static class ItunesWorkerHost
                     continue;
                 }
 
+                if (controller is { IndexPending: true }) response = response with { IndexPending = true };
                 await WriteAsync(response).ConfigureAwait(false);
                 if (request.Operation == "shutdown") return 0;
             }
@@ -123,6 +126,9 @@ internal static class ItunesWorkerHost
     {
         switch (request.Operation)
         {
+            case "indexStep" when media is ItunesController controller:
+                await controller.AdvanceIndexAsync(cancellationToken).ConfigureAwait(false);
+                return new ItunesWorkerResponse(request.Id, true);
             case "state":
                 return new ItunesWorkerResponse(request.Id, true,
                     State: await media.GetStateAsync(cancellationToken).ConfigureAwait(false));
@@ -185,6 +191,7 @@ internal static class ItunesWorkerHost
         return failure switch
         {
             MediaNotFoundException => ItunesWorkerFailureCategory.NotFound,
+            LibraryIndexingException => ItunesWorkerFailureCategory.LibraryIndexing,
             MediaUnavailableException => ItunesWorkerFailureCategory.Unavailable,
             ArgumentException => ItunesWorkerFailureCategory.Validation,
             OperationCanceledException => ItunesWorkerFailureCategory.Timeout,

@@ -89,12 +89,11 @@ internal sealed class LibraryIndexStore
             value.SourceSignature, value.CreatedAt);
         if (!IsValid(envelope))
             throw new ArgumentException("The library index contains invalid data", nameof(value));
-        if (EstimatedMaximumBytes(envelope) > MaxFileBytes)
-            throw new ArgumentException("The library index exceeds its storage limit", nameof(value));
-        string json = JsonSerializer.Serialize(envelope);
-        if (Encoding.UTF8.GetByteCount(json) > MaxFileBytes)
-            throw new ArgumentException("The library index exceeds its storage limit", nameof(value));
-        persistence.WriteText(path, json);
+        persistence.Write(path, stream =>
+        {
+            using BoundedIndexStream bounded = new(stream, MaxFileBytes);
+            JsonSerializer.Serialize(bounded, envelope);
+        });
     }
 
     private static bool IsValid(Envelope? value)
@@ -133,18 +132,24 @@ internal sealed class LibraryIndexStore
     private static bool IsSha256(string? value) => value is { Length: 64 }
         && value.All(Uri.IsHexDigit);
 
-    private static long EstimatedMaximumBytes(Envelope value)
+    internal sealed class BoundedIndexStream(Stream output, long limit) : Stream
     {
-        long characters = value.Tracks.Sum(track => (long)track.Id.Length + track.Title.Length
-            + track.Artist.Length + track.Album.Length + track.AlbumArtist.Length
-            + track.ArtworkId.Length)
-            + value.TrackGenres.Sum(genre => (long)genre.Length)
-            + value.Artists.Concat(value.Albums).Concat(value.Genres)
-                .Sum(collection => (long)collection.Id.Length + collection.Title.Length
-                    + collection.Subtitle.Length + collection.ArtworkId.Length);
-        long structural = (long)value.Tracks.Length * 208
-            + (long)(value.Artists.Length + value.Albums.Length + value.Genres.Length) * 128
-            + 1024;
-        return characters * 6 + structural;
+        public override void Write(byte[] buffer, int offset, int count) =>
+            Write(buffer.AsSpan(offset, count));
+        public override void Write(ReadOnlySpan<byte> buffer)
+        {
+            if (buffer.Length > limit - output.Position)
+                throw new IOException("The library index exceeds its storage limit");
+            output.Write(buffer);
+        }
+        public override void Flush() => output.Flush();
+        public override bool CanRead => false;
+        public override bool CanSeek => false;
+        public override bool CanWrite => true;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
     }
 }

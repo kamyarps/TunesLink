@@ -72,6 +72,8 @@ internal sealed partial class BridgeServer
         ItunesWorkerException worker => worker.Category switch
         {
             ItunesWorkerFailureCategory.Timeout => ApiError.Busy,
+            ItunesWorkerFailureCategory.LibraryIndexing =>
+                new(503, "library_indexing", "Indexing the iTunes library.", 2),
             ItunesWorkerFailureCategory.ItunesBusy => ApiError.ItunesBusy,
             ItunesWorkerFailureCategory.Unavailable =>
                 ApiError.ItunesUnavailable with { Message = worker.Message },

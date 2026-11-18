@@ -5,6 +5,9 @@ internal static class Program
     [STAThread]
     private static int Main(string[] args)
     {
+        const string indexWorker = "--large-library-test=";
+        if (args.Length == 1 && args[0].StartsWith(indexWorker, StringComparison.Ordinal))
+            return BridgeSelfTest.RunLargeLibraryWorker(args[0][indexWorker.Length..]);
         if (args.Contains("--itunes-worker-demo", StringComparer.Ordinal))
             return ItunesWorkerHost.RunAsync(new DemoController(), FaultAsync).GetAwaiter().GetResult();
         if (args.Contains("--itunes-worker", StringComparer.Ordinal))

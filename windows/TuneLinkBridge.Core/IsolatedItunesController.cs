@@ -69,6 +69,8 @@ internal sealed class ItunesWorkerClient : IDisposable
     private BoundedLineReader? workerResponses;
     private int nextRequestId;
     private int workerGeneration;
+    private Task indexJob = Task.CompletedTask;
+    private Exception? indexFailure;
     private bool disposed;
 
     internal ItunesWorkerClient(string workerArgument, bool diagnostics,
@@ -90,27 +92,27 @@ internal sealed class ItunesWorkerClient : IDisposable
 
     public Task<LibraryPage> GetLibraryAsync(string query, int offset, int limit,
         CancellationToken cancellationToken = default) =>
-        CallAsync(new ItunesWorkerRequest(NextId(), "library", query, offset, limit),
+        CallLibraryAsync(new ItunesWorkerRequest(NextId(), "library", query, offset, limit),
             response => response.Library ?? throw MissingPayload("library"),
             BridgeProtocol.LibraryTimeout, cancellationToken);
 
     public Task<LibraryCollectionPage> GetCollectionsAsync(string kind, string query, int offset,
         int limit, CancellationToken cancellationToken = default) =>
-        CallAsync(new ItunesWorkerRequest(NextId(), "collections", query, offset, limit,
+        CallLibraryAsync(new ItunesWorkerRequest(NextId(), "collections", query, offset, limit,
                 CollectionKind: kind),
             response => response.Collections ?? throw MissingPayload("collections"),
             BridgeProtocol.CollectionTimeout, cancellationToken);
 
     public Task<LibraryCollectionPage> GetCollectionAlbumsAsync(string kind, string id, string query,
         int offset, int limit, CancellationToken cancellationToken = default) =>
-        CallAsync(new ItunesWorkerRequest(NextId(), "collectionAlbums", query, offset, limit,
+        CallLibraryAsync(new ItunesWorkerRequest(NextId(), "collectionAlbums", query, offset, limit,
                 CollectionKind: kind, CollectionId: id),
             response => response.Collections ?? throw MissingPayload("collection albums"),
             BridgeProtocol.CollectionTimeout, cancellationToken);
 
     public Task<LibraryPage> GetCollectionTracksAsync(string kind, string id, string query,
         int offset, int limit, CancellationToken cancellationToken = default) =>
-        CallAsync(new ItunesWorkerRequest(NextId(), "collectionTracks", query, offset, limit,
+        CallLibraryAsync(new ItunesWorkerRequest(NextId(), "collectionTracks", query, offset, limit,
                 CollectionKind: kind, CollectionId: id),
             response => response.Library ?? throw MissingPayload("collection tracks"),
             BridgeProtocol.CollectionTimeout, cancellationToken);
@@ -139,6 +141,24 @@ internal sealed class ItunesWorkerClient : IDisposable
 
     internal int NextId() => Interlocked.Increment(ref nextRequestId);
 
+    private async Task<T> CallLibraryAsync<T>(ItunesWorkerRequest request,
+        Func<ItunesWorkerResponse, T> select, TimeSpan timeout, CancellationToken token)
+    {
+        try
+        {
+            return await CallAsync(request, select, timeout, token).ConfigureAwait(false);
+        }
+        catch (ItunesWorkerException exception) when (exception.Category == ItunesWorkerFailureCategory.LibraryIndexing)
+        {
+            // A small library can finish within the original request, including for older phones.
+            Task job = indexJob;
+            await Task.WhenAny(job, Task.Delay(TimeSpan.FromMilliseconds(350), token)).ConfigureAwait(false);
+            token.ThrowIfCancellationRequested();
+            if (!job.IsCompleted) throw;
+        }
+        return await CallAsync(request with { Id = NextId() }, select, timeout, token).ConfigureAwait(false);
+    }
+
     internal async Task<T> CallAsync<T>(ItunesWorkerRequest request,
                                        Func<ItunesWorkerResponse, T> select,
                                        TimeSpan timeout,
@@ -156,6 +176,7 @@ internal sealed class ItunesWorkerClient : IDisposable
         {
             await requestGate.WaitAsync(operation.Token).ConfigureAwait(false);
             entered = true;
+            ObjectDisposedException.ThrowIf(disposed, this);
             Process process = EnsureWorker();
             BoundedLineReader responses = workerResponses!;
             string requestJson = JsonSerializer.Serialize(request, ItunesWorkerProtocol.JsonOptions);
@@ -180,6 +201,14 @@ internal sealed class ItunesWorkerClient : IDisposable
             }
             if (response.Id != request.Id)
                 throw MalformedResponse("The iTunes worker response was out of sequence");
+            if (request.Operation != "indexStep" && NeedsIndex(response))
+            {
+                terminateOnFailure = false;
+                Exception? failure = Interlocked.Exchange(ref indexFailure, null);
+                if (failure is not null && !response.Ok)
+                    System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw(failure);
+                StartIndexJob();
+            }
             if (!response.Ok)
             {
                 ItunesWorkerFailureCategory category = FailureCategory(response);
@@ -239,11 +268,41 @@ internal sealed class ItunesWorkerClient : IDisposable
             if (line is null) return false;
             ItunesWorkerResponse? response = JsonSerializer.Deserialize<ItunesWorkerResponse>(
                 line, ItunesWorkerProtocol.JsonOptions);
-            return response is not null && response.Id == requestId;
+            if (response is null || response.Id != requestId) return false;
+            if (NeedsIndex(response)) StartIndexJob();
+            return true;
         }
         catch
         {
             return false;
+        }
+    }
+
+    private static bool NeedsIndex(ItunesWorkerResponse response) => response.IndexPending
+        || response.FailureCategory == ItunesWorkerFailureCategory.LibraryIndexing;
+
+    // Called with requestGate held. Each step yields the pipe to other waiting requests.
+    private void StartIndexJob()
+    {
+        if (!disposed && indexJob.IsCompleted) indexJob = BuildIndexAsync();
+    }
+
+    private async Task BuildIndexAsync()
+    {
+        try
+        {
+            bool pending;
+            do
+            {
+                pending = await CallAsync(new ItunesWorkerRequest(NextId(), "indexStep"),
+                    response => response.IndexPending, BridgeProtocol.CollectionTimeout,
+                    CancellationToken.None).ConfigureAwait(false);
+            } while (!disposed && pending);
+        }
+        catch (Exception exception)
+        {
+            Interlocked.Exchange(ref indexFailure, exception);
+            if (diagnostics && !disposed) BridgeDiagnostics.Record("library.index", exception);
         }
     }
 
@@ -263,7 +322,9 @@ internal sealed class ItunesWorkerClient : IDisposable
         if (!entered) return;
         try
         {
-            if (!disposed) TerminateWorker();
+            if (disposed) return;
+            if (indexJob.IsCompleted) TerminateWorker();
+            else idleTimer.Change(workerIdleTimeout, Timeout.InfiniteTimeSpan);
         }
         finally { requestGate.Release(); }
     }

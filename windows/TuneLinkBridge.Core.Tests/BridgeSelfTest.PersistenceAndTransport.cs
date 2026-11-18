@@ -158,6 +158,19 @@ internal static partial class BridgeSelfTest
             "library index rejects a genre column that does not match its tracks");
         string libraryIndexPath = Path.Combine(libraryIndexDirectory, "Cache",
             "library-index-v1.json");
+        bool capped = false;
+        try
+        {
+            AtomicFilePersistence.Instance.Write(libraryIndexPath, output =>
+            {
+                using LibraryIndexStore.BoundedIndexStream bounded = new(output, 8);
+                bounded.Write(new byte[8]);
+                bounded.WriteByte(1);
+            });
+        }
+        catch (IOException) { capped = true; }
+        Ensure(capped && libraryIndexStore.Load()?.Revision == cachedIndex.Revision,
+            "a write exceeding the encoded-byte limit preserves the last complete index");
         File.WriteAllText(libraryIndexPath, "{not-json");
         Ensure(new LibraryIndexStore(libraryIndexDirectory).Load() is null,
             "corrupt library index fails closed");

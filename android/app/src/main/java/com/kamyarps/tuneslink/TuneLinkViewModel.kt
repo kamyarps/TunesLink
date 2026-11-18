@@ -86,6 +86,7 @@ internal class TunesLinkViewModel(
     internal var artworkFailures = 0
     internal var artworkRetryJob: Job? = null
     internal val artworkSession = MutableStateFlow(0L)
+    internal val foreground = MutableStateFlow(false)
     internal var artworkRequest: BridgeRepository.RequestHandle = BridgeRepository.RequestHandle.NONE
     /** Queued or in-flight playback commands, by pending-mutation operation ID. */
     internal val commandRequests = mutableMapOf<Long, BridgeRepository.RequestHandle>()
@@ -182,6 +183,7 @@ internal class TunesLinkViewModel(
     }
 
     private fun resumeForeground() {
+        foreground.value = true
         backgroundStopJob?.cancel()
         backgroundStopJob = null
         artworkRefreshJob?.cancel()
@@ -240,6 +242,7 @@ internal class TunesLinkViewModel(
     }
 
     fun onBackground() {
+        foreground.value = false
         foregroundRequest.cancel()
         storageRecoveryRequest.cancel()
         artworkRefreshJob?.cancel()

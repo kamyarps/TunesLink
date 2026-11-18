@@ -176,7 +176,7 @@ class BridgeClient extends BridgeClientSupport {
     enum ErrorCode {
         NONE, PAIRING_RATE_LIMITED, PAIRING_CLOSED, PAIRING_CODE_INCORRECT, PAIRING_DEVICE_LIMIT,
         PAIRING_SAVE_FAILED, BUSY, ITUNES_BUSY, ITUNES_UNAVAILABLE, NOT_FOUND, INVALID_REQUEST,
-        NOT_PAIRED, SUPERSEDED, BRIDGE_ERROR;
+        NOT_PAIRED, SUPERSEDED, BRIDGE_ERROR, LIBRARY_INDEXING;
 
         static ErrorCode fromWire(String code) {
             return switch (code == null ? "" : code) {
@@ -186,6 +186,7 @@ class BridgeClient extends BridgeClientSupport {
                 case "pairing_device_limit" -> PAIRING_DEVICE_LIMIT;
                 case "pairing_save_failed" -> PAIRING_SAVE_FAILED;
                 case "busy" -> BUSY;
+                case "library_indexing" -> LIBRARY_INDEXING;
                 case "itunes_busy" -> ITUNES_BUSY;
                 case "itunes_unavailable" -> ITUNES_UNAVAILABLE;
                 case "not_found" -> NOT_FOUND;

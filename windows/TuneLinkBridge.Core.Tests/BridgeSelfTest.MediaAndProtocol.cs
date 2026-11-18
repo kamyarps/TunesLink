@@ -341,7 +341,7 @@ internal static partial class BridgeSelfTest
     /// <summary>An iTunes library with songs, a movie, a podcast, and iTunes' own playlists.</summary>
     public sealed class LibraryAppProbe
     {
-        public LibraryAppProbe()
+        public LibraryAppProbe(int additionalSongs = 0)
         {
             List<LibraryTrackProbe> all =
             [
@@ -352,6 +352,9 @@ internal static partial class BridgeSelfTest
                 new(5, "Five", "Guest", "Élan", "Pop", "Aardvark Band"),
                 new(6, "Dancing Queen", "ABBA", "Arrival", "Pop"),
             ];
+            string longTitle = new('a', 180);
+            for (int i = 0; i < additionalSongs; i++)
+                all.Add(new LibraryTrackProbe(7 + i, longTitle, "Artist", "Album", "Rock"));
             LibraryPlaylist = new PlaylistProbe("Library", 2, -1, all, kind: 1);
             RoadTrip = new PlaylistProbe("Road Trip", 20, 0, [all[0], all[1], all[4]]);
             LibrarySource = new PlaylistListProbe(
@@ -412,7 +415,12 @@ internal static partial class BridgeSelfTest
         public void Reverse() => tracks.Reverse();
         public LibraryTrackProbe? FirstOrDefault(Func<LibraryTrackProbe, bool> match) =>
             tracks.FirstOrDefault(match);
-        public IEnumerator<LibraryTrackProbe> GetEnumerator() => tracks.GetEnumerator();
+        public Action? BeforeEnumeration { get; set; }
+        public IEnumerator<LibraryTrackProbe> GetEnumerator()
+        {
+            BeforeEnumeration?.Invoke();
+            return tracks.GetEnumerator();
+        }
         System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() =>
             GetEnumerator();
     }
@@ -461,6 +469,8 @@ internal static partial class BridgeSelfTest
         (Exception Failure, int Status, string Code, string? RetryAfter)[] cases =
         [
             (new OperationCanceledException(), 503, "busy", "2"),
+            (new ItunesWorkerException(ItunesWorkerFailureCategory.LibraryIndexing, "indexing"), 503,
+                "library_indexing", "2"),
             (new ItunesWorkerException(ItunesWorkerFailureCategory.Timeout, "slow"), 503, "busy", "2"),
             (new ItunesWorkerException(ItunesWorkerFailureCategory.ItunesBusy, "busy"), 503,
                 "itunes_busy", "3"),

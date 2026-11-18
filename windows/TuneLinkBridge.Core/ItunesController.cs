@@ -222,6 +222,10 @@ internal sealed partial class ItunesController : IMediaController
                     excluded: excluded);
             }
             tracks = playlist.Search(query.Trim(), SearchAllFields);
+            if (HostDrivesIndex && tracks is not null && Convert.ToInt32(tracks.Count) > DirectScanLimit)
+            {
+                RequestLibraryIndex();
+            }
             return ReadSearchPage((object?)tracks, query.Trim(), offset, limit,
                 excluded.DatabaseIds, cancellationToken);
         }
@@ -270,6 +274,8 @@ internal sealed partial class ItunesController : IMediaController
     {
         dynamic app = GetITunes();
         LibrarySnapshot? snapshot = UsableLibrarySnapshot((object)app, cancellationToken);
+        if (snapshot is null && HostDrivesIndex && RequiresTrackFilter(kind)
+            && ItunesCollectionId.IsValidText(id, kind)) RequestLibraryIndex();
         if (snapshot is not null
             && kind is "artists" or "albums" or "genres"
             && ItunesCollectionId.IsValidText(id, kind))
@@ -1032,9 +1038,9 @@ internal sealed partial class ItunesController : IMediaController
     // grouping keys, so it hands them over instead of paying for the same COM reads a second
     // time per track.
     private LibraryTrack ReadLibraryTrack(dynamic track, string artist, string album,
-        string albumArtist)
+        string albumArtist, string? id = null)
     {
-        string id = RegisterTrack(track);
+        id ??= RegisterTrack(track);
         string title = ReadString(track, "Name");
         return new LibraryTrack(
             id,
@@ -1232,80 +1238,84 @@ internal sealed partial class ItunesController : IMediaController
     private ExcludedMedia ExcludedMediaFor(object appObject, object libraryObject,
         bool withLibraryIndices, CancellationToken cancellationToken)
     {
-        dynamic app = appObject;
-        dynamic library = libraryObject;
-        dynamic? libraryTracks = null;
-        dynamic? source = null;
-        dynamic? playlists = null;
+        object tracks = ((dynamic)libraryObject).Tracks;
         try
         {
-            libraryTracks = library.Tracks;
-            string stamp = string.Join(':',
-                Math.Max(0, Convert.ToInt32(libraryTracks.Count)).ToString(CultureInfo.InvariantCulture),
-                ReadDouble(libraryObject, "Duration").ToString("R", CultureInfo.InvariantCulture),
-                ReadDouble(libraryObject, "Size").ToString("R", CultureInfo.InvariantCulture));
+            string stamp = ExclusionStamp(libraryObject, tracks);
             if (excludedMedia is { } cached && cached.LibraryStamp == stamp
                 && (!withLibraryIndices || cached.LibraryIndices is not null))
                 return cached;
             HashSet<int> ids = [];
-            List<int> positions = [];
+            List<int>? positions = withLibraryIndices ? [] : null;
             try
             {
-                source = app.LibrarySource;
-                playlists = source.Playlists;
-                int count = Math.Max(0, Convert.ToInt32(playlists.Count));
-                for (int index = 1; index <= count; index++)
+                int visited = 0;
+                foreach (bool _ in ScanExcludedMedia(appObject, tracks, ids, positions))
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    dynamic? playlist = null;
-                    dynamic? tracks = null;
-                    try
-                    {
-                        playlist = playlists.Item(index);
-                        object? playlistObject = playlist;
-                        if (playlistObject is null || ReadInt(playlistObject, "Kind") != 2
-                            || ReadInt(playlistObject, "SpecialKind") is not (SpecialKindPodcasts
-                                or SpecialKindMovies or SpecialKindTvShows or SpecialKindAudiobooks))
-                            continue;
-                        tracks = playlist.Tracks;
-                        foreach (object track in ComItems((object?)tracks))
-                        {
-                            try
-                            {
-                                cancellationToken.ThrowIfCancellationRequested();
-                                int databaseId = ReadInt(track, "TrackDatabaseID");
-                                if (databaseId == 0 || !ids.Add(databaseId) || !withLibraryIndices)
-                                    continue;
-                                int position = LibraryPosition(appObject, (object)libraryTracks, track);
-                                if (position > 0) positions.Add(position);
-                            }
-                            finally { ReleaseCom(track); }
-                        }
-                    }
-                    finally
-                    {
-                        ReleaseCom(tracks);
-                        ReleaseCom(playlist);
-                    }
+                    if (HostDrivesIndex && ++visited > DirectScanLimit)
+                        RequestLibraryIndex();
                 }
             }
-            catch (Exception exception) when (exception is not OperationCanceledException)
+            catch (Exception exception) when (exception is not (OperationCanceledException or LibraryIndexingException))
             {
-                // Unreadable media playlists leave the library shown whole rather than not at
-                // all. The failure is not cached, so the next request tries again.
                 BridgeDiagnostics.Record("library.media", exception);
                 return new ExcludedMedia(stamp, [], withLibraryIndices ? [] : null);
             }
-            excludedMedia = new ExcludedMedia(stamp, ids,
-                withLibraryIndices ? [.. positions.Order()] : null);
+            excludedMedia = new ExcludedMedia(stamp, ids, positions?.Order().ToArray());
             return excludedMedia;
         }
-        finally
+        finally { ReleaseCom(tracks); }
+    }
+
+    private static string ExclusionStamp(object library, dynamic tracks) => string.Join(':',
+        Math.Max(0, Convert.ToInt32(tracks.Count)).ToString(CultureInfo.InvariantCulture),
+        ReadDouble(library, "Duration").ToString("R", CultureInfo.InvariantCulture),
+        ReadDouble(library, "Size").ToString("R", CultureInfo.InvariantCulture));
+
+    // Yield after every playlist or track so a large podcast collection shares the same
+    // work budget as the subsequent music scan.
+    private static IEnumerable<bool> ScanExcludedMedia(object app, object libraryTracks,
+        HashSet<int> ids, List<int>? positions)
+    {
+        dynamic source = ((dynamic)app).LibrarySource;
+        dynamic? playlists = null;
+        try
         {
-            ReleaseCom(playlists);
-            ReleaseCom(source);
-            ReleaseCom(libraryTracks);
+            playlists = source.Playlists;
+            int count = Convert.ToInt32(playlists.Count);
+            for (int index = 1; index <= count; index++)
+            {
+                yield return true;
+                dynamic? playlist = playlists.Item(index);
+                dynamic? tracks = null;
+                try
+                {
+                    object? item = playlist;
+                    if (item is null || ReadInt(item, "Kind") != 2
+                        || ReadInt(item, "SpecialKind") is not (SpecialKindPodcasts
+                            or SpecialKindMovies or SpecialKindTvShows or SpecialKindAudiobooks))
+                        continue;
+                    tracks = playlist!.Tracks;
+                    foreach (object track in ComItems((object?)tracks))
+                    {
+                        try
+                        {
+                            int id = ReadInt(track, "TrackDatabaseID");
+                            if (id != 0 && ids.Add(id) && positions is not null)
+                            {
+                                int position = LibraryPosition(app, libraryTracks, track);
+                                if (position > 0) positions.Add(position);
+                            }
+                        }
+                        finally { ReleaseCom(track); }
+                        yield return true;
+                    }
+                }
+                finally { ReleaseCom(tracks); ReleaseCom(playlist); }
+            }
         }
+        finally { ReleaseCom(playlists); ReleaseCom(source); }
     }
 
     /// <summary>Where a track from another playlist sits in the library playlist, or zero.</summary>
@@ -1550,15 +1560,36 @@ internal sealed partial class ItunesController : IMediaController
         catch (Exception exception) when (!IsItunesUnreachable(exception)) { return null; }
     }
 
-    private string RegisterTrack(dynamic track)
+    // IITObject's first method following IDispatch returns the four session IDs together.
+    [ComImport, Guid("9FAB0E27-70D7-4e3a-9965-B0C8B8869BB6")]
+    [InterfaceType(ComInterfaceType.InterfaceIsDual)]
+    private interface IItunesObject
     {
-        ItunesTrackLocator locator = new(
+        void GetITObjectIDs(out int source, out int playlist, out int track, out int database);
+    }
+
+    private static ItunesTrackLocator ReadLocator(object track)
+    {
+        if (track is IItunesObject native)
+        {
+            try
+            {
+                native.GetITObjectIDs(out int source, out int playlist, out int id, out int database);
+                return new(source, playlist, id, database);
+            }
+            catch (COMException exception) when (!IsItunesUnreachable(exception))
+            {
+                // Some track objects only expose individual IDs through automation.
+            }
+        }
+        return new(
             ReadInt(track, "SourceID"),
             ReadInt(track, "PlaylistID"),
             ReadInt(track, "TrackID"),
             ReadInt(track, "TrackDatabaseID"));
-        return ItunesTrackId.Encode(locator);
     }
+
+    private static string RegisterTrack(dynamic track) => ItunesTrackId.Encode(ReadLocator((object)track));
 
     private string RegisterPlaybackTrack(object appObject, dynamic track)
     {

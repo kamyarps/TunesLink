@@ -184,6 +184,7 @@
     <string name="error_pairing_save_failed">Your PC couldn’t save this pairing. Try again.</string>
     <string name="error_bridge_busy">Your PC is finishing another request. Try again in a moment.</string>
     <string name="error_itunes_busy">iTunes is showing a message on your PC. Close it, then try again.</string>
+    <string name="library_indexing">Indexing your iTunes library…</string>
     <string name="error_itunes_unavailable">Open iTunes on your PC, then try again.</string>
     <string name="error_item_not_found">This item is no longer in your library.</string>
     <string name="search_waiting_title">Waiting for your computer</string>

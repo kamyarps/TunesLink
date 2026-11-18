@@ -1,6 +1,9 @@
 package com.kamyarps.tuneslink
 
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -488,6 +491,11 @@ internal fun TunesLinkViewModel.libraryResult(
             if (generation != libraryGeneration) return
             val error = localizedFailure(message, R.string.error_library_unavailable, code)
             mutableState.update { it.copy(library = it.library.failedSearch(query, error, direction)) }
+            if (code == BridgeClient.ErrorCode.LIBRARY_INDEXING) {
+                libraryRequest = retryAfterIndexing(TunesLinkDestination.Search) {
+                    if (generation == libraryGeneration) retrySearch()
+                }
+            }
         }
     }
 
@@ -583,7 +591,7 @@ internal fun TunesLinkViewModel.browseCollectionsResult(generation: Int, replace
 
         override fun failure(message: String, unauthorized: Boolean, code: BridgeClient.ErrorCode) {
             if (generation != browseCollectionsGeneration) return
-            failBrowseCursor(LibraryBrowseTarget.Collections, message, code)
+            failBrowseCursor(LibraryBrowseTarget.Collections, message, code, requestedOffset)
         }
     }
 
@@ -658,7 +666,7 @@ internal fun TunesLinkViewModel.browseTracksResult(generation: Int, replace: Boo
 
         override fun failure(message: String, unauthorized: Boolean, code: BridgeClient.ErrorCode) {
             if (generation != browseTracksGeneration) return
-            failBrowseCursor(LibraryBrowseTarget.Tracks, message, code)
+            failBrowseCursor(LibraryBrowseTarget.Tracks, message, code, requestedOffset)
         }
     }
 
@@ -666,6 +674,7 @@ private fun TunesLinkViewModel.failBrowseCursor(
     target: LibraryBrowseTarget,
     message: String,
     code: BridgeClient.ErrorCode,
+    requestedOffset: Int,
 ) {
     val failure = localizedFailure(message, R.string.error_library_unavailable, code)
     mutableState.update {
@@ -681,6 +690,29 @@ private fun TunesLinkViewModel.failBrowseCursor(
             ),
         )
     }
+    if (code == BridgeClient.ErrorCode.LIBRARY_INDEXING) {
+        val retry = retryAfterIndexing(TunesLinkDestination.Library) {
+            val browse = mutableState.value.browse
+            val kind = browse.kind ?: return@retryAfterIndexing
+            requestBrowsePage(target, kind, browse.selectedCollection, requestedOffset,
+                TunesLinkViewModel.PAGE_SIZE, browse.cursor(target).copy(isLoading = true, error = null))
+        }
+        if (target == LibraryBrowseTarget.Collections) browseCollectionsRequest = retry
+        else browseTracksRequest = retry
+    }
+}
+
+private fun TunesLinkViewModel.retryAfterIndexing(
+    destination: TunesLinkDestination, retry: () -> Unit,
+): BridgeRepository.RequestHandle {
+    val job = viewModelScope.launch {
+        delay(2_000)
+        foreground.combine(mutableState) { visible, state ->
+            visible && state.route == TunesLinkRoute.Connected(destination)
+        }.first { it }
+        retry()
+    }
+    return BridgeRepository.RequestHandle { job.cancel() }
 }
 
 internal fun pageAdvances(requestedOffset: Int, returnedOffset: Int, count: Int, hasMore: Boolean): Boolean =

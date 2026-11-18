@@ -2,6 +2,47 @@ namespace TunesLinkBridge;
 
 internal static partial class BridgeSelfTest
 {
+    internal static int RunLargeLibraryWorker(string directory)
+    {
+        LibraryAppProbe app = new(99_997);
+        app.LibraryPlaylist.Tracks.BeforeEnumeration = () =>
+        {
+            if (!SpinWait.SpinUntil(() => File.Exists(Path.Combine(directory, "continue")), 30_000))
+                throw new TimeoutException("The test did not release the first index scan");
+        };
+        return ItunesWorkerHost.RunAsync(FakeComController(directory, app)).GetAwaiter().GetResult();
+    }
+
+    private static async Task TestLargeLibraryWorkerAsync(string directory)
+    {
+        Directory.CreateDirectory(directory);
+        using ItunesWorkerClient worker = new("--large-library-test=" + directory, false,
+            TimeSpan.FromMilliseconds(150));
+        using CancellationTokenSource timeout = new(TimeSpan.FromMinutes(2));
+        try
+        {
+            await worker.GetCollectionsAsync("genres", "", 0, 60, timeout.Token);
+            throw new InvalidOperationException("A cold library must report indexing");
+        }
+        catch (ItunesWorkerException exception)
+            when (exception.Category == ItunesWorkerFailureCategory.LibraryIndexing)
+        { }
+
+        File.WriteAllText(Path.Combine(directory, "continue"), "");
+        LibraryPage first = await worker.GetLibraryAsync("", 0, 60, timeout.Token);
+        Ensure(first.Items.Count == 60 && first.Total == 100_001, "Songs remains available during indexing");
+        // Leave the bridge alone for longer than its idle timeout. Only the bridge owns this job.
+        string index = Path.Combine(directory, "Cache", "library-index-v1.json");
+        while (!File.Exists(index) || worker.WorkerRunning)
+            await Task.Delay(50, timeout.Token);
+        Ensure(worker.WorkerGeneration == 1, "one worker finishes the unattended scan");
+        LibraryCollectionPage genres = await worker.GetCollectionsAsync("genres", "", 0, 60, timeout.Token);
+        LibraryPage tail = await worker.GetLibraryAsync("", 100_000, 60, timeout.Token);
+        Ensure(genres.Items.Sum(g => g.TrackCount) == 100_001 && tail.Items.Count == 1
+            && !tail.HasMore && genres.Revision == tail.Revision && worker.WorkerGeneration == 2,
+            "a restarted worker immediately serves the persisted large index and its final page");
+    }
+
     private static async Task TestWorkerFailureCategoriesAsync()
     {
         Ensure(ItunesWorkerHost.ClassifyFailure(new ArgumentException("invalid"))

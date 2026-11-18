@@ -28,6 +28,7 @@ internal static partial class BridgeSelfTest
             Console.WriteLine("self-test:media-and-protocol");
             await TestMediaAndProtocolAsync(directory);
             Console.WriteLine("self-test:worker-isolation");
+            await TestLargeLibraryWorkerAsync(Path.Combine(directory, "large-library-worker"));
             await TestWorkerIsolationAsync();
             await TestWorkerFailureCategoriesAsync();
             Console.WriteLine("self-test:state-hub");

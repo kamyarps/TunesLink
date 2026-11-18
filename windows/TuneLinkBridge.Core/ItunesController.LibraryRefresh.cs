@@ -8,6 +8,33 @@ internal sealed partial class ItunesController
     // previous one keeps answering browse requests while a replacement is read in small batches
     // queued behind other requests, so an expired index never blocks browsing.
     internal const int LibraryRefreshBatch = 40;
+    // Up to four 60-row pages can be filtered directly before building a reusable index.
+    private const int DirectScanLimit = 240;
+
+    private void RequestLibraryIndex()
+    {
+        IndexPending = true;
+        throw new LibraryIndexingException();
+    }
+
+    internal bool HostDrivesIndex { get; set; }
+    internal bool IndexPending { get; private set; }
+
+    internal Task<bool> AdvanceIndexAsync(CancellationToken token) => Invoke(() =>
+    {
+        if (!IndexPending) return true;
+        try
+        {
+            LibraryRefresh refresh = libraryRefresh ??= new(++libraryRefreshGeneration,
+                new LibrarySnapshotBuilder(this, GetITunes(), token));
+            return ReadRefreshBatch(refresh, token);
+        }
+        catch
+        {
+            AbandonLibraryRefresh();
+            throw;
+        }
+    }, token);
 
     private LibrarySnapshot? staleLibrarySnapshot;
     private LibraryRefresh? libraryRefresh;
@@ -38,6 +65,11 @@ internal sealed partial class ItunesController
 
     private void StartLibraryRefresh(object appObject)
     {
+        if (HostDrivesIndex)
+        {
+            IndexPending = true;
+            return;
+        }
         if (libraryRefresh is not null) return;
         LibraryRefresh started = new(++libraryRefreshGeneration,
             new LibrarySnapshotBuilder(this, appObject, CancellationToken.None));
@@ -60,6 +92,10 @@ internal sealed partial class ItunesController
     private LibrarySnapshot ReadFirstLibrarySnapshot(object appObject,
         CancellationToken cancellationToken)
     {
+        if (HostDrivesIndex)
+        {
+            RequestLibraryIndex();
+        }
         LibraryRefresh refresh = libraryRefresh ??= new LibraryRefresh(++libraryRefreshGeneration,
             new LibrarySnapshotBuilder(this, appObject, cancellationToken));
         LibrarySnapshot snapshot;
@@ -99,27 +135,35 @@ internal sealed partial class ItunesController
         }
         try
         {
-            if (!refresh.Builder.Read(LibraryRefreshBatch, CancellationToken.None))
+            if (!ReadRefreshBatch(refresh, CancellationToken.None))
             {
                 EnqueueInternal(() => ContinueLibraryRefresh(refresh));
-                return;
             }
-            PersistLibrarySnapshot(refresh.Builder.Complete());
-            staleLibrarySnapshot = null;
-            BridgeDiagnostics.RecordDuration("library.refresh",
-                (long)Stopwatch.GetElapsedTime(refresh.StartedAt).TotalMilliseconds);
         }
         catch (Exception exception)
         {
             // The expired index keeps answering; the next browse request tries again.
             BridgeDiagnostics.Record("library.refresh", exception);
+            AbandonLibraryRefresh();
         }
+    }
+
+    private bool ReadRefreshBatch(LibraryRefresh refresh, CancellationToken token)
+    {
+        if (!refresh.Builder.Read(LibraryRefreshBatch, token)) return false;
+        PersistLibrarySnapshot(refresh.Builder.Complete());
+        staleLibrarySnapshot = null;
+        BridgeDiagnostics.RecordDuration("library.refresh",
+            (long)Stopwatch.GetElapsedTime(refresh.StartedAt).TotalMilliseconds);
         libraryRefresh = null;
         refresh.Builder.Dispose();
+        IndexPending = false;
+        return true;
     }
 
     private void AbandonLibraryRefresh()
     {
+        IndexPending = false;
         libraryRefreshGeneration++;
         if (libraryRefresh is not { } refresh) return;
         libraryRefresh = null;
@@ -134,7 +178,8 @@ internal sealed partial class ItunesController
         private readonly object playlist;
         private readonly object tracks;
         private readonly IEnumerator<object> items;
-        private readonly HashSet<int> excluded;
+        private readonly HashSet<int> excluded = [];
+        private IEnumerator<bool>? exclusionScan;
         private readonly Dictionary<string, CollectionAccumulator> artists =
             new(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, CollectionAccumulator> albums =
@@ -158,8 +203,8 @@ internal sealed partial class ItunesController
                 // Songs come from the library playlist so their IDs stay stable; the library's
                 // videos, podcasts, and audiobooks are left out of Songs, Artists, Albums, and
                 // Genres.
-                excluded = owner.ExcludedMediaFor(appObject, playlist,
-                    withLibraryIndices: false, cancellationToken).DatabaseIds;
+                cancellationToken.ThrowIfCancellationRequested();
+                exclusionScan = ScanExcludedMedia(appObject, tracks, excluded, null).GetEnumerator();
                 int expected = Math.Max(0, Convert.ToInt32(((dynamic)tracks).Count));
                 libraryTracks = new(expected);
                 libraryGenres = new(expected);
@@ -176,15 +221,32 @@ internal sealed partial class ItunesController
         /// <summary>Reads up to <paramref name="count"/> songs; true once every song is read.</summary>
         public bool Read(int count, CancellationToken cancellationToken)
         {
+            long started = Stopwatch.GetTimestamp();
             for (int read = 0; read < count; read++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                if (read > 0 && Stopwatch.GetElapsedTime(started).TotalMilliseconds >= 100) return false;
+                if (exclusionScan is not null)
+                {
+                    try
+                    {
+                        if (exclusionScan.MoveNext()) continue;
+                    }
+                    catch (Exception exception)
+                    {
+                        BridgeDiagnostics.Record("library.media", exception);
+                        excluded.Clear();
+                    }
+                    exclusionScan.Dispose();
+                    exclusionScan = null;
+                }
                 if (!items.MoveNext()) return true;
                 object trackObject = items.Current;
                 dynamic track = trackObject;
                 try
                 {
-                    if (IsExcluded(trackObject, excluded)) continue;
+                    ItunesTrackLocator locator = ReadLocator(trackObject);
+                    if (excluded.Contains(locator.DatabaseId)) continue;
                     string artist = LibraryGrouping.DisplayArtist(ReadString(track, "Artist"));
                     string album = LibraryGrouping.DisplayAlbum(ReadString(track, "Album"));
                     string albumArtist = LibraryGrouping.AlbumArtist(artist,
@@ -192,7 +254,7 @@ internal sealed partial class ItunesController
                     string albumKey = LibraryGrouping.AlbumKey(albumArtist, album);
                     string genre = LibraryGrouping.DisplayGenre(ReadString(track, "Genre"));
                     LibraryTrack libraryTrack = owner.ReadLibraryTrack(track, artist, album,
-                        albumArtist);
+                        albumArtist, ItunesTrackId.Encode(locator));
                     libraryTracks.Add(libraryTrack);
                     libraryGenres.Add(genre);
                     string artworkId =
@@ -228,6 +290,7 @@ internal sealed partial class ItunesController
         {
             if (disposed) return;
             disposed = true;
+            exclusionScan?.Dispose();
             items.Dispose();
             ReleaseCom(tracks);
             ReleaseCom(playlist);

@@ -19,6 +19,31 @@ class ViewModelRestoreTest {
     @Before fun mainDispatcher() = Dispatchers.setMain(dispatcher)
     @After fun resetDispatcher() = Dispatchers.resetMain()
 
+    @Test fun indexingRetriesOnlyWhenTheRequestedScreenIsVisible() {
+        val client = FakeClient()
+        val repository = BridgeRepository(client, pairedStore())
+        val vm = testViewModel(repository, TunesLinkUiState(
+            route = TunesLinkRoute.Connected(TunesLinkDestination.Search),
+            connection = ConnectionState.Connected("PC"),
+            library = LibraryUiState(editingQuery = "song"),
+        ))
+        dispatcher.scheduler.advanceTimeBy(1_000)
+        dispatcher.scheduler.runCurrent()
+        val first = requireNotNull(client.library)
+        first.failure("Indexing", false, BridgeClient.ErrorCode.fromWire("library_indexing"))
+        dispatcher.scheduler.advanceTimeBy(3_000)
+        dispatcher.scheduler.runCurrent()
+        assertSame(first, client.library)
+        vm.navigate(TunesLinkDestination.NowPlaying)
+        vm.foreground.value = true
+        dispatcher.scheduler.runCurrent()
+        assertSame(first, client.library)
+        vm.navigate(TunesLinkDestination.Search)
+        dispatcher.scheduler.runCurrent()
+        assertNotSame(first, client.library)
+        repository.close()
+    }
+
     @Test fun processDeathRestoresDestinationModalAndInputs() {
         val client = FakeClient()
         val repository = BridgeRepository(client, pairedStore())

@@ -5,6 +5,7 @@ namespace TunesLinkBridge;
 internal interface IAtomicFilePersistence
 {
     void WriteText(string path, string contents);
+    void Write(string path, Action<Stream> write);
 }
 
 internal sealed class AtomicFilePersistence : IAtomicFilePersistence
@@ -13,7 +14,10 @@ internal sealed class AtomicFilePersistence : IAtomicFilePersistence
 
     private AtomicFilePersistence() { }
 
-    public void WriteText(string path, string contents)
+    public void WriteText(string path, string contents) =>
+        Write(path, stream => stream.Write(Encoding.UTF8.GetBytes(contents)));
+
+    public void Write(string path, Action<Stream> write)
     {
         string? directory = Path.GetDirectoryName(path);
         if (string.IsNullOrWhiteSpace(directory))
@@ -23,12 +27,10 @@ internal sealed class AtomicFilePersistence : IAtomicFilePersistence
             "." + Path.GetFileName(path) + "." + Guid.NewGuid().ToString("N") + ".tmp");
         try
         {
-            byte[] bytes = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false)
-                .GetBytes(contents);
             using (FileStream stream = new(temporary, FileMode.CreateNew, FileAccess.Write,
-                       FileShare.None, 4096, FileOptions.WriteThrough))
+                       FileShare.None, 16 * 1024, FileOptions.SequentialScan))
             {
-                stream.Write(bytes);
+                write(stream);
                 stream.Flush(flushToDisk: true);
             }
 
